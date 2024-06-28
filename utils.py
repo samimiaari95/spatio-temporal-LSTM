@@ -1,5 +1,8 @@
 import os
 import numpy as np
+import matplotlib.pyplot as plt
+
+plt.rcParams.update({'font.size': 22})
 
 
 def get_S4W_basin(lat2D, lon2D, region):
@@ -177,14 +180,24 @@ def postprocess_LSTM_targetvar(targetfilename, dirpath, start, end, means_stds, 
 
     return obs_stand_train, means_stds
 
-def find_index_maxvalue(d3matrix):
-    def max_by_index(idx, arr):
-        return (idx,) + np.unravel_index(np.argmax(arr[idx]), arr.shape[1:])
-    maxval = 0
-    for i in range(d3matrix.shape[0]):
-        index = max_by_index(i, d3matrix)
-        print(index)
-        if d3matrix[index[0], index[1], index[2]] > maxval:
-            maxval = d3matrix[index[0], index[1], index[2]]
-    print(f"final result {maxval, index}")
+def plot_mse(cell_mse, test_loss, filename):
+    ax = plt
+    ax.figure(figsize=(16,9))
+    #ax.imshow(cell_mse, cmap='hot', interpolation='nearest')
+    ax.imshow(cell_mse, interpolation='nearest')
+    ax.colorbar().ax.set_ylabel('MSE')
+    ax.title(f"avg MSE (mm): {test_loss:.4f}")
+    ax.ylabel("y (pixels)")
+    ax.xlabel("x (pixels)")
+    ax.savefig(filename)
 
+def plot_wtdmap(data, title, filepath):
+    avg_obs = plt
+    avg_obs.figure(figsize=(16,9))
+    avg_obs.imshow(data, interpolation='nearest')
+    avg_obs.colorbar()
+    avg_obs.title(title)
+    avg_obs.ylabel("y (pixels)")
+    avg_obs.xlabel("x (pixels)")
+    avg_obs.savefig(filepath)
+    
