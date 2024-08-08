@@ -114,8 +114,8 @@ def postprocess_LSTM_features(filesnames, dirpath, start, end, LOOKBACK, INPUT_S
         # calculate mean and std only if in train mode
         if train_mode:
             # calculate means and stds for each cell over it's timeseries
-            means_stds[f"{inputvar.replace('.npy','')}mean"] = [np.mean(train_data[cell, :]) for cell in range(train_data.shape[0])]
-            means_stds[f"{inputvar.replace('.npy','')}std"] = [np.std(train_data[cell, :]) for cell in range(train_data.shape[0])]
+            means_stds[f"{inputvar.replace('.npy','')}mean"] = [np.mean(train_data[:, :]) for cell in range(train_data.shape[0])]
+            means_stds[f"{inputvar.replace('.npy','')}std"] = [np.std(train_data[:, :]) for cell in range(train_data.shape[0])]
 
         # standardization for all cells over the time series
         stand_train = np.zeros(train_data.shape)
@@ -167,8 +167,8 @@ def postprocess_LSTM_targetvar(targetfilename, dirpath, start, end, means_stds, 
     #print(f"index: {np.where(plott == np.median(plott))[0]}")
     if train_mode:
         # calculate mean and std for each cell
-        means_stds[f"{targetfilename.replace('.npy','')}mean"] = [np.mean(obs_train[cell, :]) for cell in range(obs_train.shape[0])]
-        means_stds[f"{targetfilename.replace('.npy','')}std"] = [np.std(obs_train[cell, :]) for cell in range(obs_train.shape[0])]
+        means_stds[f"{targetfilename.replace('.npy','')}mean"] = [np.mean(obs_train[:, :]) for cell in range(obs_train.shape[0])]
+        means_stds[f"{targetfilename.replace('.npy','')}std"] = [np.std(obs_train[:, :]) for cell in range(obs_train.shape[0])]
 
     # standardization for each cell time series
     obs_stand_train = np.zeros(obs_train.shape)
