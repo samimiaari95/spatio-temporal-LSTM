@@ -1,9 +1,47 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import netCDF4 as nc
 
 plt.rcParams.update({'font.size': 22})
 
+
+def make_dir(dir_path):
+    """
+    Creates folders for every directory in the specified path, pass if the directory already exists
+    Arguments:
+    -   dir_path: path defined as a string
+    Returns:
+    -   Nothing
+    Author: Sami
+    """
+    # iterate through the defined path
+    while not os.path.isdir(dir_path):
+        # check if the parent directory exists
+        if not os.path.isdir(os.path.dirname(dir_path)):
+            make_dir(os.path.dirname(dir_path))
+        else:
+            os.mkdir(dir_path)
+
+def powerlaw_func(h, a, b):
+        y = a*(h**b)
+        return y
+
+def linear_law(x, a, b) :
+        return a + x * b
+
+def read_nc(filepath, var):
+    ncfile = nc.Dataset(filepath)
+    return ncfile[var][:]
+
+def open_nc(filepath):
+    ncfile = nc.Dataset(filepath)
+    variables = ncfile.variables
+    for var in variables:
+        if var!="lon" and var!="lat" and var!="time" and var!="rlat" and var!="rlon" and var!="rotated_pole" and var!="pressure" and var!="time_bnds":
+            print(ncfile[var].long_name)
+            #if ncfile[var].long_name == "2m relative humidity":
+            #    print(ncfile[var])
 
 def get_S4W_basin(lat2D, lon2D, region):
     """ return a mask
@@ -34,6 +72,50 @@ def get_S4W_basin(lat2D, lon2D, region):
     else:
         print(f'Region {region} not found --> EXIT')
     return regionMask
+
+def get_prudenceMask(lat2D, lon2D, prudName):
+    """ return a prudance mask
+
+    Return a boolean mask-array (True = masked, False = not masked) based on
+    a passed set of longitude and latitude values and the name of the prudence
+    region.
+    The shape of the mask-array is set equal to the shape of input lat2D.
+    Source: http://prudence.dmi.dk/public/publications/PSICC/Christensen&Christensen.pdf p.38
+
+    Input values:
+    -------------
+    lat2D:    ndarray
+        2D latitude information for each pixel
+    lon2D:    ndarray
+        2D longitude information for each pixel
+    prudName: str
+        Short name of prudence region
+
+    Return value:
+    -------------
+    prudMask: ndarray
+        Ndarray of dtype boolean of the same shape as lat2D.
+        True = masked; False = not masked
+    """
+    if (prudName=='BI'):
+        prudMask = np.where((lat2D < 50.0) | (lat2D > 59.0)  | (lon2D < -10.0) | (lon2D >  2.0), False, True)
+    elif (prudName=='IP'):
+        prudMask = np.where((lat2D < 36.0) | (lat2D > 44.0)  | (lon2D < -10.0) | (lon2D >  3.0), False, True)
+    elif (prudName=='FR'):
+        prudMask = np.where((lat2D < 44.0) | (lat2D > 50.0)  | (lon2D < -5.0) | (lon2D >  5.0), False, True)
+    elif (prudName=='ME'):
+        prudMask = np.where((lat2D < 48.0) | (lat2D > 55.0)  | (lon2D < 2.0) | (lon2D >  16.0), False, True)
+    elif (prudName=='SC'):
+        prudMask = np.where((lat2D < 55.0) | (lat2D > 70.0)  | (lon2D < 5.0) | (lon2D >  30.0), False, True)
+    elif (prudName=='AL'):
+        prudMask = np.where((lat2D < 44.0) | (lat2D > 48.0)  | (lon2D < 5.0) | (lon2D >  15.0), False, True)
+    elif (prudName=='MD'):
+        prudMask = np.where((lat2D < 36.0) | (lat2D > 44.0)  | (lon2D < 3.0) | (lon2D >  25.0), False, True)
+    elif (prudName=='EA'):
+        prudMask = np.where((lat2D < 44.0) | (lat2D > 55.0)  | (lon2D < 16.0) | (lon2D >  30.0), False, True)
+    else:
+        print(f'prudance region {prudName} not found --> EXIT')
+    return prudMask
 
 def delete_files(dirpath, key):
     for file in os.listdir(dirpath):
