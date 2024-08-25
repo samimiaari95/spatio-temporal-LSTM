@@ -9,13 +9,13 @@ Y = 5
 NB_CELLS = X*Y
 
 # study region
-TARGET_REGION = "SEINE"
-SOURCE_REGION = "SEINE"
+TARGET_REGION = "DOURO"
+SOURCE_REGION = "DOURO"
 
 # directory and inputs
 OUTPUTPATH = f"/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/outputs/{TARGET_REGION}"
 INPUTPATH = f"/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/{TARGET_REGION}"
-FEATURES_FILES = ["TOT_PREC.npy", "TMAX_2M.npy", "TMIN_2M.npy", "soilmoisture.npy", "topo.npy", "porosity_1mdepth.npy"]
+FEATURES_FILES = ["TOT_PREC.npy", "vpd.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", "soilind.npy"]
 TARGETVAR_FILE = "wtd.npy"
 
 # time period
