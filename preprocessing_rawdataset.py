@@ -4,9 +4,11 @@ import os
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from utils import read_nc, get_prudenceMask, delete_files, get_S4W_basin
+from utils import read_nc, get_prudenceMask, delete_files, get_S4W_basin, make_dir
 from volumetric_soilmoisture import calculate_soilmoisture_diag
 import matplotlib.pyplot as plt
+from SLOTH.sloth.IO import readSa
+from LSTM_setup import INPUTPATH
 
 
 def copy_files():
@@ -304,15 +306,16 @@ def preprocess_matrix(month):
 #preprocess_matrix_sm(month=month)
 
 def conc_vars():
-    dirpath = "/p/scratch/cslts/miaari1/detect/raw"
-    outpath = "/p/project/cslts/miaari1/python_scripts/DailyScriptBox/outputs/LSTM_inputs/ME"
-    output_dic = {"TOT_PREC": np.array([]), "TMAX_2M": np.array([]), "TMIN_2M": np.array([]), "QFLX_EVAP_TOT": np.array([]), "wtd": np.array([]), "subSurfStor": np.array([]), "soilmoisture": np.array([])}
+    dirpath = "/p/scratch/cslts/miaari1/raw"
+    outpath = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs"
+    #output_dic = {"TOT_PREC": np.array([]), "TMAX_2M": np.array([]), "TMIN_2M": np.array([]), "QFLX_EVAP_TOT": np.array([]), "wtd": np.array([]), "subSurfStor": np.array([]), "soilmoisture": np.array([])}
+    output_dic = {"vpd": np.array([])}
 
     months = [x for x in os.listdir(dirpath)]
     months.sort()
     for month in months:
         print(month)
-        vars = [x for x in os.listdir(os.path.join(dirpath, month)) if x.endswith(".npy")]
+        vars = [x for x in os.listdir(os.path.join(dirpath, month)) if x.endswith(".npy") and "vpd" in x]
         for var in vars:
             varname = var.replace(f"_{month}.npy","")
             data = np.load(os.path.join(dirpath, month, var))
@@ -421,16 +424,20 @@ def preprocess_porosity():
     print(poro_timeseries.shape)
     np.save(os.path.join(os.path.dirname(INPUTPATH), "porosity_1mdepth.npy"), poro_timeseries)
 
-def crop_vars():
+def crop_vars(varname):
     from LSTM_setup import INPUTPATH
-    topo = np.load(os.path.join(os.path.dirname(INPUTPATH), "topo.npy"))
-    poro = np.load(os.path.join(os.path.dirname(INPUTPATH), "porosity_1mdepth.npy"))
-    topo = topo[:, 211:211+5, 177:177+5]
-    poro = poro[:, 211:211+5, 177:177+5]
-    print(topo.shape)
-    print(poro.shape)
-    np.save(os.path.join(INPUTPATH, "topo.npy"), topo)
-    np.save(os.path.join(INPUTPATH, "porosity_1mdepth.npy"), poro)
+    var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
+    i = 163
+    j = 100
+    grid_size = 5
+    if "lon" or "lat" in varname:
+        var = var[i:i+grid_size, j:j+grid_size]
+    else:
+        var = var[:, i:i+grid_size, j:j+grid_size]
+
+    print(varname)
+    print(var.shape)
+    np.save(os.path.join(INPUTPATH, varname), var)
 
 def features_correlation():
     from LSTM_setup import INPUTPATH
@@ -448,3 +455,81 @@ def features_correlation():
         print(feature.shape)
         correlation_map(targetvar, feature, f"10yrscorrelation_wtd_{f.replace('.npy','')}", 5, 5, lons, lats)
 
+def sa_to_npy():
+    filepath = os.path.join(os.path.dirname(INPUTPATH), "EUR-11_TSMP_FZJ-IBG3_CLMPFLDomain_444x432_YSLOPE_TPS_HydroRIVER_sea_streams_corr.sa")
+    ind = readSa(filepath)
+    print(ind.shape)
+
+    ind = ind[0,:,:]
+    print(ind.shape)
+    np.save(os.path.join(os.path.dirname(INPUTPATH), "slopey.npy"), ind)
+
+def static_timeseries(varname):
+    filepath = os.path.join(os.path.dirname(INPUTPATH), varname)
+    soilind = np.load(filepath)
+    print(varname)
+    i = 163
+    j = 100
+    grid_size = 5
+    soilind = soilind[i:i+grid_size, j:j+grid_size]
+    print(soilind)
+    print(soilind.shape)
+
+    soilind = np.array(soilind)
+    soilind_1yr = np.array([])
+    soilind = np.expand_dims(soilind, axis=0)
+    for i in range(365):
+        soilind_1yr = np.concatenate((soilind_1yr,soilind), axis=0) if len(soilind_1yr)>0 else soilind
+    soilind_timeseries = np.array([])
+    for i in range(10):
+        soilind_timeseries = np.concatenate((soilind_timeseries,soilind_1yr), axis=0) if len(soilind_timeseries)>0 else soilind_1yr
+    print(soilind_timeseries.shape)
+    np.save(os.path.join(INPUTPATH, varname), soilind_timeseries)
+
+def preprocess_raw_vpd():
+    outpath = "/p/scratch/cslts/miaari1/raw"
+    rh = "RELHUM_2M_ts.nc"
+    t = "T_2M_ts.nc"
+
+    # define timestep
+    timestep = 60
+
+    # iterate through the months
+    for month in os.listdir(outpath):
+        print(month)
+        rh_data = read_nc(filepath=os.path.join(outpath, month, rh), var=rh.replace("_ts.nc",""))
+        t_data = read_nc(filepath=os.path.join(outpath, month, t), var=t.replace("_ts.nc",""))
+        print(rh_data.shape)
+
+        # remove the last timestep from cosmo output
+        rh_data = np.array(rh_data[:-1,:,:])
+        t_data = np.array(t_data[:-1,:,:])
+
+        ##### calculate vapor pressure deficit #####
+        # saturated vapor pressure
+        svp = 0.611*np.exp((17.27*t_data)/(t_data+237.3))
+        # vapor pressure deficit
+        vpd = svp*(1-(rh_data/100))
+
+        Tagg = "mean"
+        data = temporalAgg_matrix(vpd, timestep, Tagg)
+        print("final")
+        print(data.shape)
+        outfile = os.path.join(outpath, month, f"vpd_{month}.npy")
+        np.save(outfile, data)
+
+def conc_basins():
+    from LSTM_setup import FEATURES_FILES, TARGETVAR_FILE
+    basins = [x for x in os.listdir(os.path.dirname(INPUTPATH)) if "." not in x and "+" not in x]
+    foldername = "+".join(basins)
+    vars = FEATURES_FILES
+    vars.append(TARGETVAR_FILE)
+    for var in vars:
+        var_basins = {basin: np.load(os.path.join(os.path.dirname(INPUTPATH), basin, var)) for basin in basins}
+        data = np.array([])
+        for basin in var_basins.keys():
+            print(var, basin)
+            data = np.concatenate((data, var_basins[basin]), axis=0) if len(data)>0 else var_basins[basin]
+        savedir = os.path.join(os.path.dirname(INPUTPATH), foldername)
+        make_dir(savedir)
+        np.save(os.path.join(savedir, var), data)
