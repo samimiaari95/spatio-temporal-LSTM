@@ -77,7 +77,7 @@ def plot_MSE(data, title, label, lons, lats):
     fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
 def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
-    # TODO load data from original file
+    # TODO convert data from mm to m
     data = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))[TRAINING_PERIOD+LOOKBACK:TRAINING_PERIOD+TEST_PERIOD,:,:]
     projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
@@ -87,6 +87,7 @@ def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
     data = np.mean(data, axis=0)
 
     # Plot the data
+    # TODO set max limit
     norm = mcolors.LogNorm(vmin=0.01, vmax=np.max(data))
     data[data == 0] = np.nan
 
@@ -110,6 +111,10 @@ def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
     shape_feature_seine = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='red')
     ax.add_feature(shape_feature_seine, facecolor='none', edgecolor='red', linewidth=1)
 
+    # Path to your shapefile
+    shapefile_path = os.path.join(os.path.dirname(INPUTPATH), "DOURO", "catchment_shp", "douro.shp")
+    shape_feature_seine = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='red')
+    ax.add_feature(shape_feature_seine, facecolor='none', edgecolor='red', linewidth=1)
 
     # danube region starting lat lon
     #i = 160
@@ -124,6 +129,15 @@ def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
     i = 211 #195+16
     j = 177 #164+13
     grid_size = 5    
+    points = [[lons[i,j], lats[i,j]], [lons[i,j+grid_size], lats[i,j+grid_size]], [lons[i+grid_size,j+grid_size], lats[i+grid_size,j+grid_size]], [lons[i+grid_size,j], lats[i+grid_size,j]]]
+    study_area_polygon = Polygon(points)
+    study_area_feature_seine = ShapelyFeature([study_area_polygon], ccrs.PlateCarree(), edgecolor='blue', facecolor='none')
+    ax.add_feature(study_area_feature_seine, edgecolor='blue', linewidth=2)
+
+    # DOURO region starting lat lon
+    i = 163
+    j = 100
+    grid_size = 5
     points = [[lons[i,j], lats[i,j]], [lons[i,j+grid_size], lats[i,j+grid_size]], [lons[i+grid_size,j+grid_size], lats[i+grid_size,j+grid_size]], [lons[i+grid_size,j], lats[i+grid_size,j]]]
     study_area_polygon = Polygon(points)
     study_area_feature_seine = ShapelyFeature([study_area_polygon], ccrs.PlateCarree(), edgecolor='blue', facecolor='none')
