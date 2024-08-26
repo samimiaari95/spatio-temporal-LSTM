@@ -2,6 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import netCDF4 as nc
+from LSTM_setup import *
 
 plt.rcParams.update({'font.size': 22})
 
@@ -122,164 +123,118 @@ def delete_files(dirpath, key):
         if key in file:
             os.remove(os.path.join(dirpath, file))
 
-def verify_reshape():
-
-    X = 5
-    Y = 2
-    T = 5
-    LOOKBACK = 3
-    INPUTS = 2
-
-    a = np.arange(0,50,1)
-    #print(a)
-    b = a.reshape(T, X ,Y)
-    b2 = np.moveaxis(b, 0, -1)
-
-    c = b2.reshape(-1, T)
-    
-    x = []
-    for i in range(LOOKBACK, T+1):
-        input_seq = c[:, i-LOOKBACK:i]
-        x.append(input_seq)
-    inputs = np.array(x)
-
-    d = inputs.reshape(-1, LOOKBACK)
-
-    # next feature
-    a = np.arange(50,100,1)
-    #print(a)
-    b = a.reshape(T, X ,Y)
-    #print(b)
-    b2 = np.moveaxis(b, 0, -1)
-    
-    c = b2.reshape(-1, T)
-    #print(c)
-    x = []
-    for i in range(LOOKBACK, T+1):
-        input_seq = c[:, i-LOOKBACK:i]
-        x.append(input_seq)
-    inputs = np.array(x)
-    
-    #inp = np.moveaxis(inputs, 0,-1)
-
-    d2 = inputs.reshape(-1, LOOKBACK)
-    print(d2)
-    print(d2.shape)
-    
-    # concat
-    #inputdata = np.append(d,d2, axis=1)
-    inputdata = np.concatenate((d,d2), axis=1)
-    print(inputdata)
-    print(inputdata.shape)
-    h = []
-    for i in range(inputdata.shape[0]):
-        x = inputdata[i].reshape(INPUTS, LOOKBACK)
-        x = np.moveaxis(x, 0,1)
-        h.append(x)
-    h = np.array(h)
-    print(h)
-    print(h.shape)
-    return
-    
-def postprocess_LSTM_features(filesnames, dirpath, start, end, LOOKBACK, INPUT_SIZE, means_stds,train_mode=True):
-    totalinputdata = np.array([])
-    for inputvar in filesnames:
+def singleregion_inputfeatures(start, end, means_stds):
+    all_inputs = np.array([])
+    for inputvar in FEATURES_FILES:
         print(inputvar)
-        data = np.load(os.path.join(dirpath, inputvar))
-        timesteps = data.shape[0]
-        data = np.moveaxis(data, 0, -1) # move time to the last axis
-        data = data.reshape(-1, timesteps) # outputs shape (34*34, timeseries)
-
-        # select training time series
-        train_data = data[:, start:end]
+        raw_data = np.load(os.path.join(INPUTPATH, inputvar))
+        raw_data = raw_data[:,:,:]
+        data = raw_data.reshape(raw_data.shape[0], NB_CELLS)
+        data = data[start:end, :]
+        data = np.moveaxis(data, 0, -1) # (cells, timeseries)
         
-        # calculate mean and std only if in train mode
-        if train_mode:
-            # calculate means and stds for each cell over it's timeseries
-            means_stds[f"{inputvar.replace('.npy','')}mean"] = [np.mean(train_data[:, :]) for cell in range(train_data.shape[0])]
-            means_stds[f"{inputvar.replace('.npy','')}std"] = [np.std(train_data[:, :]) for cell in range(train_data.shape[0])]
+        if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys():
+            means_stds[f"{inputvar.replace('.npy','')}mean"] = np.mean(data)
+            means_stds[f"{inputvar.replace('.npy','')}std"] = np.std(data)
 
-        # standardization for all cells over the time series
-        stand_train = np.zeros(train_data.shape)
-        for i in range(train_data.shape[0]): #shape[0] is the number of cells
-            stand_train[i,:] = (train_data[i, :] - means_stds[f"{inputvar.replace('.npy','')}mean"][i]) / means_stds[f"{inputvar.replace('.npy','')}std"][i] if means_stds[f"{inputvar.replace('.npy','')}std"][i] != 0 else 0
+        data = (data - means_stds[f"{inputvar.replace('.npy','')}mean"])/means_stds[f"{inputvar.replace('.npy','')}std"]
+        
+        lookback_arrays = [data[:, i-LOOKBACK:i] for i in range(LOOKBACK, end-start)]
+        lookback_arrays = np.array(lookback_arrays)
 
-        # generate lookback array
-        lookback_arrays = [stand_train[:, i-LOOKBACK:i] for i in range(LOOKBACK, end-start)] 
+        f1 = lookback_arrays.reshape(-1, LOOKBACK)
+        f1 = np.array([f1])
+        all_inputs = np.concatenate((all_inputs,f1), axis=0) if len(all_inputs)>0 else f1
 
-        inputs = np.array(lookback_arrays) # NOTE (timeseries, nb_cells, lookback)
-        # NOTE [t1[c1[lookback1, lookback2,..], c2[lookback], ..], 
-        #       t2[c1[lookback], c2[lookback], ..], ..]
-
-        #inputs = inputs.reshape((NB_CELLS*(TRAINING_PERIOD-LOOKBACK), LOOKBACK))
-        inputs = inputs.reshape(-1, LOOKBACK) # same as the command in the previous comment
-        # NOTE [t1c1[lookback1, lookback2,..], 
-        #       t1c2[lookback1, lookback2], .., 
-        #       t2c1[lookback1, lookback2], 
-        #       t2c2[lookback1, lookback2], ..]
-
-        totalinputdata = np.concatenate((totalinputdata,inputs), axis=1) if len(totalinputdata)>=1 else inputs
-        # NOTE [t1c1[lb1f1, lb2f1, lb1f2, lb2f2], 
-        #       t1c2[lb1f1, lb2f1, lb1f2, lb2f2], .., 
-        #       t2c1[lb1f1, lb2f1, lb1f2, lb2f2]]
-
-    # rearrange columns
-    train_inputs = []
-    for i in range(totalinputdata.shape[0]):
-        x = totalinputdata[i].reshape(INPUT_SIZE, LOOKBACK)
-        x = np.moveaxis(x, 0,1)
-        train_inputs.append(x)
-    train_inputs = np.array(train_inputs)
-    # final output: (NB_CELLS*TRAINING_PERIOD, LOOKBACK, NB_FEATURES)​
-    #[[t1c1[lb1f1, lb1f2], [lb2f1, lb2f2]], ​
-    #[t1c2[lb1f1, lb1f2], [lb2f1, lb2f2]], .., ​
-    #[t2c1[lb1f1, lb1f2], [lb2f1, lb2f2]]]
-    return train_inputs, means_stds
-
-def postprocess_LSTM_targetvar(targetfilename, dirpath, start, end, means_stds, train_mode=True):
-    # load target data
-    obs_data = np.load(os.path.join(dirpath, targetfilename))
-    timesteps = obs_data.shape[0]
-    obs_data = np.moveaxis(obs_data, 0, -1) # move time to the last axis
-    obs_data = obs_data.reshape(-1, timesteps) # outputs shape (34*34, timeseries)
-    # select required target train data
-    obs_train = obs_data[:, start:end]
-    # cell 828 is the max
-    #plott = obs_train[405,:]
-    #print(f"index: {np.where(plott == np.median(plott))[0]}")
-    if train_mode:
-        # calculate mean and std for each cell
-        means_stds[f"{targetfilename.replace('.npy','')}mean"] = [np.mean(obs_train[:, :]) for cell in range(obs_train.shape[0])]
-        means_stds[f"{targetfilename.replace('.npy','')}std"] = [np.std(obs_train[:, :]) for cell in range(obs_train.shape[0])]
-
-    # standardization for each cell time series
-    obs_stand_train = np.zeros(obs_train.shape)
-    for i in range(obs_train.shape[0]):
-        obs_stand_train[i,:] = (obs_train[i, :] - means_stds[f"{targetfilename.replace('.npy','')}mean"][i]) / means_stds[f"{targetfilename.replace('.npy','')}std"][i] if means_stds[f"{targetfilename.replace('.npy','')}std"][i] != 0 else 0
-
-    # flatten to enter as input to LSTM model
-    obs_stand_train = obs_stand_train.flatten()
-
-    return obs_stand_train, means_stds
-
-def plot_mse(cell_mse, test_loss, filename):
-    ax = plt
-    ax.figure(figsize=(16,9))
-    #ax.imshow(cell_mse, cmap='hot', interpolation='nearest')
-    ax.imshow(cell_mse, interpolation='nearest')
-    ax.colorbar().ax.set_ylabel('MSE')
-    ax.title(f"avg MSE (mm): {test_loss:.4f}")
-    ax.ylabel("y (pixels)")
-    ax.xlabel("x (pixels)")
-    ax.savefig(filename)
-
-def plot_wtdmap(data, title, filepath):
-    avg_obs = plt
-    avg_obs.figure(figsize=(16,9))
-    avg_obs.imshow(data, interpolation='nearest')
-    avg_obs.colorbar()
-    avg_obs.title(title)
-    avg_obs.ylabel("y (pixels)")
-    avg_obs.xlabel("x (pixels)")
-    avg_obs.savefig(filepath)
+    all_inputs = np.moveaxis(all_inputs, 0, -1)
     
+    #print(np.unique(np.equal(raw_data[LOOKBACK-1], lookback_arrays[0,:,-1].reshape(X,Y))))
+    #print(np.unique(np.equal(raw_data[LOOKBACK-1], f1[:,-1].reshape(TRAINING_PERIOD-LOOKBACK,X,Y)[0,:,:])))
+    #print(np.unique(np.equal(raw_data[LOOKBACK-1], all_inputs[:,-1, -1].reshape(TRAINING_PERIOD-LOOKBACK,X,Y)[0,:,:])))
+
+    return all_inputs, means_stds
+
+def singleregion_targetvar(start, end, means_stds):
+    raw_data = np.load(os.path.join(INPUTPATH, TARGETVAR_FILE))
+    raw_data = raw_data[:,:,:]
+    raw_data = np.nan_to_num(raw_data)
+    raw_data[raw_data < 0.0] = 0
+
+    data = raw_data[start:end, :, :]
+    
+    if f"{TARGETVAR_FILE.replace('.npy','')}mean" not in means_stds.keys():
+        means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"] = np.mean(data)
+        means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"] = np.std(data)
+
+    data = (data - means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"])/means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"]
+
+    data = data.flatten()
+
+    #print(np.unique(np.equal(raw_data[start, :, :], data.reshape(end-start, X, Y)[0,:,:])))
+    return data, means_stds
+
+def multiregion_inputfeatures(start, end, means_stds):
+    all_inputs = np.array([])
+    for inputvar in FEATURES_FILES:
+        var = np.array([])
+        meanstd = np.array([])
+        basins = [x for x in os.listdir(INPUTPATH) if os.path.isdir(os.path.join(INPUTPATH, x)) and x in SOURCE_REGION]
+        for basin in basins:
+            print(inputvar, basin)
+            raw_data = np.load(os.path.join(INPUTPATH, basin, inputvar))
+            raw_data = raw_data[:,:,:]
+            data = raw_data.reshape(raw_data.shape[0], NB_CELLS)
+            data = data[start:end, :]
+            data = np.moveaxis(data, 0, -1) # (cells, timeseries)
+
+            # take the original training time series to calculate mean and std
+            meanstd = np.concatenate((meanstd,data), axis=0) if len(meanstd)>0 else np.array(data)
+            
+            # create lookback
+            lookback_arrays = [data[:, i-LOOKBACK:i] for i in range(LOOKBACK, end-start)]
+            lookback_arrays = np.array(lookback_arrays)
+
+            f1 = lookback_arrays.reshape(-1, LOOKBACK)
+            f1 = np.array([f1])
+            var = np.concatenate((var,f1), axis=1) if len(var)>0 else f1
+
+        # standardization based on training period of all basins
+        if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys():
+            means_stds[f"{inputvar.replace('.npy','')}mean"] = np.mean(meanstd)
+            means_stds[f"{inputvar.replace('.npy','')}std"] = np.std(meanstd)
+        var = (var - means_stds[f"{inputvar.replace('.npy','')}mean"])/means_stds[f"{inputvar.replace('.npy','')}std"]
+        
+        all_inputs = np.concatenate((all_inputs,var), axis=0) if len(all_inputs)>0 else var
+
+    all_inputs = np.moveaxis(all_inputs, 0, -1)
+
+    #print(np.unique(np.equal(raw_data[LOOKBACK-1], lookback_arrays[0,:,-1].reshape(X,Y))))
+    #print(np.unique(np.equal(raw_data[LOOKBACK-1], f1[:,-1].reshape(TRAINING_PERIOD-LOOKBACK,X,Y)[0,:,:])))
+    #print(np.unique(np.equal(raw_data[LOOKBACK-1], all_inputs[:,-1, -1].reshape(TRAINING_PERIOD-LOOKBACK,X,Y)[0,:,:])))
+
+    return all_inputs, means_stds
+
+def multiregion_targetvar(start, end, means_stds):
+    data = np.array([])
+    basins = [x for x in os.listdir(INPUTPATH) if os.path.isdir(os.path.join(INPUTPATH, x)) and x in SOURCE_REGION]
+    # get data for all basins
+    for basin in basins:
+        raw_data = np.load(os.path.join(INPUTPATH, basin, TARGETVAR_FILE))
+        raw_data = raw_data[:,:,:]
+        raw_data = np.nan_to_num(raw_data)
+        raw_data[raw_data < 0.0] = 0
+        raw_data = raw_data[start:end, :, :]
+
+        # concatenate all basins
+        data = np.concatenate((data,raw_data), axis=0) if len(data)>0 else raw_data
+    
+    # standardization
+    if f"{TARGETVAR_FILE.replace('.npy','')}mean" not in means_stds.keys():
+        means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"] = np.mean(data)
+        means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"] = np.std(data)
+    data = (data - means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"])/means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"]
+
+    data = data.flatten()
+
+    #print(np.unique(np.equal(raw_data[start, :, :], data.reshape(end-start, X, Y)[0,:,:])))
+    return data, means_stds
