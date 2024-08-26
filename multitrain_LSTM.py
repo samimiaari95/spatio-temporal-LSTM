@@ -5,86 +5,16 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from LSTM_setup import *
-
-
-def prepare_inputfeatures(start, end, means_stds):
-    all_inputs = np.array([])
-    for inputvar in FEATURES_FILES:
-        print(inputvar)
-        raw_data = np.load(os.path.join(INPUTPATH, inputvar))
-        raw_data = raw_data[:,:,:]
-        raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS)
-        nb_basins = raw_data.shape[0]/3650
-        # TODO check this when adding new basins
-        nb_basins = int(nb_basins)
-        var_basins = {f"b{i}": raw_data[i*3650:3650*(i+1),:] for i in range(nb_basins)}
-        data = np.array([])
-        for basin in var_basins.keys():
-            data = np.concatenate((data, var_basins[basin][start:end, :]), axis=0) if len(data)>0 else var_basins[basin][start:end, :]
-        print(data.shape)
-#        data = raw_data[start:end, :]
-        data = np.moveaxis(data, 0, -1) # (cells, timeseries)
-        
-        if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys():
-            means_stds[f"{inputvar.replace('.npy','')}mean"] = np.mean(data)
-            means_stds[f"{inputvar.replace('.npy','')}std"] = np.std(data)
-
-        data = (data - means_stds[f"{inputvar.replace('.npy','')}mean"])/means_stds[f"{inputvar.replace('.npy','')}std"]
-        
-        lookback_arrays1 = [data[:, i-LOOKBACK:i] for i in range(LOOKBACK, end-start)]
-        lookback_arrays2 = [data[:, i-LOOKBACK:i] for i in range(TRAINING_PERIOD+LOOKBACK, end*nb_basins-start*nb_basins)]
-        lookback_arrays1.extend(lookback_arrays2)
-        lookback_arrays = np.array(lookback_arrays1)
-
-        f1 = lookback_arrays.reshape(-1, LOOKBACK)
-        f1 = np.array([f1])
-        all_inputs = np.concatenate((all_inputs,f1), axis=0) if len(all_inputs)>0 else f1
-
-    all_inputs = np.moveaxis(all_inputs, 0, -1)
-    
-    #print(np.unique(np.equal(raw_data[LOOKBACK-1], lookback_arrays[0,:,-1].reshape(X,Y))))
-    #print(np.unique(np.equal(raw_data[LOOKBACK-1], f1[:,-1].reshape(TRAINING_PERIOD-LOOKBACK,X,Y)[0,:,:])))
-    #print(np.unique(np.equal(raw_data[LOOKBACK-1], all_inputs[:,-1, -1].reshape(TRAINING_PERIOD-LOOKBACK,X,Y)[0,:,:])))
-
-    return all_inputs, means_stds
-
-def prepare_targetvar(start, end, means_stds):
-    raw_data = np.load(os.path.join(INPUTPATH, TARGETVAR_FILE))
-    raw_data = raw_data[:,:,:]
-    raw_data = np.nan_to_num(raw_data)
-    raw_data[raw_data < 0.0] = 0
-    nb_basins = raw_data.shape[0]/3650
-    # TODO check this when adding new basins
-    nb_basins = int(nb_basins)
-    var_basins = {f"b{i}": raw_data[i*3650:3650*(i+1),:] for i in range(nb_basins)}
-    data = np.array([])
-    for basin in var_basins.keys():
-        data = np.concatenate((data, var_basins[basin][start:end, :, :]), axis=0) if len(data)>0 else var_basins[basin][start:end, :, :]
-    print(data.shape)
-    #data = raw_data[start:end, :, :]
-    
-    if f"{TARGETVAR_FILE.replace('.npy','')}mean" not in means_stds.keys():
-        means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"] = np.mean(data)
-        means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"] = np.std(data)
-
-    data = (data - means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"])/means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"]
-    raw_data = (raw_data - means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"])/means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"]
-
-    data = data.flatten()
-
-    #print(np.unique(np.equal(raw_data[start, :, :], data.reshape(end-start, X, Y)[0,:,:])))
-    return data, means_stds
-
-    
+from utils import multiregion_inputfeatures, multiregion_targetvar
 
 
 # define mean and std dictionary
 means_stds = {}
 # prepare input data, standardization, lookback and train time series
-train_inputs, means_stds = prepare_inputfeatures(0, TRAINING_PERIOD, means_stds)
+train_inputs, means_stds = multiregion_inputfeatures(0, TRAINING_PERIOD, means_stds)
 
 # prepare input data of target variable and standardize
-obs_stand_train, means_stds = prepare_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
+obs_stand_train, means_stds = multiregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
 
 print("creating dataloader")
 print(f"train features shape: {train_inputs.shape}") # (30*30*timeseries, lookback, features)
