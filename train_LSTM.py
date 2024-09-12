@@ -5,8 +5,11 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from LSTM_setup import *
-from utils import singleregion_inputfeatures, singleregion_targetvar
+from utils import singleregion_inputfeatures, singleregion_targetvar, make_dir
 
+# check output directory
+if not os.path.exists(os.path.join(OUTPUTPATH)):
+    make_dir(os.path.join(OUTPUTPATH))
 
 # define mean and std dictionary
 means_stds = {}
@@ -24,7 +27,7 @@ dataset = TensorDataset(torch.tensor(train_inputs).float(), torch.tensor(obs_sta
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 # initialization
-lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE)
+lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS)
 criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(lstm_model.parameters(), lr=LEARNING_RATE)
 
@@ -43,7 +46,7 @@ for epoch in range(NUM_EPOCHS):
         epoch_loss[epoch].append(loss.item())
 
 # save the trained model
-torch.save(lstm_model, os.path.join(OUTPUTPATH, f'{TARGET_REGION}_wtd_5x5_128_prvpdsmslopexysoilind.pt'))
+torch.save(lstm_model, os.path.join(OUTPUTPATH, f'{TARGET_REGION}_{MODEL_NAME}.pt'))
 print("model saved")
 # plot epochs vs loss
 epoch_vs_loss_plot = {k:np.mean(np.array(v)) for k, v in epoch_loss.items()}
@@ -51,5 +54,5 @@ epoch_plot = plt
 epoch_plot.plot(list(epoch_vs_loss_plot.keys()), list(epoch_vs_loss_plot.values()))
 epoch_plot.xlabel("Epochs")
 epoch_plot.ylabel("MSE")
-epoch_plot.savefig(os.path.join(OUTPUTPATH, "epochs_vs_loss.png"))
+epoch_plot.savefig(os.path.join(OUTPUTPATH, f'{TARGET_REGION}_{MODEL_NAME}.png'))
 print("epoch loss plotted")
