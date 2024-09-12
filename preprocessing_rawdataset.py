@@ -430,10 +430,7 @@ def crop_vars(varname):
     i = 163
     j = 100
     grid_size = 5
-    if "lon" or "lat" in varname:
-        var = var[i:i+grid_size, j:j+grid_size]
-    else:
-        var = var[:, i:i+grid_size, j:j+grid_size]
+    var = var[:, i:i+grid_size, j:j+grid_size]
 
     print(varname)
     print(var.shape)
@@ -484,7 +481,7 @@ def static_timeseries(varname):
     for i in range(10):
         soilind_timeseries = np.concatenate((soilind_timeseries,soilind_1yr), axis=0) if len(soilind_timeseries)>0 else soilind_1yr
     print(soilind_timeseries.shape)
-    np.save(os.path.join(INPUTPATH, varname), soilind_timeseries)
+    np.save(os.path.join(INPUTPATH, f"ts_{varname}"), soilind_timeseries)
 
 def preprocess_raw_vpd():
     outpath = "/p/scratch/cslts/miaari1/raw"
@@ -533,3 +530,385 @@ def conc_basins():
         savedir = os.path.join(os.path.dirname(INPUTPATH), foldername)
         make_dir(savedir)
         np.save(os.path.join(savedir, var), data)
+    
+def select_pixels():
+    import json
+    inputpath = os.path.join(os.path.dirname(INPUTPATH))
+    varname = "wtd"
+    
+    wtd = np.load(os.path.join(inputpath, f"{varname}.npy"))
+    print(wtd.shape)
+    y = wtd.shape[1]
+    x = wtd.shape[2]
+
+    data = wtd[:, :int(y/2), :].reshape(wtd.shape[0], int(y/2)*int(x))
+    data = np.moveaxis(data, 0, -1)
+    
+    corr_matrix = np.corrcoef(data)
+
+    include = np.ones(corr_matrix.shape[0])
+    ind = 0
+    for i in range(corr_matrix.shape[0]):
+        if include[i]:
+            print(i)
+            element = corr_matrix[i,:]
+            indices = np.where(element > 0.8)
+            indices_list = indices[0].tolist()
+            for item in indices_list:
+                if not item==i:
+                    ind += 1
+                    include[item] = False
+    print(sum(include))
+    include1 = include
+
+    # second batch
+    data = wtd[:, int(y/2):, :].reshape(wtd.shape[0], int(y/2)*int(x))
+    data = np.moveaxis(data, 0, -1)
+
+    corr_matrix = np.corrcoef(data)
+
+    include = np.ones(corr_matrix.shape[0])
+    ind = 0
+    for i in range(corr_matrix.shape[0]):
+        if include[i]:
+            print(i)
+            element = corr_matrix[i,:]
+            indices = np.where(element > 0.8)
+            indices_list = indices[0].tolist()
+            for item in indices_list:
+                if not item==i:
+                    ind += 1
+                    include[item] = False
+    print(sum(include1))
+    print(sum(include))
+    selected = np.append(include1, include)
+    print(selected.shape)
+    print(np.unique(selected))
+    print(sum(selected))
+    np.save(os.path.join(inputpath, "selected_1d.npy"), selected)
+
+    return
+
+
+def filter_sea():
+    import matplotlib.pyplot as plt
+    import cartopy.crs as ccrs
+
+    inputpath = os.path.join(os.path.dirname(INPUTPATH))
+    data = np.load(os.path.join(inputpath, "selected_1d.npy"))
+    wtd = np.load(os.path.join(inputpath, f"wtd.npy"))
+    y = wtd.shape[1]
+    x = wtd.shape[2]
+    data = data.reshape(y,x)
+
+    for i in range(wtd.shape[1]):
+        for j in range(wtd.shape[2]):
+            if not np.std(wtd[:,i,j]) > 0:
+                data[i,j] = 0
+    data[:100,:] = 0
+    data[432-10:,:] = 0
+    data[:,444-10:] = 0
+    data[:,:10] = 0
+
+    data[432-120:,:200] = 0
+
+    print(np.sum(data))
+
+    np.save(os.path.join(inputpath, "filtered_selected_pixels.npy"), data)
+
+    projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+    # Create a figure and an axis with a Cartopy projection
+    fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+
+    # Plot the data
+    # TODO set max limit
+    lons = np.load(os.path.join(inputpath, "lon2D.npy"))
+    lats = np.load(os.path.join(inputpath, "lat2D.npy"))
+    
+    cla = ax.pcolormesh(lons, lats, data, cmap='viridis', transform=ccrs.PlateCarree())
+
+    # Add a colorbar
+    cbar = plt.colorbar(cla, ax=ax, orientation='vertical', pad=0.05)
+    cbar.set_label('Water table depth (mm)')
+
+    # Add coastlines, gridlines, etc.
+    ax.coastlines()
+    ax.gridlines(draw_labels=True)
+    
+    print("saving europe")
+    fig.savefig(os.path.join(inputpath, "Europe_filterselected.png"))
+
+def train_batch():
+    import matplotlib.pyplot as plt
+    import cartopy.crs as ccrs
+
+    inputpath = os.path.join(os.path.dirname(INPUTPATH))
+    mapping = np.load(os.path.join(inputpath, "filtered_selected_pixels.npy"))
+    wtd = np.load(os.path.join(inputpath, f"wtd.npy"))
+    y = wtd.shape[1]
+    x = wtd.shape[2]
+
+    filtered_data = wtd[:, mapping == 1]
+
+    # If you want to reshape the filtered data to a 2D array with dimensions (timeseries, selected_points)
+    filtered_data = filtered_data.reshape(wtd.shape[0], -1)
+    print(filtered_data.shape)
+    # second batch
+    #data = filtered_data.reshape(filtered_data.shape[0], int(y/2)*int(x))
+    data = np.moveaxis(filtered_data, 0, -1)
+    print(data.shape)
+
+    corr_matrix = np.corrcoef(data)
+
+    include = np.ones(corr_matrix.shape[0])
+    for i in range(corr_matrix.shape[0]):
+        if include[i]:
+            element = corr_matrix[i,:]
+            indices = np.where(element > 0.8)
+            indices_list = indices[0].tolist()
+            for item in indices_list:
+                if not item==i:
+                    include[item] = False
+
+    data = data[ include == 1, :]
+    print(data.shape)
+
+    for i in range(y):
+        for j in range(x):
+            print(i,j)
+            if mapping[i,j]:
+                mapping[i,j] = 0
+                for cell in range(data.shape[0]):
+                    if np.unique(np.equal(data[cell,:], wtd[:,i,j]))[0]:
+                        mapping[i,j] = 1
+                        break
+    print(mapping.shape)
+    print(np.sum(mapping))
+    np.save(os.path.join(inputpath, "mapping_px.npy"), mapping)
+    
+
+def select_batch():
+    from LSTM_setup import FEATURES_FILES, TARGETVAR_FILE
+    inputpath = os.path.join(os.path.dirname(INPUTPATH))
+    mapping = np.load(os.path.join(inputpath, "mapping_px.npy"))
+    print(mapping.shape)
+    for var in FEATURES_FILES:
+        print(var)
+        varpath = os.path.join(inputpath, var)
+        data = np.load(varpath)
+        data = data[:, mapping == 1]
+        data = data.reshape(data.shape[0], -1)
+        np.save(os.path.join(inputpath, "EU_px_training", var), data)
+    
+    data = np.load(os.path.join(inputpath, TARGETVAR_FILE))
+    data = data[:, mapping == 1]
+    data = data.reshape(data.shape[0], -1)
+    np.save(os.path.join(inputpath, "EU_px_training", TARGETVAR_FILE), data)
+
+    
+    print("select random batch")
+    
+    vardata = np.load(os.path.join(inputpath, "EU_px_training", TARGETVAR_FILE))
+    choices = np.random.choice(vardata.shape[1], 1000, False)
+    print(len(np.unique(choices)))
+    vardata = vardata[:, choices]
+    np.save(os.path.join(inputpath, "batch_EU_px_training", TARGETVAR_FILE), vardata)
+
+    np.save(os.path.join(inputpath, "batch_EU_px_training", "choices.npy"), choices)
+
+    for var in FEATURES_FILES:
+        print(var)
+        vardata = np.load(os.path.join(inputpath, "EU_px_training", var))
+        print(vardata.shape)
+        vardata = vardata[:, choices]
+        print(vardata.shape)
+        np.save(os.path.join(inputpath, "batch_EU_px_training", var), vardata)
+
+
+def static_timeseries_EU(varname):
+    filepath = os.path.join(os.path.dirname(INPUTPATH), varname)
+    soilind = np.load(filepath)
+    print(varname)
+
+    soilind = np.array(soilind)
+    soilind_1yr = np.array([])
+    soilind = np.expand_dims(soilind, axis=0)
+    for i in range(365):
+        soilind_1yr = np.concatenate((soilind_1yr,soilind), axis=0) if len(soilind_1yr)>0 else soilind
+    soilind_timeseries = np.array([])
+    for i in range(10):
+        soilind_timeseries = np.concatenate((soilind_timeseries,soilind_1yr), axis=0) if len(soilind_timeseries)>0 else soilind_1yr
+    print(soilind_timeseries.shape)
+    np.save(os.path.join(os.path.dirname(INPUTPATH),"EU_px_training", varname), soilind_timeseries)
+
+def subset_pixels():
+    from LSTM_setup import FEATURES_FILES, TARGETVAR_FILE
+    nb_chosen_pixels = 49
+    def test_choices(data):
+        passtest = []
+        for i in range(data.shape[1]):
+            if not np.std(data[:,i]) > 0:
+                passtest.append(i)
+        return passtest
+
+
+    inputpath = os.path.join(os.path.dirname(INPUTPATH))
+    print("select random batch")
+    
+    vardata = np.load(os.path.join(inputpath, "EU_px_training", TARGETVAR_FILE))
+    choices = np.random.choice(vardata.shape[1], nb_chosen_pixels, False)
+    print(len(np.unique(choices)))
+    vardata = vardata[:, choices]
+    failed = test_choices(vardata)
+    if failed:
+        print("target failed")
+    np.save(os.path.join(inputpath, "batch_EU_px_training3", TARGETVAR_FILE), vardata)
+
+    np.save(os.path.join(inputpath, "batch_EU_px_training3", "choices.npy"), choices)
+    return
+    for var in FEATURES_FILES:
+        print(var)
+        vardata = np.load(os.path.join(inputpath, "EU_px_training", var))
+        vardata = vardata[:, choices]
+        print(vardata.shape)
+        failed = test_choices(vardata)
+        if failed:
+            print(f"{var} failed")
+        np.save(os.path.join(inputpath, "batch_EU_px_training3", var), vardata)
+
+
+def subsetfromchoices(varname):
+    inputpath = os.path.join(os.path.dirname(INPUTPATH))
+    choices = np.load(os.path.join(inputpath, "batch_EU_px_training3", "choices.npy"))
+    mapping = np.load(os.path.join(inputpath, "mapping_px.npy"))
+    map_choices = np.zeros(mapping.shape)
+    include = np.where(mapping==1)
+    for choice in choices:
+        map_choices[include[0][choice],include[1][choice]] = 1
+
+    var = np.load(os.path.join(inputpath, varname))
+    var = var[:,map_choices==1]
+    print(varname)
+    print(var.shape)
+    #var = np.where(map_choices==1, var, np.nan)
+    np.save(os.path.join(inputpath, "batch_EU_px_training3", varname), var)
+    #np.save(os.path.join(inputpath, "batch_EU_px_training3", "map_choices.npy"), map_choices)
+
+def subsetfrommapping(varname):
+    inputpath = os.path.join(os.path.dirname(INPUTPATH))
+    mapping = np.load(os.path.join(inputpath, "mapping_px.npy"))
+    print(np.sum(mapping))
+    var = np.load(os.path.join(inputpath, varname))
+    var = var[:,mapping==1]
+    print(varname)
+    print(var.shape)
+    #var = np.where(map_choices==1, var, np.nan)
+    np.save(os.path.join(inputpath, "EU_px_training", varname), var)
+
+def subset_excl_waterbodies():
+    wtd = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
+
+    # exclude sides
+    wtd[:, :100,:] = 0
+    wtd[:, 432-10:,:] = 0
+    wtd[:, :,444-10:] = 0
+    wtd[:, :,:10] = 0
+
+    # set negative wtd to 0
+    wtd[wtd<0] = 0
+
+    # exclude waterbodies
+    std = np.std(wtd, axis=0)
+    include = np.where(std==0, 0, 1)
+    np.save(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"), include)
+    return include
+
+    
+
+def select_highcorr_pixels():
+    inputpath = os.path.join(os.path.dirname(INPUTPATH))
+    varname = "wtd"
+    
+    wtd = np.load(os.path.join(inputpath, f"{varname}.npy"))
+    print(wtd.shape)
+    y = wtd.shape[1]
+    x = wtd.shape[2]
+    data = wtd.reshape(wtd.shape[0], int(y)*int(x))
+    data = np.moveaxis(data, 0, -1)
+    print(data.shape)
+    return    
+    corr_matrix = np.corrcoef(data)
+    print(corr_matrix.shape)
+
+def rand_excl_waterbodies():
+    nb_samples = 100
+    include = subset_excl_waterbodies()
+    indexes = np.where(include==1)
+    print(len(indexes[0]))
+    samples = np.random.choice(len(indexes[0]), nb_samples, False)
+    samples.sort()
+    print(samples)
+    np.save(os.path.join(os.path.dirname(INPUTPATH), "rand100_EU_excl_waterbodies", "samples.npy"), samples)
+    print("saved samples")
+
+def select_rand_excl_waterbodies(varname):
+    inputpath = os.path.join(os.path.dirname(INPUTPATH), "rand100_EU_excl_waterbodies")
+    samples = np.load(os.path.join(inputpath, "samples.npy"))
+
+    include = np.load(os.path.join(os.path.dirname(inputpath), "included_excl_waterbodies.npy"))
+    indexes = np.where(include==1)
+    indi = indexes[0][samples]
+    indj = indexes[1][samples]
+
+    mapping_samples = np.zeros(include.shape)
+    for i in range(len(indi)):
+        mapping_samples[indi[i], indj[i]] = 1
+
+    var = np.load(os.path.join(os.path.dirname(inputpath), varname))
+    var = var[:,mapping_samples==1]
+    print(var.shape)
+    np.save(os.path.join(inputpath, varname), var)
+
+def select_maxcorr():
+    inputpath = os.path.join(os.path.dirname(INPUTPATH), "maxcorr100_EU")
+    include = np.load(os.path.join(os.path.dirname(inputpath), "included_excl_waterbodies.npy"))
+    wtd = np.load(os.path.join(os.path.dirname(inputpath), "wtd.npy"))
+    indexes = np.where(include==1)
+    wtd = wtd[:, include==1]
+    wtd = np.moveaxis(wtd, 0, -1)
+    print(wtd.shape)
+    corr_matrix = np.corrcoef(wtd)
+    excl_list = []
+    incl_list = []
+    for sample in range(100):
+        print(sample)
+        max_corr = 0
+        px_with_max_corr = 0
+    
+        for i in range(corr_matrix.shape[0]):
+            if not i in excl_list:
+                lngth = np.where(corr_matrix[i]>0.9)
+                lngth = len(lngth[0])
+                if lngth> max_corr:
+                    px_with_max_corr = i
+                    max_corr = lngth
+        excl = np.where(corr_matrix[px_with_max_corr]>0.9)
+        excl = excl[0].tolist()
+        excl_list.extend(excl)
+
+        incl_list.append(px_with_max_corr)
+
+    incl_list = np.array(incl_list)
+    np.save(os.path.join(inputpath, "maxcorr100_included_indx.npy"), incl_list)
+    
+def map_maxcorr(varname):
+    print(varname)
+    inputpath = os.path.join(os.path.dirname(INPUTPATH), "maxcorr100_EU")
+    include = np.load(os.path.join(os.path.dirname(inputpath), "included_excl_waterbodies.npy"))
+    incl_maxcorr100 = np.load(os.path.join(inputpath, "maxcorr100_included_indx.npy"))
+    var = np.load(os.path.join(os.path.dirname(inputpath), varname))
+    var = var[:, include==1]
+    var = var[:, incl_maxcorr100]
+    print(var.shape)
+    np.save(os.path.join(inputpath, varname), var)
