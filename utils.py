@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import netCDF4 as nc
 from LSTM_setup import *
 
-plt.rcParams.update({'font.size': 22})
+#plt.rcParams.update({'font.size': 22})
 
 
 def make_dir(dir_path):
@@ -39,6 +39,8 @@ def open_nc(filepath):
     ncfile = nc.Dataset(filepath)
     variables = ncfile.variables
     for var in variables:
+        print(ncfile[var])
+        continue
         if var!="lon" and var!="lat" and var!="time" and var!="rlat" and var!="rlon" and var!="rotated_pole" and var!="pressure" and var!="time_bnds":
             print(ncfile[var].long_name)
             #if ncfile[var].long_name == "2m relative humidity":
@@ -128,9 +130,8 @@ def singleregion_inputfeatures(start, end, means_stds):
     for inputvar in FEATURES_FILES:
         print(inputvar)
         raw_data = np.load(os.path.join(INPUTPATH, inputvar))
-        raw_data = raw_data[:,:,:]
-        data = raw_data.reshape(raw_data.shape[0], NB_CELLS)
-        data = data[start:end, :]
+        raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS) if len(raw_data.shape)>2 else raw_data
+        data = raw_data[start:end, :]
         data = np.moveaxis(data, 0, -1) # (cells, timeseries)
         
         if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys():
@@ -156,11 +157,10 @@ def singleregion_inputfeatures(start, end, means_stds):
 
 def singleregion_targetvar(start, end, means_stds):
     raw_data = np.load(os.path.join(INPUTPATH, TARGETVAR_FILE))
-    raw_data = raw_data[:,:,:]
     raw_data = np.nan_to_num(raw_data)
     raw_data[raw_data < 0.0] = 0
 
-    data = raw_data[start:end, :, :]
+    data = raw_data[start:end, :, :] if len(raw_data.shape)>2 else raw_data[start:end, :]
     
     if f"{TARGETVAR_FILE.replace('.npy','')}mean" not in means_stds.keys():
         means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"] = np.mean(data)
@@ -173,15 +173,43 @@ def singleregion_targetvar(start, end, means_stds):
     #print(np.unique(np.equal(raw_data[start, :, :], data.reshape(end-start, X, Y)[0,:,:])))
     return data, means_stds
 
-def multiregion_inputfeatures(start, end, means_stds):
+def meanstd_inputfeatures(start, end, means_stds, source_path):
+    for inputvar in FEATURES_FILES:
+        print(inputvar)
+        raw_data = np.load(os.path.join(source_path, inputvar))
+        raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS) if len(raw_data.shape)>2 else raw_data
+        data = raw_data[start:end, :]
+        data = np.moveaxis(data, 0, -1) # (cells, timeseries)
+        
+        if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys():
+            means_stds[f"{inputvar.replace('.npy','')}mean"] = np.mean(data)
+            means_stds[f"{inputvar.replace('.npy','')}std"] = np.std(data)
+    return means_stds
+
+def meanstd_targetvar(start, end, means_stds, source_path):
+    raw_data = np.load(os.path.join(source_path, TARGETVAR_FILE))
+
+    raw_data = np.nan_to_num(raw_data)
+    raw_data[raw_data < 0.0] = 0
+
+    data = raw_data[start:end, :, :] if len(raw_data.shape)>2 else raw_data[start:end, :]
+    
+    if f"{TARGETVAR_FILE.replace('.npy','')}mean" not in means_stds.keys():
+        means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"] = np.mean(data)
+        means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"] = np.std(data)
+    return means_stds
+
+
+def multiregion_inputfeatures(start, end, means_stds, source_path):
     all_inputs = np.array([])
     for inputvar in FEATURES_FILES:
         var = np.array([])
         meanstd = np.array([])
-        basins = [x for x in os.listdir(INPUTPATH) if os.path.isdir(os.path.join(INPUTPATH, x)) and x in SOURCE_REGION]
+        #basins = [x for x in os.listdir(INPUTPATH) if os.path.isdir(os.path.join(INPUTPATH, x)) and x in SOURCE_REGION]
+        basins = ["SEINE", "DOURO"]
         for basin in basins:
             print(inputvar, basin)
-            raw_data = np.load(os.path.join(INPUTPATH, basin, inputvar))
+            raw_data = np.load(os.path.join(source_path, basin, inputvar))
             raw_data = raw_data[:,:,:]
             data = raw_data.reshape(raw_data.shape[0], NB_CELLS)
             data = data[start:end, :]
@@ -214,12 +242,13 @@ def multiregion_inputfeatures(start, end, means_stds):
 
     return all_inputs, means_stds
 
-def multiregion_targetvar(start, end, means_stds):
+def multiregion_targetvar(start, end, means_stds, source_path):
     data = np.array([])
-    basins = [x for x in os.listdir(INPUTPATH) if os.path.isdir(os.path.join(INPUTPATH, x)) and x in SOURCE_REGION]
+    #basins = [x for x in os.listdir(INPUTPATH) if os.path.isdir(os.path.join(INPUTPATH, x)) and x in SOURCE_REGION]
+    basins = ["SEINE", "DOURO"]
     # get data for all basins
     for basin in basins:
-        raw_data = np.load(os.path.join(INPUTPATH, basin, TARGETVAR_FILE))
+        raw_data = np.load(os.path.join(source_path, basin, TARGETVAR_FILE))
         raw_data = raw_data[:,:,:]
         raw_data = np.nan_to_num(raw_data)
         raw_data[raw_data < 0.0] = 0
