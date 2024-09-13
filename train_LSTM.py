@@ -1,4 +1,5 @@
 import os
+import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
@@ -18,6 +19,11 @@ train_inputs, means_stds = singleregion_inputfeatures(0, TRAINING_PERIOD, means_
 
 # prepare input data of target variable and standardize
 obs_stand_train, means_stds = singleregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
+
+# save training data mean and std
+with open(os.path.join(OUTPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"), 'wb') as f:
+    pickle.dump(means_stds, f)
+f.close()
 
 print("creating dataloader")
 print(f"train features shape: {train_inputs.shape}") # (30*30*timeseries, lookback, features)
