@@ -1,4 +1,5 @@
 import os
+import pickle 
 import numpy as np
 import json
 import matplotlib.pyplot as plt
@@ -6,27 +7,31 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from plot_functions import plot_results, plot_diff, plot_MSE, correlation_map, calc_plot_bias, plot_Europe_avg, pixel_correlation_map, pixels_biasmap, pixel_plot_MSE, chosenpixels_in_EU, chosenpixels_heatmap
+from plot_functions import plot_results, plot_MSE, correlation_map, calc_plot_bias, plot_Europe_avg, chosenpixels_in_EU, chosenpixels_heatmap
 import matplotlib.dates as mdates
-import matplotlib.patches as mpatches
 from LSTM_setup import *
 from utils import singleregion_inputfeatures, singleregion_targetvar, multiregion_inputfeatures, multiregion_targetvar, meanstd_inputfeatures, meanstd_targetvar
 
 
-def load_LSTM(source_path, model_path):
+def load_LSTM(source_path, modelname):
     # define mean and std dictionary
-    means_stds = {}
+    #means_stds = {}
     # prepare input data, standardization, lookback and train time series
     #train_inputs, means_stds = singleregion_inputfeatures(0, TRAINING_PERIOD, means_stds)
     #train_inputs, means_stds = multiregion_inputfeatures(0, TRAINING_PERIOD, means_stds, source_path)
-    means_stds = meanstd_inputfeatures(0, TRAINING_PERIOD, means_stds, source_path)
+    #means_stds = meanstd_inputfeatures(0, TRAINING_PERIOD, means_stds, source_path)
     # prepare input data of target variable and standardize
     #obs_stand_train, means_stds = singleregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
     #obs_stand_train, means_stds = multiregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds, source_path)
-    means_stds = meanstd_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds, source_path)
+    #means_stds = meanstd_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds, source_path)
+
+    # import training mean and std (saved during training process)
+    with open(os.path.join(source_path, f"meanstd_{modelname}.pkl"), 'rb') as f:
+        means_stds = pickle.load(f)
+    f.close()
 
     # load the model
-    lstm_model = torch.load(model_path)
+    lstm_model = torch.load(os.path.join(source_path, f"{modelname}.pt"))
     criterion = nn.MSELoss()
 
     ################# Testing ######################
@@ -372,10 +377,10 @@ def EUpx_results():
     chosenpixels_in_EU(mse_2D_map, True, 0.001, 10, f"MSE")
     chosenpixels_heatmap(mse_2D_heatmap, True, 0.001, 10, f"MSE")
 
-#load_LSTM(
-#    os.path.join(os.path.dirname(INPUTPATH), "maxcorr100_EU"),
-#    os.path.join(os.path.dirname(OUTPUTPATH), "maxcorr100_EU", f"maxcorr100_EU_{MODEL_NAME}.pt")
-#    )
-#load_results()
+load_LSTM(
+    os.path.join(os.path.dirname(OUTPUTPATH), "rand100_EU_excl_waterbodies", "wtd_100_32_prvpdsmxyindlonlat"),
+    f"rand100_EU_excl_waterbodies_wtd_100_32_prvpdsmxyindlonlat"
+    )
+load_results()
 #timeseries_plot((2,4))
-EUpx_results()
+#EUpx_results()
