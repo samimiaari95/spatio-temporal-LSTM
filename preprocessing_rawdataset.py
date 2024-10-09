@@ -1,31 +1,37 @@
-import shutil
 import tarfile
 import os
 import numpy as np
-import pandas as pd
-from tqdm import tqdm
-from utils import read_nc, get_prudenceMask, delete_files, get_S4W_basin, make_dir
+import argparse
+from utils import read_nc, delete_files, make_dir
 from volumetric_soilmoisture import calculate_soilmoisture_diag
-import matplotlib.pyplot as plt
+from sklearn.preprocessing import OneHotEncoder
 from SLOTH.sloth.IO import readSa
 from LSTM_setup import INPUTPATH
 
 
-def copy_files():
+def extract_file_from_tar(filename, month):
+    # filename example: "parflow/wtd.nc"
     source_path = "/p/largedata2/detectdata/CentralDB/projects/d02/working_directory/sim/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline/postpro/ProductionV1"
-    dst_path = "/p/scratch/cslts/miaari1/detect/raw"
-    months = [month for month in os.listdir(source_path) if int(month.split(".")[0])>1999120100 and int(month.split(".")[0])<2011010100 and not month.endswith(".tar")]
-    months.sort()
-    model = "clm"
-    var = "QFLX_EVAP_TOT.nc"
-    for month in months:
-        shutil.copy(os.path.join(source_path, month, model, var), os.path.join(dst_path, month, var))
-        print(month, var)
+    dst_path = "/p/scratch/cslts/miaari1/raw"
+    files = [file for file in os.listdir(source_path) if f"{month}.tar" in file]
+    files.sort()
+    tarname = f"{month}.tar"
+    make_dir(os.path.join(dst_path, month))
+    
+    with tarfile.open(os.path.join(source_path, tarname), 'r:') as tar:
+        filedata = tar.extractfile(f'{month}/{filename}')
+
+        # --------------------- save file ---------------------------
+        with open(os.path.join(dst_path, month, f"{filename.split('/')[-1]}"), "wb") as outfile:
+            outfile.write(filedata.read())
+        outfile.close()
+    tar.close()
+
 
 def extract_tar(file_timesteps, month):
     
     source_path = "/p/largedata2/detectdata/CentralDB/projects/d02/working_directory/sim/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline/postpro/ProductionV1"
-    dst_path = "/p/scratch/cslts/miaari1/detect/raw"
+    dst_path = "/p/scratch/cslts/miaari1/raw"
     files = [file for file in os.listdir(source_path) if f"{month}.tar" in file]#if int(file.split(".")[0])>2001013000 and int(file.split(".")[0])<2001030100 and file.endswith(".tar")]
     files.sort() #2011010100
 
@@ -50,40 +56,16 @@ def extract_tar(file_timesteps, month):
                 outfile.close()
         tar.close()
         # calculate soil moisture
+        # use heat environment from diagnostics, without any modification. just comment in this script the not installed libraries 
         calculate_soilmoisture_diag(month)
         # delete saturation files
         delete_files(os.path.join(dst_path, month), "saturation")
 
 def extract_calc_soilmoisture(month):
-    exdir = "/p/scratch/cslts/miaari1/detect/2000010100/parflow/"
+    exdir = "/p/scratch/cslts/miaari1/2001010100/parflow/"
     filenames = [x.split(".out.")[-1] for x in os.listdir(exdir) if "_saturation.nc" in x]
     filenames.sort()
     extract_tar(file_timesteps=filenames, month=month)
-
-def mask_ME(lat2D, lon2D, data):
-    prudName = 'ME'
-    prudenceMask = get_prudenceMask(lat2D, lon2D, prudName)
-    for i in range(data.shape[0]):
-        masked_values = np.ma.masked_where(prudenceMask==False, data[i][:,:])
-        data[i,:,:] = masked_values
-    #print(np.ma.count(masked_values))
-    return data
-
-def mask_FR(lat2D, lon2D, data):
-    prudName = 'FR'
-    prudenceMask = get_prudenceMask(lat2D, lon2D, prudName)
-    for i in range(data.shape[0]):
-        masked_values = np.ma.masked_where(prudenceMask==False, data[i][:,:])
-        data[i,:,:] = masked_values
-    return data
-
-def mask_matrix(lat2D, lon2D, data, region):
-    prudenceMask = get_S4W_basin(lat2D, lon2D, region)
-    for i in range(data.shape[0]):
-        masked_values = np.ma.masked_where(prudenceMask==False, data[i][:,:])
-        data[i,:,:] = masked_values
-    print(np.ma.count(data[1,:,:]))
-    return data
     
 def temporalAgg_matrix(data, timestep, agg):
     daily_data = []
@@ -102,123 +84,9 @@ def temporalAgg_matrix(data, timestep, agg):
         daily_data.append(daily_var)
     return np.array(daily_data)
 
-def temporalAgg(df, timestep, agg, var):
-    daily_data = {"day": [], f"{var}": []}
-    nb_iter = 1
-    for i in range(0, len(df), int(60*24/timestep)):
-        daily_data["day"].append(nb_iter)
-        daily_var = df[f"{var}"].iloc[i:i+int(60*24/timestep)]
-
-        if agg == "sum":
-            daily_var = np.sum(daily_var.to_list())
-        elif agg == "mean":
-            daily_var = np.mean(daily_var.to_list())
-        elif agg == "max":
-            daily_var = np.max(daily_var.to_list())
-        elif agg == "min":
-            daily_var = np.min(daily_var.to_list())
-        
-        daily_data[f"{var}"].append(daily_var)
-        nb_iter += 1
-    return pd.DataFrame(daily_data)
-
-def spatialAgg(data, agg, var):
-    dic_data = {"time": [], f"{var}": []}
-    for t in range(data.shape[0]):
-        dic_data["time"].append(t)
-        var_timestep = data[t,:,:]
-        if agg == "sum":
-            var_timestep = np.sum(var_timestep)
-        elif agg == "mean":
-            var_timestep = np.mean(var_timestep)
-        elif agg == "max":
-            var_timestep = np.max(var_timestep)
-        elif agg == "min":
-            var_timestep = np.min(var_timestep)
-
-        dic_data[f"{var}"].append(var_timestep)
-    return pd.DataFrame(dic_data)
-
-def detectdata_preprocessing():
-    # TODO subsurfstorage should be only in fully saturated zone
-    subsurfstor = "subSurfStor.nc"
-    tasmax = "TMAX_2M_ts.nc"
-    tasmin = "TMIN_2M_ts.nc"
-    precip = "TOT_PREC_ts.nc"
-    wtd = "wtd.nc"
-    evap = "QFLX_EVAP_TOT.nc"
-    # variables to consider from dataset
-    vars = ["subSurfStor.nc", "TMAX_2M_ts.nc", "TMIN_2M_ts.nc", "TOT_PREC_ts.nc", "QFLX_EVAP_TOT.nc", "wtd.nc"]
-    # define timesteps of the models
-    timesteps = {"parflow": 15, "clm": 60, "cosmo": 60}
-    # prepare postprocessed dataframe dictionary
-    preprocessed_df = {"date": [], "TOT_PREC": [], "TMAX_2M": [], "TMIN_2M": [], "QFLX_EVAP_TOT": [], "wtd": [], "subSurfStor": []}
-    # raw data path
-    dirpath = "/p/scratch/cslts/miaari1/detect/raw"
-    # iterate through the folders of months in the dataset
-    for month in tqdm(sorted(os.listdir(dirpath)), desc = 'months'):
-        print(month)
-        # iterate for every variable (.nc file) in each month
-        for var in vars:
-            varname = var.replace("_ts.nc", ".nc").split(".nc")[0]
-            var_data = read_nc(filepath=os.path.join(dirpath, month, var), var=varname)
-            lat2D = read_nc(filepath=os.path.join(dirpath, month, var), var="lat")
-            lon2D = read_nc(filepath=os.path.join(dirpath, month, var), var="lon")
-            # set the timestep based on the model produced output
-            if var == subsurfstor:
-                # remove the first and last timestep from parflow output
-                var_data = var_data[1:-1,:,:]
-                timestep = timesteps["parflow"]
-                Sagg = "sum"
-                Tagg = "mean"
-            elif var == wtd:
-                # remove the first and last timestep from parflow output
-                var_data = var_data[1:-1,:,:]
-                timestep = timesteps["parflow"]
-                Sagg = "mean"
-                Tagg = "mean"
-            elif var == evap:
-                timestep = timesteps["clm"]
-                Sagg = "sum"
-                Tagg = "sum"
-            elif var == precip:
-                # remove the last timestep from cosmo output
-                var_data = var_data[:-1,:,:]
-                timestep = timesteps["cosmo"]
-                Sagg = "sum"
-                Tagg = "sum"
-            elif var == tasmax:
-                # remove the last timestep from cosmo output
-                var_data = var_data[:-1,:,:]
-                timestep = timesteps["cosmo"]
-                Sagg = "max"
-                Tagg = "max"
-            elif var == tasmin:
-                # remove the last timestep from cosmo output
-                var_data = var_data[:-1,:,:]
-                timestep = timesteps["cosmo"]
-                Sagg = "min"
-                Tagg = "min"
-
-            # TODO mask to study region here (currently on prudence ME)
-            #var_data = mask_ME(lat2D=lat2D, lon2D=lon2D, data=var_data)
-            var_data = mask_FR(lat2D=lat2D, lon2D=lon2D, data=var_data)
-            # call aggregation function for every variable
-            df = spatialAgg(data=var_data, agg=Sagg, var=varname)
-            df = temporalAgg(df, timestep, Tagg, varname)
-            dates = [f"{month[:6]}{str(day).zfill(2)}" for day in df["day"].to_list()]
-            # append data
-            preprocessed_df[varname].extend(df[varname].to_list())
-        preprocessed_df["date"].extend(dates)
-    preprocessed_df = pd.DataFrame(preprocessed_df)
-    preprocessed_df.sort_values(by=["date"], inplace=True)
-    preprocessed_df.reset_index(inplace=True)
-    preprocessed_df.to_csv("/p/project/cslts/miaari1/python_scripts/DailyScriptBox/FR_precip_Tmax_Tmin_subsurfstor_evap_wtd.csv", index=False)
-
-
 def preprocess_matrix_sm(month):
-    dirpath = "/p/scratch/cslts/miaari1/detect/soilmoisture"
-    outpath = "/p/scratch/cslts/miaari1/detect/raw"
+    dirpath = "/p/scratch/cslts/miaari1/soilmoisture"
+    outpath = "/p/scratch/cslts/miaari1/raw"
     #months = os.listdir("/p/scratch/cslts/miaari1/detect/raw")
     #for month in months:
     monthfiles = [x for x in os.listdir(dirpath) if f"{month}" in x]
@@ -230,6 +98,7 @@ def preprocess_matrix_sm(month):
             continue
         day = dailyfile.replace(f"{month}.out.","").replace("_volsm.nc", "")
         day = (int(day)-1)/96 + 1
+        print(month)
         print(day)
         dailydata = dailydata[:, 6, :, :] # NOTE soil moisture only at layer 6
         dailytimestep = np.mean(dailydata, axis=0)
@@ -240,7 +109,7 @@ def preprocess_matrix_sm(month):
 
 
 def preprocess_matrix(month):
-    outpath = "/p/scratch/cslts/miaari1/detect/raw"
+    outpath = "/p/scratch/cslts/miaari1/raw"
     # define variables filenames
     subsurfstor = "subSurfStor.nc"
     tasmax = "TMAX_2M_ts.nc"
@@ -254,7 +123,7 @@ def preprocess_matrix(month):
     timesteps = {"parflow": 15, "clm": 60, "cosmo": 60}
     # iterate through the variables in one month
     for var in vars:
-        print(var)
+        #print(var)
         varname = var.replace("_ts.nc", ".nc").split(".nc")[0]
         var_data = read_nc(filepath=os.path.join(outpath, month, var), var=varname)
         lat2D = read_nc(filepath=os.path.join(outpath, month, var), var="lat")
@@ -290,32 +159,34 @@ def preprocess_matrix(month):
             Tagg = "min"
         
         data = temporalAgg_matrix(var_data, timestep, Tagg)
-        print("final")
-        print(data.shape)
+        #print(data.shape)
         outfile = os.path.join(outpath, month, f"{varname}_{month}.npy")
         np.save(outfile, data)
 
 
 # NOTE the parse arguments were only used to parallel compute the soil moisture
-#parser = argparse.ArgumentParser(description='Tell me what this script can do!.')
+#parser = argparse.ArgumentParser(description='insert the preprocessing month')
 #parser.add_argument('--month', type=str, required=True,
 #                    help='yyyymmdd00') # month of simulation
 #args = parser.parse_args()
 #month = args.month
+#extract_calc_soilmoisture(month=month)
+#extract_file_from_tar(filename,month)
 #preprocess_matrix(f"{month}")
 #preprocess_matrix_sm(month=month)
 
 def conc_vars():
     dirpath = "/p/scratch/cslts/miaari1/raw"
-    outpath = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs"
-    #output_dic = {"TOT_PREC": np.array([]), "TMAX_2M": np.array([]), "TMIN_2M": np.array([]), "QFLX_EVAP_TOT": np.array([]), "wtd": np.array([]), "subSurfStor": np.array([]), "soilmoisture": np.array([])}
-    output_dic = {"vpd": np.array([])}
+    outpath = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts"
+    output_dic = {"soilmoisture": np.array([])}
+    #output_dic = {"QFLX_EVAP_TOT": np.array([]), "soilmoisture": np.array([]), "subSurfStor": np.array([]),
+    #              "TMAX_2M": np.array([]), "TMIN_2M": np.array([]), "TOT_PREC": np.array([]), "wtd": np.array([])}
 
     months = [x for x in os.listdir(dirpath)]
     months.sort()
     for month in months:
         print(month)
-        vars = [x for x in os.listdir(os.path.join(dirpath, month)) if x.endswith(".npy") and "vpd" in x]
+        vars = [x for x in os.listdir(os.path.join(dirpath, month)) if x.endswith(".npy") and "soilmoisture" in x]
         for var in vars:
             varname = var.replace(f"_{month}.npy","")
             data = np.load(os.path.join(dirpath, month, var))
@@ -326,6 +197,7 @@ def conc_vars():
                 output_dic[f"{varname}"] = data
 
     for key in output_dic.keys():
+        print(key)
         print(output_dic[key].shape)
         np.save(os.path.join(outpath, f"{key}.npy"), output_dic[key])
 
@@ -336,105 +208,19 @@ def savelonlat():
     np.save(os.path.join(outdir, "lon2D.npy"), np.array(lon2D))
     np.save(os.path.join(outdir, "lat2D.npy"), np.array(lat2D))
 
-def get_min_rowcol(data, region):
-    lon2D = np.load("/p/project1/cslts/miaari1/python_scripts/DailyScriptBox/outputs/LSTM_inputs/lon2D.npy")
-    lat2D = np.load("/p/project1/cslts/miaari1/python_scripts/DailyScriptBox/outputs/LSTM_inputs/lat2D.npy")
-    maskeddata = mask_matrix(lat2D=lat2D, lon2D=lon2D, data=data, region=region)
-    min_i = 500
-    min_j = 500
-    max_i = 0
-    max_j = 0
-    for i in range(maskeddata.shape[1]):
-        for j in range(len(maskeddata[1,i,:])):
-            if not np.ma.is_masked(maskeddata[1,i,j]):
-                if i<min_i:
-                    min_i = i
-                #if i>max_i:
-                #    max_i = i
-                if j<min_j:
-                    min_j = j
-                #if j>max_j:
-                #    max_j = j
-    return min_i, min_j
-
-def mask_vars():
-    dirpath = "/p/project/cslts/miaari1/python_scripts/DailyScriptBox/outputs/LSTM_inputs"
-    vars = [x for x in os.listdir(dirpath) if x.endswith(".npy")]
-    region = "DANUBE_DOWNSTREAM"
-    for var in vars:
-        print(var)
-        data = np.load(os.path.join(dirpath, var))
-        data = np.ma.array(data)
-        #min_i, min_j = get_min_rowcol(data, region)
-        min_i = 160
-        min_j = 290
-        if len(data.shape)==3:
-            data = data[:, min_i:min_i+30, min_j:min_j+30]
-        elif len(data.shape)==2:
-            data = data[min_i:min_i+30, min_j:min_j+30]
-        data = np.array(data)
-        print(data.shape)
-
-        np.save(os.path.join(dirpath, region, var), data)
-    return
-
-def latlon_plot():
-    data = read_nc(filepath="/p/oldscratch/cslts/miaari1/detect/raw/2001010100/wtd.nc", var="wtd")
-    avg_diff = plt
-    avg_diff.figure(figsize=(16,9))
-    avg_diff.imshow(data[0,:,:], interpolation='nearest')
-    avg_diff.colorbar()#.avg_diff.set_ylabel('wtd (m)')
-    avg_diff.gca().invert_yaxis()
-    avg_diff.savefig("/p/project1/cslts/miaari1/python_scripts/DailyScriptBox/wtd.png")
-
-def preprocess_topography():
-    from LSTM_setup import INPUTPATH
-    # topography height in m
-    topo_file = read_nc(filepath="/p/scratch/cslts/miaari1/static/topodata_CLM_EUR-11_TSMP_FZJ-IBG3_CLMPFLDomain_444x432.nc", var="TOPO")
-    topo_file = np.array(topo_file)
-    topo_1yr = np.array([])
-    topo_file = np.expand_dims(topo_file, axis=0)
-    print(topo_file.shape)
-    for i in range(365):
-        print(f"topo {i}")
-        topo_1yr = np.concatenate((topo_1yr,topo_file), axis=0) if len(topo_1yr)>0 else topo_file
-
-    topo_timeseries = np.array([])
-    for i in range(10):
-        topo_timeseries = np.concatenate((topo_timeseries,topo_1yr), axis=0) if len(topo_timeseries)>0 else topo_1yr
-    print(topo_timeseries.shape)
-    np.save(os.path.join(os.path.dirname(INPUTPATH), "topo.npy"), topo_timeseries)
-
-def preprocess_porosity():
-    from LSTM_setup import INPUTPATH
-    # porosity
-    #open_nc("/p/scratch/cslts/miaari1/static/porosity.nc")
-    poro_file = read_nc(filepath="/p/scratch/cslts/miaari1/static/porosity.nc", var="porosity")
-    poro_file = poro_file[0, 6, :, :] # porosity at layer 6, same layer as soil moisture at 1m depth
-    poro_file = np.array(poro_file)
-    poro_1yr = np.array([])
-    poro_file = np.expand_dims(poro_file, axis=0)
-    print(poro_file.shape)
-    for i in range(365):
-        print(i)
-        poro_1yr = np.concatenate((poro_1yr,poro_file), axis=0) if len(poro_1yr)>0 else poro_file
-    poro_timeseries = np.array([])
-    for i in range(10):
-        poro_timeseries = np.concatenate((poro_timeseries,poro_1yr), axis=0) if len(poro_timeseries)>0 else poro_1yr
-    print(poro_timeseries.shape)
-    np.save(os.path.join(os.path.dirname(INPUTPATH), "porosity_1mdepth.npy"), poro_timeseries)
-
 def crop_vars(varname):
     from LSTM_setup import INPUTPATH
     var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
-    i = 163
-    j = 100
-    grid_size = 5
-    var = var[:, i:i+grid_size, j:j+grid_size]
-
     print(varname)
     print(var.shape)
-    np.save(os.path.join(INPUTPATH, varname), var)
+    # douro
+    i = 150
+    j = 95
+    grid_size = 30
+    var = var[:, i:i+grid_size, j:j+grid_size]
+
+    print(var.shape)
+    np.save(os.path.join(INPUTPATH, "DOURO_30x30", varname), var)
 
 def features_correlation():
     from LSTM_setup import INPUTPATH
@@ -460,28 +246,6 @@ def sa_to_npy():
     ind = ind[0,:,:]
     print(ind.shape)
     np.save(os.path.join(os.path.dirname(INPUTPATH), "slopey.npy"), ind)
-
-def static_timeseries(varname):
-    filepath = os.path.join(os.path.dirname(INPUTPATH), varname)
-    soilind = np.load(filepath)
-    print(varname)
-    i = 163
-    j = 100
-    grid_size = 5
-    soilind = soilind[i:i+grid_size, j:j+grid_size]
-    print(soilind)
-    print(soilind.shape)
-
-    soilind = np.array(soilind)
-    soilind_1yr = np.array([])
-    soilind = np.expand_dims(soilind, axis=0)
-    for i in range(365):
-        soilind_1yr = np.concatenate((soilind_1yr,soilind), axis=0) if len(soilind_1yr)>0 else soilind
-    soilind_timeseries = np.array([])
-    for i in range(10):
-        soilind_timeseries = np.concatenate((soilind_timeseries,soilind_1yr), axis=0) if len(soilind_timeseries)>0 else soilind_1yr
-    print(soilind_timeseries.shape)
-    np.save(os.path.join(INPUTPATH, f"ts_{varname}"), soilind_timeseries)
 
 def preprocess_raw_vpd():
     outpath = "/p/scratch/cslts/miaari1/raw"
@@ -517,214 +281,17 @@ def preprocess_raw_vpd():
 
 def conc_basins():
     from LSTM_setup import FEATURES_FILES, TARGETVAR_FILE
-    basins = [x for x in os.listdir(os.path.dirname(INPUTPATH)) if "." not in x and "+" not in x]
-    foldername = "+".join(basins)
-    vars = FEATURES_FILES
-    vars.append(TARGETVAR_FILE)
+    basins = ["SEINE_30x30", "DOURO_30x30"]
+    foldername = "SEINE+DOURO_30x30"
+    vars = ["TOT_PREC.npy", "vpd.npy", "TMAX_2M.npy", "TMIN_2M.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", "soilind.npy", "topo.npy", "porosity_1mdepth.npy", "QFLX_EVAP_TOT.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
+    vars = ["wtd.npy"]
     for var in vars:
-        var_basins = {basin: np.load(os.path.join(os.path.dirname(INPUTPATH), basin, var)) for basin in basins}
+        var_basins = {basin: np.load(os.path.join(INPUTPATH, basin, var)) for basin in basins}
         data = np.array([])
         for basin in var_basins.keys():
             print(var, basin)
             data = np.concatenate((data, var_basins[basin]), axis=0) if len(data)>0 else var_basins[basin]
-        savedir = os.path.join(os.path.dirname(INPUTPATH), foldername)
-        make_dir(savedir)
-        np.save(os.path.join(savedir, var), data)
-    
-def select_pixels():
-    import json
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-    varname = "wtd"
-    
-    wtd = np.load(os.path.join(inputpath, f"{varname}.npy"))
-    print(wtd.shape)
-    y = wtd.shape[1]
-    x = wtd.shape[2]
-
-    data = wtd[:, :int(y/2), :].reshape(wtd.shape[0], int(y/2)*int(x))
-    data = np.moveaxis(data, 0, -1)
-    
-    corr_matrix = np.corrcoef(data)
-
-    include = np.ones(corr_matrix.shape[0])
-    ind = 0
-    for i in range(corr_matrix.shape[0]):
-        if include[i]:
-            print(i)
-            element = corr_matrix[i,:]
-            indices = np.where(element > 0.8)
-            indices_list = indices[0].tolist()
-            for item in indices_list:
-                if not item==i:
-                    ind += 1
-                    include[item] = False
-    print(sum(include))
-    include1 = include
-
-    # second batch
-    data = wtd[:, int(y/2):, :].reshape(wtd.shape[0], int(y/2)*int(x))
-    data = np.moveaxis(data, 0, -1)
-
-    corr_matrix = np.corrcoef(data)
-
-    include = np.ones(corr_matrix.shape[0])
-    ind = 0
-    for i in range(corr_matrix.shape[0]):
-        if include[i]:
-            print(i)
-            element = corr_matrix[i,:]
-            indices = np.where(element > 0.8)
-            indices_list = indices[0].tolist()
-            for item in indices_list:
-                if not item==i:
-                    ind += 1
-                    include[item] = False
-    print(sum(include1))
-    print(sum(include))
-    selected = np.append(include1, include)
-    print(selected.shape)
-    print(np.unique(selected))
-    print(sum(selected))
-    np.save(os.path.join(inputpath, "selected_1d.npy"), selected)
-
-    return
-
-
-def filter_sea():
-    import matplotlib.pyplot as plt
-    import cartopy.crs as ccrs
-
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-    data = np.load(os.path.join(inputpath, "selected_1d.npy"))
-    wtd = np.load(os.path.join(inputpath, f"wtd.npy"))
-    y = wtd.shape[1]
-    x = wtd.shape[2]
-    data = data.reshape(y,x)
-
-    for i in range(wtd.shape[1]):
-        for j in range(wtd.shape[2]):
-            if not np.std(wtd[:,i,j]) > 0:
-                data[i,j] = 0
-    data[:100,:] = 0
-    data[432-10:,:] = 0
-    data[:,444-10:] = 0
-    data[:,:10] = 0
-
-    data[432-120:,:200] = 0
-
-    print(np.sum(data))
-
-    np.save(os.path.join(inputpath, "filtered_selected_pixels.npy"), data)
-
-    projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
-
-    # Create a figure and an axis with a Cartopy projection
-    fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
-
-    # Plot the data
-    # TODO set max limit
-    lons = np.load(os.path.join(inputpath, "lon2D.npy"))
-    lats = np.load(os.path.join(inputpath, "lat2D.npy"))
-    
-    cla = ax.pcolormesh(lons, lats, data, cmap='viridis', transform=ccrs.PlateCarree())
-
-    # Add a colorbar
-    cbar = plt.colorbar(cla, ax=ax, orientation='vertical', pad=0.05)
-    cbar.set_label('Water table depth (mm)')
-
-    # Add coastlines, gridlines, etc.
-    ax.coastlines()
-    ax.gridlines(draw_labels=True)
-    
-    print("saving europe")
-    fig.savefig(os.path.join(inputpath, "Europe_filterselected.png"))
-
-def train_batch():
-    import matplotlib.pyplot as plt
-    import cartopy.crs as ccrs
-
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-    mapping = np.load(os.path.join(inputpath, "filtered_selected_pixels.npy"))
-    wtd = np.load(os.path.join(inputpath, f"wtd.npy"))
-    y = wtd.shape[1]
-    x = wtd.shape[2]
-
-    filtered_data = wtd[:, mapping == 1]
-
-    # If you want to reshape the filtered data to a 2D array with dimensions (timeseries, selected_points)
-    filtered_data = filtered_data.reshape(wtd.shape[0], -1)
-    print(filtered_data.shape)
-    # second batch
-    #data = filtered_data.reshape(filtered_data.shape[0], int(y/2)*int(x))
-    data = np.moveaxis(filtered_data, 0, -1)
-    print(data.shape)
-
-    corr_matrix = np.corrcoef(data)
-
-    include = np.ones(corr_matrix.shape[0])
-    for i in range(corr_matrix.shape[0]):
-        if include[i]:
-            element = corr_matrix[i,:]
-            indices = np.where(element > 0.8)
-            indices_list = indices[0].tolist()
-            for item in indices_list:
-                if not item==i:
-                    include[item] = False
-
-    data = data[ include == 1, :]
-    print(data.shape)
-
-    for i in range(y):
-        for j in range(x):
-            print(i,j)
-            if mapping[i,j]:
-                mapping[i,j] = 0
-                for cell in range(data.shape[0]):
-                    if np.unique(np.equal(data[cell,:], wtd[:,i,j]))[0]:
-                        mapping[i,j] = 1
-                        break
-    print(mapping.shape)
-    print(np.sum(mapping))
-    np.save(os.path.join(inputpath, "mapping_px.npy"), mapping)
-    
-
-def select_batch():
-    from LSTM_setup import FEATURES_FILES, TARGETVAR_FILE
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-    mapping = np.load(os.path.join(inputpath, "mapping_px.npy"))
-    print(mapping.shape)
-    for var in FEATURES_FILES:
-        print(var)
-        varpath = os.path.join(inputpath, var)
-        data = np.load(varpath)
-        data = data[:, mapping == 1]
-        data = data.reshape(data.shape[0], -1)
-        np.save(os.path.join(inputpath, "EU_px_training", var), data)
-    
-    data = np.load(os.path.join(inputpath, TARGETVAR_FILE))
-    data = data[:, mapping == 1]
-    data = data.reshape(data.shape[0], -1)
-    np.save(os.path.join(inputpath, "EU_px_training", TARGETVAR_FILE), data)
-
-    
-    print("select random batch")
-    
-    vardata = np.load(os.path.join(inputpath, "EU_px_training", TARGETVAR_FILE))
-    choices = np.random.choice(vardata.shape[1], 1000, False)
-    print(len(np.unique(choices)))
-    vardata = vardata[:, choices]
-    np.save(os.path.join(inputpath, "batch_EU_px_training", TARGETVAR_FILE), vardata)
-
-    np.save(os.path.join(inputpath, "batch_EU_px_training", "choices.npy"), choices)
-
-    for var in FEATURES_FILES:
-        print(var)
-        vardata = np.load(os.path.join(inputpath, "EU_px_training", var))
-        print(vardata.shape)
-        vardata = vardata[:, choices]
-        print(vardata.shape)
-        np.save(os.path.join(inputpath, "batch_EU_px_training", var), vardata)
-
+        np.save(os.path.join(INPUTPATH, var), data)
 
 def static_timeseries_EU(varname):
     filepath = os.path.join(os.path.dirname(INPUTPATH), varname)
@@ -741,70 +308,6 @@ def static_timeseries_EU(varname):
         soilind_timeseries = np.concatenate((soilind_timeseries,soilind_1yr), axis=0) if len(soilind_timeseries)>0 else soilind_1yr
     print(soilind_timeseries.shape)
     np.save(os.path.join(os.path.dirname(INPUTPATH),"EU_px_training", varname), soilind_timeseries)
-
-def subset_pixels():
-    from LSTM_setup import FEATURES_FILES, TARGETVAR_FILE
-    nb_chosen_pixels = 49
-    def test_choices(data):
-        passtest = []
-        for i in range(data.shape[1]):
-            if not np.std(data[:,i]) > 0:
-                passtest.append(i)
-        return passtest
-
-
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-    print("select random batch")
-    
-    vardata = np.load(os.path.join(inputpath, "EU_px_training", TARGETVAR_FILE))
-    choices = np.random.choice(vardata.shape[1], nb_chosen_pixels, False)
-    print(len(np.unique(choices)))
-    vardata = vardata[:, choices]
-    failed = test_choices(vardata)
-    if failed:
-        print("target failed")
-    np.save(os.path.join(inputpath, "batch_EU_px_training3", TARGETVAR_FILE), vardata)
-
-    np.save(os.path.join(inputpath, "batch_EU_px_training3", "choices.npy"), choices)
-    return
-    for var in FEATURES_FILES:
-        print(var)
-        vardata = np.load(os.path.join(inputpath, "EU_px_training", var))
-        vardata = vardata[:, choices]
-        print(vardata.shape)
-        failed = test_choices(vardata)
-        if failed:
-            print(f"{var} failed")
-        np.save(os.path.join(inputpath, "batch_EU_px_training3", var), vardata)
-
-
-def subsetfromchoices(varname):
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-    choices = np.load(os.path.join(inputpath, "batch_EU_px_training3", "choices.npy"))
-    mapping = np.load(os.path.join(inputpath, "mapping_px.npy"))
-    map_choices = np.zeros(mapping.shape)
-    include = np.where(mapping==1)
-    for choice in choices:
-        map_choices[include[0][choice],include[1][choice]] = 1
-
-    var = np.load(os.path.join(inputpath, varname))
-    var = var[:,map_choices==1]
-    print(varname)
-    print(var.shape)
-    #var = np.where(map_choices==1, var, np.nan)
-    np.save(os.path.join(inputpath, "batch_EU_px_training3", varname), var)
-    #np.save(os.path.join(inputpath, "batch_EU_px_training3", "map_choices.npy"), map_choices)
-
-def subsetfrommapping(varname):
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-    mapping = np.load(os.path.join(inputpath, "mapping_px.npy"))
-    print(np.sum(mapping))
-    var = np.load(os.path.join(inputpath, varname))
-    var = var[:,mapping==1]
-    print(varname)
-    print(var.shape)
-    #var = np.where(map_choices==1, var, np.nan)
-    np.save(os.path.join(inputpath, "EU_px_training", varname), var)
 
 def subset_excl_waterbodies():
     wtd = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
@@ -824,91 +327,88 @@ def subset_excl_waterbodies():
     np.save(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"), include)
     return include
 
-    
+def remove_shallow_wtd():
+    mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
+    wtdorg = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
+    wtd = wtdorg[:, mapping==1]
 
-def select_highcorr_pixels():
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-    varname = "wtd"
-    
-    wtd = np.load(os.path.join(inputpath, f"{varname}.npy"))
-    print(wtd.shape)
-    y = wtd.shape[1]
-    x = wtd.shape[2]
-    data = wtd.reshape(wtd.shape[0], int(y)*int(x))
-    data = np.moveaxis(data, 0, -1)
-    print(data.shape)
-    return    
-    corr_matrix = np.corrcoef(data)
-    print(corr_matrix.shape)
+    meanwtd = np.mean(wtd, axis=0)
+    deepind = np.where(meanwtd>1)
+    print(deepind)
+    print(len(deepind[0]))
+    map_deepind = np.zeros(mapping.shape)
+    include = np.where(mapping==1)
+    for i, ind in enumerate(deepind[0]):
+        map_deepind[include[0][ind],include[1][ind]] = 1
+    print(map_deepind.shape)
+    print(np.sum(map_deepind))
+    np.save(os.path.join(os.path.dirname(INPUTPATH), "mapping_1mstd.npy"), include)
 
-def rand_excl_waterbodies():
-    nb_samples = 100
-    include = subset_excl_waterbodies()
-    indexes = np.where(include==1)
-    print(len(indexes[0]))
-    samples = np.random.choice(len(indexes[0]), nb_samples, False)
+def select_1mstd_wtd():
+    mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
+    wtdorg = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
+    wtd = wtdorg[:, mapping==1]
+
+    std = np.std(wtd, axis=0)
+    #include = np.where(std<1, 0, 1)
+    include = np.where(std>=1)
+    print(include)
+
+    map_1mstd = np.zeros(mapping.shape)
+    incmap = np.where(mapping==1)
+    for i, ind in enumerate(include[0]):
+        map_1mstd[incmap[0][ind],incmap[1][ind]] = 1
+    
+    print(map_1mstd.shape)
+    print(np.sum(map_1mstd))
+    np.save(os.path.join(os.path.dirname(INPUTPATH), "mapping_1mstd.npy"), map_1mstd)
+
+
+def create_choices():
+    mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_1mstd.npy"))
+    map1d = np.where(mapping==1)
+    nb_samples = 225
+    samples = np.random.choice(len(map1d[0]), nb_samples, False)
     samples.sort()
-    print(samples)
-    np.save(os.path.join(os.path.dirname(INPUTPATH), "rand100_EU_excl_waterbodies", "samples.npy"), samples)
-    print("saved samples")
+    map_choices = np.zeros(mapping.shape)
+    for i, sample in enumerate(samples):
+        map_choices[map1d[0][sample],map1d[1][sample]] = 1
 
-def select_rand_excl_waterbodies(varname):
-    inputpath = os.path.join(os.path.dirname(INPUTPATH), "rand100_EU_excl_waterbodies")
-    samples = np.load(os.path.join(inputpath, "samples.npy"))
-
-    include = np.load(os.path.join(os.path.dirname(inputpath), "included_excl_waterbodies.npy"))
-    indexes = np.where(include==1)
-    indi = indexes[0][samples]
-    indj = indexes[1][samples]
-
-    mapping_samples = np.zeros(include.shape)
-    for i in range(len(indi)):
-        mapping_samples[indi[i], indj[i]] = 1
-
-    var = np.load(os.path.join(os.path.dirname(inputpath), varname))
-    var = var[:,mapping_samples==1]
-    print(var.shape)
-    np.save(os.path.join(inputpath, varname), var)
-
-def select_maxcorr():
-    inputpath = os.path.join(os.path.dirname(INPUTPATH), "maxcorr100_EU")
-    include = np.load(os.path.join(os.path.dirname(inputpath), "included_excl_waterbodies.npy"))
-    wtd = np.load(os.path.join(os.path.dirname(inputpath), "wtd.npy"))
-    indexes = np.where(include==1)
-    wtd = wtd[:, include==1]
-    wtd = np.moveaxis(wtd, 0, -1)
-    print(wtd.shape)
-    corr_matrix = np.corrcoef(wtd)
-    excl_list = []
-    incl_list = []
-    for sample in range(100):
-        print(sample)
-        max_corr = 0
-        px_with_max_corr = 0
+    print(map_choices.shape)
+    print(np.sum(map_choices))
+    np.save(os.path.join(INPUTPATH, "choices.npy"), map_choices)
     
-        for i in range(corr_matrix.shape[0]):
-            if not i in excl_list:
-                lngth = np.where(corr_matrix[i]>0.9)
-                lngth = len(lngth[0])
-                if lngth> max_corr:
-                    px_with_max_corr = i
-                    max_corr = lngth
-        excl = np.where(corr_matrix[px_with_max_corr]>0.9)
-        excl = excl[0].tolist()
-        excl_list.extend(excl)
-
-        incl_list.append(px_with_max_corr)
-
-    incl_list = np.array(incl_list)
-    np.save(os.path.join(inputpath, "maxcorr100_included_indx.npy"), incl_list)
-    
-def map_maxcorr(varname):
+def crop_vars_mapping(varname):
+    mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
+    var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
+    var = var[:,mapping==1]
     print(varname)
-    inputpath = os.path.join(os.path.dirname(INPUTPATH), "maxcorr100_EU")
-    include = np.load(os.path.join(os.path.dirname(inputpath), "included_excl_waterbodies.npy"))
-    incl_maxcorr100 = np.load(os.path.join(inputpath, "maxcorr100_included_indx.npy"))
-    var = np.load(os.path.join(os.path.dirname(inputpath), varname))
-    var = var[:, include==1]
-    var = var[:, incl_maxcorr100]
     print(var.shape)
-    np.save(os.path.join(inputpath, varname), var)
+    np.save(os.path.join(INPUTPATH, varname), var)
+
+def distribute_onehotencoding(vardata, varname):
+    for i in range(vardata.shape[1]):
+        print(i+1)
+        onedimdata = vardata[:,i]
+        onedimdata = onedimdata.reshape(-1,vardata.shape[0])
+        onedimdata = np.repeat(onedimdata, 365*20, axis=0)
+        np.save(os.path.join(INPUTPATH, f"{varname.replace('.npy',f'_{i+1}.npy')}"), onedimdata)
+
+def apply_onehotencoding():
+    # Load the numpy file (adjust file path as needed)
+    file_path = os.path.join(INPUTPATH,"soilind.npy")  # Replace this with the actual path
+    soilind = np.load(file_path)
+    # Since it's a static feature, select the first timestep (axis=0)
+    static_features = soilind[0, :]  # Taking the first timestep
+    # Reshape to make it compatible with OneHotEncoder
+    static_features_reshaped = static_features.reshape(-1, 1)
+    # Initialize OneHotEncoder
+    encoder = OneHotEncoder(sparse=False, categories='auto')
+    # Fit and transform the data to get one-hot encoded values
+    one_hot_encoded = encoder.fit_transform(static_features_reshaped)
+    # Display the shape of the result and preview the encoded array
+    print(f"Original shape: {static_features.shape}")
+    print(f"One-hot encoded shape: {one_hot_encoded.shape}")
+    print(f"One-hot encoded preview:\n{one_hot_encoded[:5]}")
+    # save a separate file for each hot-encoded dimension
+    distribute_onehotencoding(one_hot_encoded, "soilind.npy")
