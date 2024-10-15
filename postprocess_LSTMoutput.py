@@ -31,7 +31,9 @@ def load_LSTM(source_path, modelname):
     f.close()
 
     # load the model
-    lstm_model = torch.load(os.path.join(source_path, f"{modelname}.pt"))
+    device = torch.device('cpu')
+    lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS)
+    lstm_model.load_state_dict(torch.load(os.path.join(source_path, f"{modelname}.pt"), map_location=device, weights_only=True))
     criterion = nn.MSELoss()
 
     ################# Testing ######################
@@ -57,6 +59,7 @@ def load_LSTM(source_path, modelname):
             test_s.append(y_hat.flatten())
             test_o.append(y)
             loss = criterion(y_hat.flatten(), y)
+            print(f"loss={loss.item()}")
             total_loss += loss.item()
 
     test_loss = total_loss / len(test_dataloader)
@@ -161,12 +164,8 @@ def load_results():
     #plot_diff(diff_destand_test_avg, f"avgwtd_diff_{title}{TARGET_REGION}", "Water table depth (m)", lons, lats)
 
 def timeseries_plot(pixel):
-    obs_destand_test = np.load(os.path.join(OUTPUTPATH, "batch_EU_px_training2_wtd_49px_32_prvpdTxTnsmxyindlonlat", "obs_destand.npy"))
-    sim_destand_test = np.load(os.path.join(OUTPUTPATH, "batch_EU_px_training2_wtd_49px_32_prvpdTxTnsmxyindlonlat", "sim_destand.npy"))
-
-    #convert units to meter
-    obs_destand_test = obs_destand_test/1000
-    sim_destand_test = sim_destand_test/1000
+    obs_destand_test = np.load(os.path.join(OUTPUTPATH, "obs_destand.npy"))
+    sim_destand_test = np.load(os.path.join(OUTPUTPATH, "sim_destand.npy"))
 
     obs_destand_test = obs_destand_test.reshape(obs_destand_test.shape[0],X,Y)
     sim_destand_test = sim_destand_test.reshape(sim_destand_test.shape[0],X,Y)
@@ -174,16 +173,15 @@ def timeseries_plot(pixel):
     obs_destand_test[obs_destand_test < 0.01] = 0.0
     sim_destand_test[sim_destand_test < 0.01] = 0.0
 
-
-    dates = pd.date_range(start='2009-01-01', end='2010-12-31', freq='D')
+    dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
     dates = dates[(dates.month != 2) | (dates.day != 29)]
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(16, 10))
     
-    print("plotting timeseries")
+    print(f"plotting timeseries {pixel[0]}, {pixel[1]}")
     ax.plot(dates, obs_destand_test[:,pixel[0],pixel[1]], "k-", label="Original simulations")
     ax.plot(dates, sim_destand_test[:,pixel[0],pixel[1]], "k--", label="Predicted")
     
-    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
 
     plt.xticks(rotation=45)
@@ -194,41 +192,32 @@ def timeseries_plot(pixel):
     plt.savefig(os.path.join(OUTPUTPATH, f"timeseries_{pixel[0]}_{pixel[1]}.png"))
 
 def compare_timeseries_plots(pixel):
-    lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
-    lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
-
-    outputs = {"DOURO_wtd_5x5_100_64_prvpdsmslopexysoilind":[], "SEINE+DOURO_wtd_5x5_100_64_prvpdsmslopexysoilind":[]}
-    labels = {"DOURO_wtd_5x5_100_64_prvpdsmslopexysoilind":"Training region: Seine", "SEINE+DOURO_wtd_5x5_100_64_prvpdsmslopexysoilind":"Training region: Seine+Douro"}
+    outputs = {"rand100EU_1mstd_ohe_100_16_365prvpdsmxyindohe":[], "rand100EU_1mstd_ohe_100_160_prvpdsmxyindohe":[]}
+    labels = {"rand100EU_1mstd_ohe_100_16_365prvpdsmxyindohe":"16 neurons - 365 batch size", "rand100EU_1mstd_ohe_100_160_prvpdsmxyindohe":"160 neurons - 365*14 batch size"}
     
     for output in outputs.keys():
         outputs[output] = np.load(os.path.join(OUTPUTPATH, output, "sim_destand.npy"))
-        outputs[output] = outputs[output]/1000
         outputs[output] = outputs[output].reshape(outputs[output].shape[0],X,Y)
-        #outputs[output][outputs[output] < 0.01] = 0.0
 
 
     obs_destand_test = np.load(os.path.join(OUTPUTPATH, output, "obs_destand.npy"))
 
-    #convert units to meter
-    obs_destand_test = obs_destand_test/1000
     obs_destand_test = obs_destand_test.reshape(obs_destand_test.shape[0],X,Y)
-    #obs_destand_test[obs_destand_test < 0.01] = 0.0
 
 
-    dates = pd.date_range(start='2009-01-01', end='2010-12-31', freq='D')
+    dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
     dates = dates[(dates.month != 2) | (dates.day != 29)]
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(16, 10))
 
-    print("plotting timeseries")
+    print(f"plotting timeseries {pixel[0]}, {pixel[1]}")
     ax.plot(dates, obs_destand_test[:,pixel[0],pixel[1]], "k-", label="Original simulations")
     for output in outputs.keys():
         ax.plot(dates, outputs[output][:,pixel[0],pixel[1]], "--", label=labels[output])
     
-    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
 
     plt.xticks(rotation=45)
-    #plt.yscale("log")
     plt.ylabel('Water table depth (m)')
     plt.legend()
     plt.grid()
@@ -246,10 +235,6 @@ def bias_timeseries_plot(pixel):
     else:
         obs_destand_test = np.load(os.path.join(OUTPUTPATH, "obs_destand.npy"))
         sim_destand_test = np.load(os.path.join(OUTPUTPATH, "sim_destand.npy"))
-
-    #convert units to meter
-    obs_destand_test = obs_destand_test/1000
-    sim_destand_test = sim_destand_test/1000
 
     obs_destand_test = obs_destand_test.reshape(obs_destand_test.shape[0],X,Y)
     sim_destand_test = sim_destand_test.reshape(sim_destand_test.shape[0],X,Y)
@@ -316,16 +301,16 @@ def calc_2D_correlation(obs, sim):
             correlation_map[i, j] = r
     return correlation_map
 
-def calc_2D_MSE(obs, sim, mapping, choices):
+def calc_2D_MSE(obs, sim, mapping):
     criterion = nn.MSELoss()
     mse1D = [criterion(torch.tensor(obs[:,i]).float(), torch.tensor(sim[:,i]).float()).item() for i in range(obs.shape[1])]
     mse1D = np.array(mse1D)
     # reshape into 2D
     mse_choicesmap = np.zeros(mapping.shape)
     mse_choicesmap[mse_choicesmap==0] = np.nan
-    include = np.where(mapping==1)
-    for i, choice in enumerate(choices):
-        mse_choicesmap[include[0][choice],include[1][choice]] = mse1D[i]
+    choices = np.where(mapping==1)
+    for i in range(len(choices[0])):
+        mse_choicesmap[choices[0][i],choices[1][i]] = mse1D[i]
     return mse_choicesmap
 
 
@@ -333,31 +318,24 @@ def EUpx_results():
     obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand.npy"))
     sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"sim_destand.npy"))
     
-    #convert units to meter
-    obs_destand_test = obs_destand_test/1000
-    sim_destand_test = sim_destand_test/1000
-
     obs_destand_test = np.nan_to_num(obs_destand_test)
     sim_destand_test = np.nan_to_num(sim_destand_test)
 
     obs_destand_test[obs_destand_test < 0.01] = 0.0
     sim_destand_test[sim_destand_test < 0.01] = 0.0
 
-    choices = np.load(os.path.join(INPUTPATH, "choices.npy"))
-    mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_px.npy"))
-    ############## for random from scratch ###################
-    included = np.load(os.path.join(INPUTPATH, "included_excl_waterbodies.npy"))
-    mapping = included
-    ############## remove it if not for random from all dataset excluding water bodies ###################    
+    mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
+    
     obs = np.zeros((obs_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
     obs[obs==0] = np.nan
     sim = np.zeros((sim_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
     sim[sim==0] = np.nan
 
-    include = np.where(mapping==1)
-    for i, choice in enumerate(choices):
-        obs[:,include[0][choice],include[1][choice]] = obs_destand_test[:,i]
-        sim[:,include[0][choice],include[1][choice]] = sim_destand_test[:,i]
+    ############### for choices in 2D #################
+    mapping_indexes = np.where(mapping==1)
+    for i in range(len(mapping_indexes[0])):
+        obs[:,mapping_indexes[0][i],mapping_indexes[1][i]] = obs_destand_test[:,i]
+        sim[:,mapping_indexes[0][i],mapping_indexes[1][i]] = sim_destand_test[:,i]
 
     # calculate and plot mean bias
     mean_bias_2D_map = calc_mean_2D_bias(obs, sim)
@@ -373,14 +351,14 @@ def EUpx_results():
 
     # calculate and plot MSE
     mse_2D_heatmap = calc_2Dheatmap_MSE(obs_destand_test, sim_destand_test)
-    mse_2D_map = calc_2D_MSE(obs_destand_test, sim_destand_test, mapping, choices)
+    mse_2D_map = calc_2D_MSE(obs_destand_test, sim_destand_test, mapping)
     chosenpixels_in_EU(mse_2D_map, True, 0.001, 10, f"MSE")
     chosenpixels_heatmap(mse_2D_heatmap, True, 0.001, 10, f"MSE")
 
 load_LSTM(
-    os.path.join(os.path.dirname(OUTPUTPATH), "rand100_EU_excl_waterbodies", "wtd_100_32_prvpdsmxyindlonlat"),
-    f"rand100_EU_excl_waterbodies_wtd_100_32_prvpdsmxyindlonlat"
+    os.path.join(OUTPUTPATH),
+    f"rand100EU_yravg1mstd_ohe_100_256lr0.1x50_prvpdsmxyindohe"
     )
-load_results()
-#timeseries_plot((2,4))
-#EUpx_results()
+#timeseries_plot((7,1))
+#compare_timeseries_plots((6,6))
+EUpx_results()
