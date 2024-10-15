@@ -11,7 +11,7 @@ from matplotlib.cm import ScalarMappable
 import os
 from LSTM_setup import *
 
-#plt.rcParams.update({'font.size': 18})
+plt.rcParams.update({'font.size': 18})
 
 
 def plot_results(data, title, label, lons, lats):
@@ -94,21 +94,21 @@ def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
     # Plot the data
     # TODO set max limit
     norm = mcolors.LogNorm(vmin=0.01, vmax=np.max(data))
-    data[data == 0] = np.nan
+    data[data < 0.01] = np.nan
 
     cla = ax.pcolormesh(lons, lats, data, cmap='viridis', norm=norm, transform=ccrs.PlateCarree())
 
     # Add a colorbar
     cbar = plt.colorbar(cla, ax=ax, orientation='vertical', pad=0.08)
-    cbar.set_label('Water table depth (mm)')
+    cbar.set_label('Water table depth (m)')
 
     # Add coastlines, gridlines, etc.
     ax.coastlines()
     ax.gridlines(draw_labels=True)
     
     # Path to your shapefile
-    #shapefile_path = os.path.join(os.path.dirname(INPUTPATH), "DANUBE_DOWNSTREAM", "catchment_shp", "danube.shp")
-    #shape_feature_danube = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='red')
+    shapefile_path = os.path.join(os.path.dirname(INPUTPATH), "DANUBE", "catchment_shp", "danube.shp")
+    shape_feature_danube = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='red')
     #ax.add_feature(shape_feature_danube, facecolor='none', edgecolor='red', linewidth=1)
 
     # Path to your shapefile
@@ -122,12 +122,12 @@ def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
     ax.add_feature(shape_feature_seine, facecolor='none', edgecolor='red', linewidth=1)
 
     # danube region starting lat lon
-    #i = 160
-    #j = 290
-    #grid_size = 5
-    #points = [[lons[i,j], lats[i,j]], [lons[i,j+grid_size], lats[i,j+grid_size]], [lons[i+grid_size,j+grid_size], lats[i+grid_size,j+grid_size]], [lons[i+grid_size,j], lats[i+grid_size,j]]]
-    #study_area_polygon = Polygon(points)
-    #study_area_feature_danube = ShapelyFeature([study_area_polygon], ccrs.PlateCarree(), edgecolor='blue', facecolor='none')
+    i = 174#160
+    j = 302#290
+    grid_size = 5
+    points = [[lons[i,j], lats[i,j]], [lons[i,j+grid_size], lats[i,j+grid_size]], [lons[i+grid_size,j+grid_size], lats[i+grid_size,j+grid_size]], [lons[i+grid_size,j], lats[i+grid_size,j]]]
+    study_area_polygon = Polygon(points)
+    study_area_feature_danube = ShapelyFeature([study_area_polygon], ccrs.PlateCarree(), edgecolor='blue', facecolor='none')
     #ax.add_feature(study_area_feature_danube, edgecolor='blue', linewidth=2)
 
     # seine region starting lat lon
@@ -140,8 +140,8 @@ def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
     ax.add_feature(study_area_feature_seine, edgecolor='blue', linewidth=2)
 
     # DOURO region starting lat lon
-    i = 163
-    j = 100
+    i = 163# 150
+    j = 100#95
     grid_size = 5
     points = [[lons[i,j], lats[i,j]], [lons[i,j+grid_size], lats[i,j+grid_size]], [lons[i+grid_size,j+grid_size], lats[i+grid_size,j+grid_size]], [lons[i+grid_size,j], lats[i+grid_size,j]]]
     study_area_polygon = Polygon(points)
@@ -149,7 +149,7 @@ def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
     ax.add_feature(study_area_feature_seine, edgecolor='blue', linewidth=2)
 
     print("saving europe")
-    fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "Europe_avgwtd.png"))
+    fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "Europe_avgwtd_5x5.png"))
 
 def correlation_map(obs, sim, title, X, Y, lons, lats):
     projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
@@ -384,19 +384,6 @@ def chosenpixels_heatmap(data, logscale, minval, maxval, title):
 
 
 def chosenpixels_in_EU(data_map, logscale, minval, maxval, title):
-    #inputpath = os.path.join(os.path.dirname(INPUTPATH))
-
-    #choices = np.load(os.path.join(inputpath, "batch_EU_px_training2", "choices.npy"))
-    #mapping = np.load(os.path.join(inputpath, "mapping_px.npy"))
-    #map_choices = np.zeros(mapping.shape)
-    #data_map = np.zeros(data.shape[0], mapping.shape)
-    #data_map[data_map==0] = np.nan
-    
-    #include = np.where(mapping==1)
-    #for i, choice in enumerate(choices):
-    #    map_choices[include[0][choice],include[1][choice]] = 1
-    #    data_map[:,include[0][choice],include[1][choice]] = data_map[:,i]
-
     indices = np.where(~np.isnan(data_map))
     indices_list = list(zip(indices[0], indices[1]))
 
@@ -434,18 +421,12 @@ def chosenpixels_in_EU(data_map, logscale, minval, maxval, title):
     print(f"saving {title}")
     fig.savefig(os.path.join(OUTPUTPATH, f"{title}_{MODEL_NAME}.png"))
 
-def onlychosenpixels_in_EU(title):
-    inputpath = os.path.join(os.path.dirname(INPUTPATH))
-
-    choices = np.load(os.path.join(inputpath, "batch_EU_px_training2", "choices.npy"))
-    mapping = np.load(os.path.join(inputpath, "mapping_px.npy"))
-    map_choices = np.zeros(mapping.shape)
-    
-    include = np.where(mapping==1)
-    for i, choice in enumerate(choices):
-        map_choices[include[0][choice],include[1][choice]] = 1
-    
-    map_choices[map_choices==0] = np.nan
+def onechosenpixel_in_EU(ind):
+    choices = np.load(os.path.join(INPUTPATH, "choices.npy"))    
+    include = np.where(choices==1)
+    map_choices = np.zeros(choices.shape)
+    map_choices[include[0][ind], include[1][ind]] = 1
+    map_choices[map_choices == 0] = np.nan
     indices = np.where(~np.isnan(map_choices))
     indices_list = list(zip(indices[0], indices[1]))
 
@@ -469,8 +450,37 @@ def onlychosenpixels_in_EU(title):
                 transform=ccrs.PlateCarree(), label='Special Point')
 
     # Add coastlines, gridlines, etc.
-    ax.coastlines(color='blue')
+    ax.coastlines(color='black')
     ax.gridlines(draw_labels=True)
     
-    print(f"saving {title}")
-    fig.savefig(os.path.join(OUTPUTPATH, f"{title}_{MODEL_NAME}.png"))
+    print(f"saving one pixel at {ind}")
+    fig.savefig(os.path.join(OUTPUTPATH, f"{ind}_{TARGET_REGION}.png"))
+
+def selectedpixels_in_EU():
+    mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
+    mapping[mapping == 0] = np.nan
+    indices = np.where(~np.isnan(mapping))
+    indices_list = list(zip(indices[0], indices[1]))
+
+    projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+    # get EU lon lat
+    lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))
+    lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))
+
+    # Create a figure and an axis with a Cartopy projection
+    fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+    
+    # Plot the 2D EU map
+    cla = ax.pcolormesh(lons, lats, mapping, transform=ccrs.PlateCarree())
+
+    for index in indices_list:
+        ax.plot(lons[index], lats[index], marker='*', color="r", markersize=15, 
+                transform=ccrs.PlateCarree(), label='Special Point')
+
+    # Add coastlines, gridlines, etc.
+    ax.coastlines(color='black')
+    ax.gridlines(draw_labels=True)
+    
+    print(f"saving selected pixels at {TARGET_REGION}")
+    fig.savefig(os.path.join(OUTPUTPATH, f"selectedpixels_{TARGET_REGION}.png"))
