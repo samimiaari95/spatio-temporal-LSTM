@@ -2,6 +2,9 @@ import tarfile
 import os
 import numpy as np
 import argparse
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from utils import read_nc, delete_files, make_dir
 from volumetric_soilmoisture import calculate_soilmoisture_diag
 from sklearn.preprocessing import OneHotEncoder
@@ -363,11 +366,48 @@ def select_1mstd_wtd():
     print(np.sum(map_1mstd))
     np.save(os.path.join(os.path.dirname(INPUTPATH), "mapping_1mstd.npy"), map_1mstd)
 
+def select_yearlyavg_1mstd_wtd():
+    mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
+    wtdorg = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
+    wtd = wtdorg[:, mapping==1]
+
+    map_1mstd = np.zeros(mapping.shape)
+    incmap = np.where(mapping==1)
+    
+    for i in range(wtd.shape[1]):
+        print(i)
+        yearly_std = []
+        for y in range(0, wtd.shape[0], 365):
+            oneyear_std = np.std(wtd[y:y+365, i])
+            yearly_std.append(oneyear_std)
+
+        if np.mean(yearly_std)>1:
+            map_1mstd[incmap[0][i], incmap[1][i]] = 1
+
+    print(np.sum(map_1mstd))
+    np.save(os.path.join(os.path.dirname(INPUTPATH), "mapping_yearlyavg1mstd.npy"), map_1mstd)
+
+    # testing no errors in output
+    wtd = wtdorg[:, map_1mstd==1]
+    print(wtd.shape)
+    test = []
+    for i in range(wtd.shape[1]):
+        yearly_std = []
+        for y in range(0, wtd.shape[0], 365):
+            oneyear_std = np.std(wtd[y:y+365, i])
+            yearly_std.append(oneyear_std)
+        print(np.mean(yearly_std))
+        if np.mean(yearly_std)>1:
+            test.append(True)
+    test = np.array(test)
+    print(np.unique(test))
+    print(yearly_std)
+    print(len(yearly_std))
 
 def create_choices():
-    mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_1mstd.npy"))
+    mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_yearlyavg1mstd.npy"))
     map1d = np.where(mapping==1)
-    nb_samples = 225
+    nb_samples = 100
     samples = np.random.choice(len(map1d[0]), nb_samples, False)
     samples.sort()
     map_choices = np.zeros(mapping.shape)
@@ -412,3 +452,21 @@ def apply_onehotencoding():
     print(f"One-hot encoded preview:\n{one_hot_encoded[:5]}")
     # save a separate file for each hot-encoded dimension
     distribute_onehotencoding(one_hot_encoded, "soilind.npy")
+
+def var_timeseries(pixel, varname):
+    vardata = np.load(os.path.join(INPUTPATH, varname))
+
+    dates = pd.date_range(start='2001-01-01', end='2020-12-31', freq='D')
+    dates = dates[(dates.month != 2) | (dates.day != 29)]
+    fig, ax = plt.subplots(figsize=(16, 10))
+    
+    ax.plot(dates, vardata[:,pixel], "k-")
+    
+    ax.xaxis.set_major_locator(mdates.MonthLocator([1]))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+
+    plt.xticks(rotation=45)
+    #plt.yscale("log")
+    plt.ylabel('Water table depth (m)')
+    plt.grid()
+    plt.savefig(os.path.join(INPUTPATH, "timeseries", f"timeseries_{varname.replace('.npy','')}_{pixel}.png"))
