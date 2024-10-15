@@ -6,7 +6,16 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from LSTM_setup import *
-from utils import singleregion_inputfeatures, singleregion_targetvar, make_dir
+from utils import singleregion_inputfeatures, singleregion_targetvar, make_dir, multiregion_inputfeatures, multiregion_targetvar
+
+# check if GPU available in hardware
+if torch.cuda.is_available():
+    print(f"GPU: {torch.cuda.get_device_name(0)} is available.")
+else:
+    print("No GPU available. Training will run on CPU.")
+
+# make sure to have cuda toolkit or PyTorch with GPU support installed before this step
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # check output directory
 if not os.path.exists(os.path.join(OUTPUTPATH)):
@@ -29,13 +38,18 @@ print("creating dataloader")
 print(f"train features shape: {train_inputs.shape}") # (30*30*timeseries, lookback, features)
 print(f"train target shape: {obs_stand_train.shape}")
 
-dataset = TensorDataset(torch.tensor(train_inputs).float(), torch.tensor(obs_stand_train).float())
+dataset = TensorDataset(torch.tensor(train_inputs).float().to(device), torch.tensor(obs_stand_train).float().to(device))
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 # initialization
 lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS)
 criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(lstm_model.parameters(), lr=LEARNING_RATE)
+if LR_SCHEDULER: scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+
+print("training with parallelized GPUs")
+lstm_model = nn.DataParallel(lstm_model) # Wrap the model with DataParallel
+lstm_model = lstm_model.to(device) # Move the model to the GPU
 
 # training
 print("training")
@@ -50,15 +64,16 @@ for epoch in range(NUM_EPOCHS):
         optimizer.step()
         print(f"epoch: {epoch}, loss={loss.item()}")
         epoch_loss[epoch].append(loss.item())
+    if LR_SCHEDULER: scheduler.step()
 
-# save the trained model
-torch.save(lstm_model, os.path.join(OUTPUTPATH, f'{TARGET_REGION}_{MODEL_NAME}.pt'))
-print("model saved")
-# plot epochs vs loss
-epoch_vs_loss_plot = {k:np.mean(np.array(v)) for k, v in epoch_loss.items()}
-epoch_plot = plt
-epoch_plot.plot(list(epoch_vs_loss_plot.keys()), list(epoch_vs_loss_plot.values()))
-epoch_plot.xlabel("Epochs")
-epoch_plot.ylabel("MSE")
-epoch_plot.savefig(os.path.join(OUTPUTPATH, f'{TARGET_REGION}_{MODEL_NAME}.png'))
-print("epoch loss plotted")
+    # save the trained model
+    torch.save(lstm_model.module.state_dict(), os.path.join(OUTPUTPATH, f'{TARGET_REGION}_{MODEL_NAME}.pt'))
+    print("model saved")
+    # plot epochs vs loss
+    epoch_vs_loss_plot = {k:np.mean(np.array(v)) for k, v in epoch_loss.items()}
+    epoch_plot = plt#.figure().clear()
+    epoch_plot.plot(list(epoch_vs_loss_plot.keys()), list(epoch_vs_loss_plot.values()))
+    epoch_plot.xlabel("Epochs")
+    epoch_plot.ylabel("MSE")
+    epoch_plot.savefig(os.path.join(OUTPUTPATH, f'{TARGET_REGION}_{MODEL_NAME}.png'))
+    print("epoch loss plotted")
