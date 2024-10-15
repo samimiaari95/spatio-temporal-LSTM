@@ -8,10 +8,9 @@ def calculate_soilmoisture_diag(month):
     import argparse
     import netCDF4 as nc
     import datetime
-
-    import sloth.diagnostics
-    import sloth.IO
-    import sloth.analysis
+    import SLOTH.sloth.diagnostics
+    import SLOTH.sloth.IO
+    import SLOTH.sloth.analysis
 
     '''
     python VolumetricSoilMoisture_test_separate.py --satur=/p/scratch/cjjsc39/zhang36/ERA5eval/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline_data/tar_file/1997120100/parflow/*satur* 
@@ -45,15 +44,15 @@ def calculate_soilmoisture_diag(month):
 
     #args = parser.parse_args()
     #saturFilesPattern = args.satur
-    saturFilesPattern = f"/p/scratch/cslts/miaari1/detect/raw/{month}/*satur*"
+    saturFilesPattern = f"/p/scratch/cslts/miaari1/raw/{month}/*satur*"
     #porosityFile      = args.porosityFile
-    porosityFile = "/p/scratch/cslts/miaari1/detect/static/porosity.nc"
+    porosityFile = "/p/scratch/cslts/miaari1/static/porosity.nc"
     #LLSMFile             = args.LLSMFile
-    LLSMFile = "/p/scratch/cslts/miaari1/detect/static/EUR-11_TSMP_FZJ-IBG3_444x432_LAND-LAKE-SEA-MASK.nc"
+    LLSMFile = "/p/scratch/cslts/miaari1/static/EUR-11_TSMP_FZJ-IBG3_444x432_LAND-LAKE-SEA-MASK.nc"
     #griddesFile          = args.griddesFile # should be the txt file
-    griddesFile = "/p/scratch/cslts/miaari1/detect/static/EUR-11_TSMP_FZJ-IBG3_CLMPFLDomain_444x432_griddes.txt"
+    griddesFile = "/p/scratch/cslts/miaari1/static/EUR-11_TSMP_FZJ-IBG3_CLMPFLDomain_444x432_griddes.txt"
     #outDir               = args.outDir
-    outDir = "/p/scratch/cslts/miaari1/detect/soilmoisture/"
+    outDir = "/p/scratch/cslts/miaari1/soilmoisture/"
     #saturVarName      = args.saturVarName
     saturVarName = "saturation"
 
@@ -82,7 +81,7 @@ def calculate_soilmoisture_diag(month):
     porosity = ht.array(porosity, split=split)
 
     # define the heat diagnostic
-    diag = sloth.diagnostics.Diagnostics.Diagnostics(Mask=None, 
+    diag = SLOTH.sloth.diagnostics.Diagnostics.Diagnostics(Mask=None, 
             Perm=None, Poro=porosity, Sstorage=None,
             Ssat=None, Sres=None, Nvg=None, Alpha=None,
             Mannings=None, Slopex=None, Slopey=None,
@@ -162,7 +161,7 @@ def calculate_soilmoisture_diag(month):
                 description_str = ' '.join(description_str)
 
                 # initalize the nc file based on Niklas's sloth library
-                netCDFFileName = sloth.IO.createNetCDF(saveFile, domain=griddesFile,
+                netCDFFileName = SLOTH.sloth.IO.createNetCDF(saveFile, domain=griddesFile,
                         nz=15, calcLatLon=True, timeUnit=timeUnit, timeCalendar=timeCalendar,
                         author=author_name, contact=author_mail,
                         institution=author_institute, 
