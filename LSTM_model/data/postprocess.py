@@ -12,14 +12,14 @@ class postprocess_calculations:
     def __init__(self) -> None:
         pass
 
-    def calc_2Dheatmap_MSE(obs, sim):
+    def calc_2Dheatmap_MSE(self, obs, sim):
         criterion = nn.MSELoss()
         cell_mse = [criterion(torch.tensor(obs[:,i]).float(), torch.tensor(sim[:,i]).float()).item() for i in range(obs.shape[1])]
         cell_mse = np.array(cell_mse)
         cell_mse = cell_mse.reshape(X,Y)
         return cell_mse
 
-    def timeseries_plot(pixel):
+    def timeseries_plot(self, pixel):
         obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
         sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
 
@@ -46,7 +46,7 @@ class postprocess_calculations:
         plt.grid()
         plt.savefig(os.path.join(OUTPUTPATH, f"timeseries_{pixel[0]}_{pixel[1]}.png"))
 
-    def compare_timeseries_plots(pixel):
+    def compare_timeseries_plots(self, pixel):
         outputs = {"rand100EU_1mstd_ohe_100_16_365prvpdsmxyindohe":[], "rand100EU_1mstd_ohe_100_160_prvpdsmxyindohe":[]}
         labels = {"rand100EU_1mstd_ohe_100_16_365prvpdsmxyindohe":"16 neurons - 365 batch size", "rand100EU_1mstd_ohe_100_160_prvpdsmxyindohe":"160 neurons - 365*14 batch size"}
         
@@ -78,7 +78,7 @@ class postprocess_calculations:
         plt.grid()
         plt.savefig(os.path.join(OUTPUTPATH, f"timeseries_{pixel[0]}_{pixel[1]}.png"))
 
-    def calc_2Dheatmap_correlation(obs, sim):
+    def calc_2Dheatmap_correlation(self, obs, sim):
         correlation_map = np.zeros(NB_CELLS)
         # Iterate over each grid cell
         for i in range(obs.shape[1]):
@@ -96,12 +96,12 @@ class postprocess_calculations:
             correlation_map[i] = r
         return correlation_map.reshape(X,Y)
 
-    def calc_mean_2D_bias(obs, sim):
+    def calc_mean_2D_bias(self, obs, sim):
         # calculate bias
         bias_map = np.mean(sim - obs, axis=0)
         return bias_map
 
-    def calc_2D_correlation(obs, sim):
+    def calc_2D_correlation(self, obs, sim):
         correlation_map = np.zeros((obs.shape[1],obs.shape[2]))
         # Iterate over each grid cell
         for i in range(obs.shape[1]):
@@ -120,7 +120,7 @@ class postprocess_calculations:
                 correlation_map[i, j] = r
         return correlation_map
 
-    def calc_2D_MSE(obs, sim, mapping):
+    def calc_2D_MSE(self, obs, sim, mapping):
         criterion = nn.MSELoss()
         mse1D = [criterion(torch.tensor(obs[:,i]).float(), torch.tensor(sim[:,i]).float()).item() for i in range(obs.shape[1])]
         mse1D = np.array(mse1D)

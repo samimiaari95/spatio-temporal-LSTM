@@ -17,7 +17,7 @@ class plotting_helper:
     def __init__(self) -> None:
         pass
 
-    def plot_results(data, title, label, lons, lats):
+    def plot_results(self, data, title, label, lons, lats):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # Create a figure and an axis with a Cartopy projection
@@ -39,7 +39,7 @@ class plotting_helper:
         print(f"saving {title}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def plot_diff(data, title, label, lons, lats):
+    def plot_diff(self, data, title, label, lons, lats):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # Create a figure and an axis with a Cartopy projection
@@ -60,7 +60,7 @@ class plotting_helper:
         print(f"saving {title}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def plot_MSE(data, title, label, lons, lats):
+    def plot_MSE(self, data, title, label, lons, lats):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # Create a figure and an axis with a Cartopy projection
@@ -84,7 +84,7 @@ class plotting_helper:
         print(f"saving {title}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def plot_Europe_avg(TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
+    def plot_Europe_avg(self, TRAINING_PERIOD, LOOKBACK, TEST_PERIOD, lons, lats):
         # TODO convert data from mm to m
         data = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))[TRAINING_PERIOD+LOOKBACK:TRAINING_PERIOD+TEST_PERIOD,:,:]
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
@@ -154,7 +154,7 @@ class plotting_helper:
         print("saving europe")
         fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "Europe_avgwtd_5x5.png"))
 
-    def correlation_map(obs, sim, title, X, Y, lons, lats):
+    def correlation_map(self, obs, sim, title, X, Y, lons, lats):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # Create a figure and an axis with a Cartopy projection
@@ -199,7 +199,7 @@ class plotting_helper:
         print(f"saving correlation")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def calc_plot_bias(obs, sim, title, X, Y, lons, lats):
+    def calc_plot_bias(self, obs, sim, title, X, Y, lons, lats):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # Create a figure and an axis with a Cartopy projection
@@ -234,7 +234,7 @@ class plotting_helper:
         print(f"saving bias")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def plot_blendaltman(obs, sim, title):
+    def plot_blendaltman(self, obs, sim, title):
         predictions = sim.flatten()
         observations = obs.flatten()
 
@@ -261,7 +261,7 @@ class plotting_helper:
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def pixels_biasmap(obs, sim, title, X, Y):
+    def pixels_biasmap(self, obs, sim, title, X, Y):
         fig, ax = plt.subplots(figsize=(16, 9))
 
         # TODO calculate bias in original script
@@ -292,7 +292,7 @@ class plotting_helper:
         print(f"saving bias")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def pixel_correlation_map(obs, sim, title, X, Y):
+    def pixel_correlation_map(self, obs, sim, title, X, Y):
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9))
 
@@ -339,7 +339,7 @@ class plotting_helper:
         print(f"saving correlation")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def pixel_plot_MSE(data, title, label):
+    def pixel_plot_MSE(self, data, title, label):
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9))
         
@@ -359,7 +359,7 @@ class plotting_helper:
         print(f"saving {title}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def chosenpixels_heatmap(data, logscale, minval, maxval, title):
+    def chosenpixels_heatmap(self, data, logscale, minval, maxval, title):
         fig, ax = plt.subplots(figsize=(16, 9))
         
         # define limits and normalization
@@ -386,7 +386,7 @@ class plotting_helper:
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}_{MODEL_NAME}_heatmap.png"))
 
 
-    def chosenpixels_in_EU(data_map, logscale, minval, maxval, title):
+    def chosenpixels_in_EU(self, data_map, logscale, minval, maxval, title):
         indices = np.where(~np.isnan(data_map))
         indices_list = list(zip(indices[0], indices[1]))
 
@@ -424,7 +424,7 @@ class plotting_helper:
         print(f"saving {title}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}_{MODEL_NAME}.png"))
 
-    def onechosenpixel_in_EU(ind):
+    def onechosenpixel_in_EU(self, ind):
         choices = np.load(os.path.join(INPUTPATH, "choices.npy"))    
         include = np.where(choices==1)
         map_choices = np.zeros(choices.shape)
@@ -459,7 +459,7 @@ class plotting_helper:
         print(f"saving one pixel at {ind}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{ind}_{TARGET_REGION}.png"))
 
-    def selectedpixels_in_EU():
+    def selectedpixels_in_EU(self):
         mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
         mapping[mapping == 0] = np.nan
         indices = np.where(~np.isnan(mapping))
