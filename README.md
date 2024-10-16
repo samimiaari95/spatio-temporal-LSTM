@@ -1,25 +1,25 @@
 # spatio-temporal-LSTM
 This is the script for spatially training an LSTM model with an example dataset
 ## Folder structure
-spatio-temporal-LSTM/
-├── LSTM_model/
-│   ├── data/
-│   |   ├── postprocess.py
-│   |   ├── preprocess.py
-│   |   └── rawdataset.py
-│   ├── model/
-│   |   ├── config.py
-│   |   ├── train_LSTM.py
-│   |   └── validate_LSTM.py
-│   └── utils/
-│       ├── plot_functions.py
-│       ├── utils.py
-│       └── volumetric_soilmoisture.py
-├── inputs
-├── outputs
-├── requirements.txt
-├── README.md
-└── main.py
+spatio-temporal-LSTM/<br>
+├── LSTM_model/<br>
+│   ├── data/<br>
+│   |   ├── postprocess.py<br>
+│   |   ├── preprocess.py<br>
+│   |   └── rawdataset.py<br>
+│   ├── model/<br>
+│   |   ├── config.py<br>
+│   |   ├── train_LSTM.py<br>
+│   |   └── validate_LSTM.py<br>
+│   └── utils/<br>
+│       ├── plot_functions.py<br>
+│       ├── utils.py<br>
+│       └── volumetric_soilmoisture.py<br>
+├── inputs<br>
+├── outputs<br>
+├── requirements.txt<br>
+├── README.md<br>
+└── main.py<br>
 
 ## Example dataset
 In the input directory exists the input variables for training and evaluating the model. <br>
