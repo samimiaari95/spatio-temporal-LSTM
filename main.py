@@ -11,9 +11,35 @@ from LSTM_model.utils.volumetric_soilmoisture import calculate_soilmoisture
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-t', '--train', action='store_true', required=False, help='start model traning')
+
+parser.add_argument('-r', '--raw', action='store_true', required=False, help='Rawdata preprocessing')
+
+parser.add_argument('-p', '--prep', action='store_true', required=False, help='Preprocessing data')
+
+parser.add_argument('-t', '--train', action='store_true', required=False, help='Training mode')
+
+parser.add_argument('-e', '--eval', action='store_true', required=False, help='Evaluation mode')
+
+parser.add_argument('-c', '--calc', action='store_true', required=False, help='Results calculation')
+
 args = parser.parse_args()
+
+if args.raw:
+    rawdataset = preprocess_rawdata()
+    # call function here
+
+if args.prep:
+    preprocessing = preprocessing_data()
+    # call function here
 
 if args.train:
     train_LSTM = train_LSTM_model()
     train_LSTM.train()
+
+if args.eval:
+    validate_LSTM = validate_LSTM_model()
+    validate_LSTM.eval_LSTM()
+
+if args.calc:
+    postprocess = postprocess_calculations()
+    postprocess.EUpx_results()
