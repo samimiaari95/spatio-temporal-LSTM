@@ -3,18 +3,18 @@ This is the script for spatially training an LSTM model with an example dataset
 ## Folder structure
 spatio-temporal-LSTM/<br>
 ├── LSTM_model/<br>
-│   ├── data/<br>
-│   |   ├── postprocess.py<br>
-│   |   ├── preprocess.py<br>
-│   |   └── rawdataset.py<br>
-│   ├── model/<br>
-│   |   ├── config.py<br>
-│   |   ├── train_LSTM.py<br>
-│   |   └── validate_LSTM.py<br>
-│   └── utils/<br>
-│       ├── plot_functions.py<br>
-│       ├── utils.py<br>
-│       └── volumetric_soilmoisture.py<br>
+│&emsp;&emsp;├── data/<br>
+│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;├── postprocess.py<br>
+│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;├── preprocess.py<br>
+│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;└── rawdataset.py<br>
+│&emsp;&emsp;├── model/<br>
+│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;├── config.py<br>
+│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;├── train_LSTM.py<br>
+│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;└── validate_LSTM.py<br>
+│&emsp;&emsp;└── utils/<br>
+│&emsp;&emsp;&emsp;&emsp;&emsp;&nbsp;&nbsp;├── plot_functions.py<br>
+│&emsp;&emsp;&emsp;&emsp;&emsp;&nbsp;&nbsp;├── utils.py<br>
+│&emsp;&emsp;&emsp;&emsp;&emsp;&nbsp;&nbsp;└── volumetric_soilmoisture.py<br>
 ├── inputs<br>
 ├── outputs<br>
 ├── requirements.txt<br>
