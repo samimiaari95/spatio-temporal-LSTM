@@ -8,17 +8,17 @@ class validate_LSTM_model:
     def __init__(self) -> None:
         pass
 
-    def eval_LSTM():
+    def eval_LSTM(self):
         utils = utilities()
         # import training mean and std (saved during training process)
-        with open(os.path.join(OUTPUTPATH, f"meanstd_{MODEL_NAME}.pkl"), 'rb') as f:
+        with open(os.path.join(OUTPUTPATH, f"meanstd_{SOURCE_REGION}_{MODEL_NAME}.pkl"), 'rb') as f:
             means_stds = pickle.load(f)
         f.close()
 
         # load the model
         device = torch.device('cpu')
         lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS)
-        lstm_model.load_state_dict(torch.load(os.path.join(OUTPUTPATH, f"{MODEL_NAME}.pt"), map_location=device, weights_only=True))
+        lstm_model.load_state_dict(torch.load(os.path.join(OUTPUTPATH, f"{SOURCE_REGION}_{MODEL_NAME}.pt"), map_location=device, weights_only=True))
         criterion = nn.MSELoss()
 
         ################# Testing ######################
