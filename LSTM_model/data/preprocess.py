@@ -13,7 +13,7 @@ class preprocessing_data:
 
     def conc_vars():
         dirpath = "/p/scratch/cslts/miaari1/raw"
-        outpath = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts"
+        outpath = os.path.join(get_root_dir(), "inputs", "20yrs_ts")
         output_dic = {"soilmoisture": np.array([])}
         #output_dic = {"QFLX_EVAP_TOT": np.array([]), "soilmoisture": np.array([]), "subSurfStor": np.array([]),
         #              "TMAX_2M": np.array([]), "TMIN_2M": np.array([]), "TOT_PREC": np.array([]), "wtd": np.array([])}

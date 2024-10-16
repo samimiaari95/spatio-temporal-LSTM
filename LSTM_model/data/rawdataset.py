@@ -172,7 +172,7 @@ class preprocess_rawdata:
 
     def savelonlat():
         utils = utilities()
-        outdir = "/p/project1/cslts/miaari1/python_scripts/DailyScriptBox/outputs/LSTM_inputs"
+        outdir = os.path.join(get_root_dir(), "inputs")
         lon2D = utils.read_nc(filepath="/p/oldscratch/cslts/miaari1/detect/raw/2001010100/wtd.nc", var="lon")
         lat2D = utils.read_nc(filepath="/p/oldscratch/cslts/miaari1/detect/raw/2001010100/wtd.nc", var="lat")
         np.save(os.path.join(outdir, "lon2D.npy"), np.array(lon2D))
