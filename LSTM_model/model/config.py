@@ -44,7 +44,7 @@ LR_GAMMA = 0.1
 BATCH_SIZE = TRAINING_PERIOD-LOOKBACK
 
 # model name
-MODEL_NAME = f"{X*Y}_{HIDDEN_SIZE}lr{LR_GAMMA.replace('.','')}x{LR_STEP_SIZE}_prvpdsmxyindohe" if LR_SCHEDULER else f"{X*Y}_{HIDDEN_SIZE}_prvpdsmxyindohe"
+MODEL_NAME = f"{X*Y}_{HIDDEN_SIZE}lr{str(LR_GAMMA).replace('.','')}x{LR_STEP_SIZE}_{BATCH_SIZE}_prvpdsmxyindohe" if LR_SCHEDULER else f"{X*Y}_{HIDDEN_SIZE}_{BATCH_SIZE}_prvpdsmxyindohe"
 logger.warning(f"Check model name: {MODEL_NAME}")
 
 
