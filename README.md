@@ -1,5 +1,10 @@
 # spatio-temporal-LSTM
 This is the script for spatially training an LSTM model with an example dataset
+## Clone the model
+After cloning the repository, it is necessary to clone within this repository the open source SLOTH repository with the following command
+```
+git clone --recurse-submodules https://github.com/HPSCTerrSys/SLOTH.git
+```
 ## Folder structure
 spatio-temporal-LSTM/<br>
 ├── LSTM_model/<br>
@@ -17,6 +22,7 @@ spatio-temporal-LSTM/<br>
 │&emsp;&emsp;&emsp;&emsp;&emsp;&nbsp;&nbsp;└── volumetric_soilmoisture.py<br>
 ├── inputs<br>
 ├── outputs<br>
+├── SLOTH<br>
 ├── requirements.txt<br>
 ├── README.md<br>
 └── main.py<br>
