@@ -17,7 +17,7 @@ class validate_LSTM_model:
 
         # load the model
         device = torch.device('cpu')
-        lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS)
+        lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS, DROPOUT)
         lstm_model.load_state_dict(torch.load(os.path.join(OUTPUTPATH, f"{SOURCE_REGION}_{MODEL_NAME}.pt"), map_location=device, weights_only=True))
         criterion = nn.MSELoss()
 
