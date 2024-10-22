@@ -46,7 +46,7 @@ class train_LSTM_model:
         dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
         # initialization
-        lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS)
+        lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS, DROPOUT)
         criterion = nn.MSELoss()
         optimizer = torch.optim.Adam(lstm_model.parameters(), lr=LEARNING_RATE)
         if LR_SCHEDULER: scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)

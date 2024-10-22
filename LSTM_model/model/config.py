@@ -36,30 +36,45 @@ INPUT_SIZE = len(FEATURES_FILES)
 HIDDEN_SIZE = 160
 NUM_LAYERS = 1
 OUTPUT_SIZE = 1
+DROPOUT = 0.0
 NUM_EPOCHS = 100
 LEARNING_RATE = 0.001
 LR_SCHEDULER = False
 LR_STEP_SIZE = 50
 LR_GAMMA = 0.1
-BATCH_SIZE = TRAINING_PERIOD-LOOKBACK
+BATCH_SIZE = int((TRAINING_PERIOD-LOOKBACK))
 
 # model name
-MODEL_NAME = f"{X*Y}_{HIDDEN_SIZE}lr{str(LR_GAMMA).replace('.','')}x{LR_STEP_SIZE}_{BATCH_SIZE}_prvpdsmxyindohe" if LR_SCHEDULER else f"{X*Y}_{HIDDEN_SIZE}_{BATCH_SIZE}_prvpdsmxyindohe"
+MODEL_NAME = f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}lr{str(LR_GAMMA).replace('.','')}x{LR_STEP_SIZE}_{BATCH_SIZE}_prvpdsmxyindohe" if LR_SCHEDULER else f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}_{BATCH_SIZE}_prvpdsmxyindohe"
 logger.warning(f"Check model name: {MODEL_NAME}")
 
 
 class AwesomeLSTM(nn.Module):
-    def __init__(self, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS):
+    def __init__(self, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS, DROPOUT):
         super(AwesomeLSTM, self).__init__()
         self.HIDDEN_SIZE = HIDDEN_SIZE
-        self.lstm = nn.LSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_LAYERS, batch_first=True)
+        self.NUM_LAYERS = NUM_LAYERS
+
+        # LSTM layer
+        self.lstm = nn.LSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_LAYERS, batch_first=True, dropout=DROPOUT)
+        
+        # Dropout layer
+        self.DROPOUT = nn.Dropout(DROPOUT)
+        
+        # Fully connected layer
         self.fc = nn.Linear(HIDDEN_SIZE, OUTPUT_SIZE)
 
     def forward(self, x):
-        #h0 = torch.zeros(1, x.size(0), self.HIDDEN_SIZE).to(x.device)
-        #c0 = torch.zeros(1, x.size(0), self.HIDDEN_SIZE).to(x.device)
+        # Initialize hidden and cell states with zeros
+        h0 = torch.zeros(self.NUM_LAYERS, x.size(0), self.HIDDEN_SIZE).to(x.device)
+        c0 = torch.zeros(self.NUM_LAYERS, x.size(0), self.HIDDEN_SIZE).to(x.device)
 
-        h_out, _ = self.lstm(x)#, (h0, c0))
+        # Forward propagate the LSTM
+        h_out, _ = self.lstm(x, (h0, c0))  # out: tensor of shape (batch_size, seq_length, hidden_size)
 
-        out = self.fc(h_out[:, -1, :])
-        return out
+        # Apply dropout to the LSTM output
+        h_out = self.DROPOUT(h_out)
+
+        # Pass through the fully connected layer (take the output of the last time step)
+        h_out = self.fc(h_out[:, -1, :])  # out: tensor of shape (batch_size, output_size)
+        return h_out
