@@ -16,18 +16,18 @@ class utilities:
             else:
                 os.mkdir(dir_path)
 
-    def powerlaw_func(h, a, b):
+    def powerlaw_func(self, h, a, b):
             y = a*(h**b)
             return y
 
-    def linear_law(x, a, b) :
+    def linear_law(self, x, a, b) :
             return a + x * b
 
-    def read_nc(filepath, var):
+    def read_nc(self, filepath, var):
         ncfile = nc.Dataset(filepath)
         return ncfile[var][:]
 
-    def open_nc(filepath):
+    def open_nc(self, filepath):
         ncfile = nc.Dataset(filepath)
         variables = ncfile.variables
         for var in variables:
@@ -38,7 +38,7 @@ class utilities:
                 #if ncfile[var].long_name == "2m relative humidity":
                 #    print(ncfile[var])
 
-    def get_S4W_basin(lat2D, lon2D, region):
+    def get_S4W_basin(self, lat2D, lon2D, region):
         """ return a mask
 
         Return a boolean mask-array (True = masked, False = not masked) based on
@@ -68,7 +68,7 @@ class utilities:
             print(f'Region {region} not found --> EXIT')
         return regionMask
 
-    def get_prudenceMask(lat2D, lon2D, prudName):
+    def get_prudenceMask(self, lat2D, lon2D, prudName):
         """ return a prudance mask
 
         Return a boolean mask-array (True = masked, False = not masked) based on
@@ -112,7 +112,7 @@ class utilities:
             print(f'prudance region {prudName} not found --> EXIT')
         return prudMask
 
-    def delete_files(dirpath, key):
+    def delete_files(self, dirpath, key):
         for file in os.listdir(dirpath):
             if key in file:
                 os.remove(os.path.join(dirpath, file))
@@ -165,7 +165,7 @@ class utilities:
         #print(np.unique(np.equal(raw_data[start, :, :], data.reshape(end-start, X, Y)[0,:,:])))
         return data, means_stds
 
-    def meanstd_inputfeatures(start, end, means_stds, source_path):
+    def meanstd_inputfeatures(self, start, end, means_stds, source_path):
         for inputvar in FEATURES_FILES:
             print(inputvar)
             raw_data = np.load(os.path.join(source_path, inputvar))
@@ -178,7 +178,7 @@ class utilities:
                 means_stds[f"{inputvar.replace('.npy','')}std"] = np.std(data)
         return means_stds
 
-    def meanstd_targetvar(start, end, means_stds, source_path):
+    def meanstd_targetvar(self, start, end, means_stds, source_path):
         raw_data = np.load(os.path.join(source_path, TARGETVAR_FILE))
 
         raw_data = np.nan_to_num(raw_data)
@@ -192,7 +192,7 @@ class utilities:
         return means_stds
 
 
-    def multiregion_inputfeatures(start, end, means_stds):
+    def multiregion_inputfeatures(self, start, end, means_stds):
         all_inputs = np.array([])
         for inputvar in FEATURES_FILES:
             var = np.array([])
@@ -234,7 +234,7 @@ class utilities:
 
         return all_inputs, means_stds
 
-    def multiregion_targetvar(start, end, means_stds):
+    def multiregion_targetvar(self, start, end, means_stds):
         data = np.array([])
         #basins = [x for x in os.listdir(INPUTPATH) if os.path.isdir(os.path.join(INPUTPATH, x)) and x in SOURCE_REGION]
         basins = ["SEINE_30x30", "DOURO_30x30"]

@@ -11,7 +11,7 @@ class preprocessing_data:
     def __init__(self) -> None:
         pass
 
-    def conc_vars():
+    def conc_vars(self):
         dirpath = "/p/scratch/cslts/miaari1/raw"
         outpath = os.path.join(get_root_dir(), "inputs", "20yrs_ts")
         output_dic = {"soilmoisture": np.array([])}
@@ -37,7 +37,7 @@ class preprocessing_data:
             print(output_dic[key].shape)
             np.save(os.path.join(outpath, f"{key}.npy"), output_dic[key])
 
-    def crop_vars(varname):
+    def crop_vars(self, varname):
         var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
         print(varname)
         print(var.shape)
@@ -50,7 +50,7 @@ class preprocessing_data:
         print(var.shape)
         np.save(os.path.join(INPUTPATH, "DOURO_30x30", varname), var)
 
-    def features_correlation():
+    def features_correlation(self):
         plot_functions = plotting_helper()
         lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
         lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
@@ -64,7 +64,7 @@ class preprocessing_data:
             print(feature.shape)
             plot_functions.correlation_map(targetvar, feature, f"10yrscorrelation_wtd_{f.replace('.npy','')}", 5, 5, lons, lats)
 
-    def conc_basins():
+    def conc_basins(self):
         basins = ["SEINE_30x30", "DOURO_30x30"]
         foldername = "SEINE+DOURO_30x30"
         vars = ["TOT_PREC.npy", "vpd.npy", "TMAX_2M.npy", "TMIN_2M.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", "soilind.npy", "topo.npy", "porosity_1mdepth.npy", "QFLX_EVAP_TOT.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
@@ -77,7 +77,7 @@ class preprocessing_data:
                 data = np.concatenate((data, var_basins[basin]), axis=0) if len(data)>0 else var_basins[basin]
             np.save(os.path.join(INPUTPATH, var), data)
 
-    def static_timeseries_EU(varname):
+    def static_timeseries_EU(self, varname):
         filepath = os.path.join(os.path.dirname(INPUTPATH), varname)
         soilind = np.load(filepath)
         print(varname)
@@ -93,7 +93,7 @@ class preprocessing_data:
         print(soilind_timeseries.shape)
         np.save(os.path.join(os.path.dirname(INPUTPATH),"EU_px_training", varname), soilind_timeseries)
 
-    def subset_excl_waterbodies():
+    def subset_excl_waterbodies(self):
         wtd = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
 
         # exclude sides
@@ -111,7 +111,7 @@ class preprocessing_data:
         np.save(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"), include)
         return include
 
-    def remove_shallow_wtd():
+    def remove_shallow_wtd(self):
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
         wtdorg = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
         wtd = wtdorg[:, mapping==1]
@@ -128,7 +128,7 @@ class preprocessing_data:
         print(np.sum(map_deepind))
         np.save(os.path.join(os.path.dirname(INPUTPATH), "mapping_1mstd.npy"), include)
 
-    def select_1mstd_wtd():
+    def select_1mstd_wtd(self):
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
         wtdorg = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
         wtd = wtdorg[:, mapping==1]
@@ -147,7 +147,7 @@ class preprocessing_data:
         print(np.sum(map_1mstd))
         np.save(os.path.join(os.path.dirname(INPUTPATH), "mapping_1mstd.npy"), map_1mstd)
 
-    def select_yearlyavg_1mstd_wtd():
+    def select_yearlyavg_1mstd_wtd(self):
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
         wtdorg = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
         wtd = wtdorg[:, mapping==1]
@@ -185,7 +185,7 @@ class preprocessing_data:
         print(yearly_std)
         print(len(yearly_std))
 
-    def create_choices():
+    def create_choices(self):
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_yearlyavg1mstd.npy"))
         map1d = np.where(mapping==1)
         nb_samples = 100
@@ -199,7 +199,7 @@ class preprocessing_data:
         print(np.sum(map_choices))
         np.save(os.path.join(INPUTPATH, "choices.npy"), map_choices)
         
-    def crop_vars_mapping(varname):
+    def crop_vars_mapping(self, varname):
         mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
         var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
         var = var[:,mapping==1]
@@ -207,7 +207,7 @@ class preprocessing_data:
         print(var.shape)
         np.save(os.path.join(INPUTPATH, varname), var)
 
-    def distribute_onehotencoding(vardata, varname):
+    def distribute_onehotencoding(self, vardata, varname):
         for i in range(vardata.shape[1]):
             print(i+1)
             onedimdata = vardata[:,i]
@@ -234,7 +234,7 @@ class preprocessing_data:
         # save a separate file for each hot-encoded dimension
         self.distribute_onehotencoding(one_hot_encoded, "soilind.npy")
 
-    def var_timeseries(pixel, varname):
+    def var_timeseries(self, pixel, varname):
         vardata = np.load(os.path.join(INPUTPATH, varname))
 
         dates = pd.date_range(start='2001-01-01', end='2020-12-31', freq='D')
