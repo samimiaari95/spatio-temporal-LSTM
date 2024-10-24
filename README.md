@@ -3,6 +3,8 @@ This is the script for spatially training an LSTM model with an example dataset
 ## Clone the model
 After cloning the repository, it is necessary to clone within this repository the open source SLOTH repository with the following command
 ```
+git clone https://github.com/samimiaari95/spatio-temporal-LSTM.git
+cd spatio-temporal-LSTM
 git clone --recurse-submodules https://github.com/HPSCTerrSys/SLOTH.git
 ```
 ## Folder structure
