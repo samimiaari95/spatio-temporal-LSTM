@@ -12,7 +12,7 @@ class preprocess_rawdata:
     def __init__(self) -> None:
         pass
 
-    def extract_file_from_tar(filename, month):
+    def extract_file_from_tar(self, filename, month):
         utils = utilities()
         # filename example: "parflow/wtd.nc"
         source_path = "/p/largedata2/detectdata/CentralDB/projects/d02/working_directory/sim/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline/postpro/ProductionV1"
@@ -32,7 +32,7 @@ class preprocess_rawdata:
         tar.close()
 
 
-    def extract_tar(file_timesteps, month):
+    def extract_tar(self, file_timesteps, month):
         utils = utilities()
         volumetric_soilmoisture = calculate_soilmoisture()
         source_path = "/p/largedata2/detectdata/CentralDB/projects/d02/working_directory/sim/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline/postpro/ProductionV1"
@@ -72,7 +72,7 @@ class preprocess_rawdata:
         filenames.sort()
         self.extract_tar(file_timesteps=filenames, month=month)
         
-    def temporalAgg_matrix(data, timestep, agg):
+    def temporalAgg_matrix(self, data, timestep, agg):
         daily_data = []
         for i in range(0, data.shape[0], int(60*24/timestep)):
             daily_var = data[i:i+int(60*24/timestep), :, :]
@@ -89,7 +89,7 @@ class preprocess_rawdata:
             daily_data.append(daily_var)
         return np.array(daily_data)
 
-    def preprocess_matrix_sm(month):
+    def preprocess_matrix_sm(self, month):
         utils = utilities()
         dirpath = "/p/scratch/cslts/miaari1/soilmoisture"
         outpath = "/p/scratch/cslts/miaari1/raw"
@@ -170,7 +170,7 @@ class preprocess_rawdata:
             outfile = os.path.join(outpath, month, f"{varname}_{month}.npy")
             np.save(outfile, data)
 
-    def savelonlat():
+    def savelonlat(self):
         utils = utilities()
         outdir = os.path.join(get_root_dir(), "inputs")
         lon2D = utils.read_nc(filepath="/p/oldscratch/cslts/miaari1/detect/raw/2001010100/wtd.nc", var="lon")
@@ -178,7 +178,7 @@ class preprocess_rawdata:
         np.save(os.path.join(outdir, "lon2D.npy"), np.array(lon2D))
         np.save(os.path.join(outdir, "lat2D.npy"), np.array(lat2D))
 
-    def sa_to_npy():
+    def sa_to_npy(self):
         filepath = os.path.join(os.path.dirname(INPUTPATH), "EUR-11_TSMP_FZJ-IBG3_CLMPFLDomain_444x432_YSLOPE_TPS_HydroRIVER_sea_streams_corr.sa")
         ind = readSa(filepath)
         ind = ind[0,:,:]

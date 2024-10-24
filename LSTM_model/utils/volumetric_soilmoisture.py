@@ -13,7 +13,7 @@ class calculate_soilmoisture:
     def __init__(self) -> None:
          pass
     
-    def calculate_soilmoisture_diag(month):
+    def calculate_soilmoisture_diag(self, month):
 
         '''
         python VolumetricSoilMoisture_test_separate.py --satur=/p/scratch/cjjsc39/zhang36/ERA5eval/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline_data/tar_file/1997120100/parflow/*satur* 
