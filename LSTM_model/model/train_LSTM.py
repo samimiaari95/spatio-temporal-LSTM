@@ -49,7 +49,7 @@ class train_LSTM_model:
         lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS, DROPOUT)
         criterion = nn.MSELoss()
         optimizer = torch.optim.Adam(lstm_model.parameters(), lr=LEARNING_RATE)
-        if LR_SCHEDULER: scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+        if LR_SCHEDULER: scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=LR_STEP_SIZE, gamma=LR_GAMMA)
 
         print("training with parallelized GPUs")
         lstm_model = nn.DataParallel(lstm_model) # Wrap the model with DataParallel
