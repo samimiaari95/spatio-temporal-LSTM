@@ -366,7 +366,7 @@ class plotting_helper:
         norm  = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
 
         # define colorscale
-        cmap_colors = "viridis" if title=="MSE" else "coolwarm"
+        cmap_colors = "viridis" if "MSE" in title else "coolwarm"
         cmap = plt.get_cmap(cmap_colors)
 
         cla = ax.pcolormesh(data, norm=norm, cmap=cmap)
@@ -398,7 +398,7 @@ class plotting_helper:
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
-        cmap_colors = "viridis" if title=="MSE" else "coolwarm"
+        cmap_colors = "viridis" if "MSE" in title else "coolwarm"
         cmap = plt.get_cmap(cmap_colors)
 
         # define limits and normalization
@@ -487,3 +487,52 @@ class plotting_helper:
         
         print(f"saving selected pixels at {TARGET_REGION}")
         fig.savefig(os.path.join(OUTPUTPATH, f"selectedpixels_{TARGET_REGION}.png"))
+
+    def plot_RB(self):
+        i = 195 #195+16
+        j = 164 #164+13
+        grid_size = 30
+        data = np.load(os.path.join(os.path.dirname(INPUTPATH), "topo.npy"))[0,i:i+grid_size, j:j+grid_size]
+        data = np.zeros((30,30))
+        print(data.shape)
+
+        projection = ccrs.LambertAzimuthalEqualArea()
+
+        # Create a figure and an axis with a Cartopy projection
+        fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+
+        i = 195 #195+16
+        j = 164 #164+13
+        grid_size = 30
+        
+
+        lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))[i:i+grid_size, j:j+grid_size]
+        lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))[i:i+grid_size, j:j+grid_size]
+        print(lats.shape)
+
+        data[data < 0.01] = np.nan
+
+        cla = ax.pcolormesh(lons, lats, data, cmap='viridis', transform=ccrs.PlateCarree())
+
+        # Add coastlines, gridlines, etc.
+        #ax.coastlines()
+        ax.gridlines(draw_labels=True)
+        
+        # Path to your shapefile
+        shapefile_path = os.path.join(os.path.dirname(INPUTPATH), "SEINE_10x10", "catchment_shp", "seine.shp")
+        shape_feature_seine = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='red')
+        ax.add_feature(shape_feature_seine, facecolor='none', edgecolor='red', linewidth=1)
+
+        # seine region starting lat lon
+        i = 211 #195+16
+        j = 177 #164+13
+        grid_size = 10
+        lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))
+        lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))
+        points = [[lons[i,j], lats[i,j]], [lons[i,j+grid_size], lats[i,j+grid_size]], [lons[i+grid_size,j+grid_size], lats[i+grid_size,j+grid_size]], [lons[i+grid_size,j], lats[i+grid_size,j]]]
+        study_area_polygon = Polygon(points)
+        study_area_feature_seine = ShapelyFeature([study_area_polygon], ccrs.PlateCarree(), edgecolor='blue', facecolor='none')
+        ax.add_feature(study_area_feature_seine, edgecolor='blue', linewidth=2)
+
+        print("saving seine")
+        fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "Seine_10x10.png"))
