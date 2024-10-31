@@ -132,7 +132,32 @@ class postprocess_calculations:
             mse_choicesmap[choices[0][i],choices[1][i]] = mse1D[i]
         return mse_choicesmap
 
+    def calc_rmse(self, y_true, y_pred, mapping):
+        rmse = [np.sqrt(np.mean((y_true[:,i] - y_pred[:,i]) ** 2)) for i in range(y_true.shape[1])]
+        rmse = np.array(rmse)
+        # reshape into 2D
+        rmse_choicesmap = np.zeros(mapping.shape)
+        rmse_choicesmap[rmse_choicesmap==0] = np.nan
+        choices = np.where(mapping==1)
+        for i in range(len(choices[0])):
+            rmse_choicesmap[choices[0][i],choices[1][i]] = rmse[i]
 
+        rmse = rmse.reshape(X,Y)
+        return rmse, rmse_choicesmap
+    
+    def calc_nse(self, y_true, y_pred, mapping):
+        nse = [1 - (np.sum((y_true[:,i] - y_pred[:,i]) ** 2) / np.sum((y_true[:,i] - np.mean(y_true[:,i])) ** 2)) for i in range(y_true.shape[1])]
+        nse = np.array(nse)
+        # reshape into 2D
+        nse_choicesmap = np.zeros(mapping.shape)
+        nse_choicesmap[nse_choicesmap==0] = np.nan
+        choices = np.where(mapping==1)
+        for i in range(len(choices[0])):
+            nse_choicesmap[choices[0][i],choices[1][i]] = nse[i]
+
+        nse = nse.reshape(X,Y)
+        return nse, nse_choicesmap
+    
     def EUpx_results(self):
         plot_functions = plotting_helper()
         obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
@@ -174,3 +199,51 @@ class postprocess_calculations:
         mse_2D_map = self.calc_2D_MSE(obs_destand_test, sim_destand_test, mapping)
         plot_functions.chosenpixels_in_EU(mse_2D_map, True, 0.001, 10, f"MSE")
         plot_functions.chosenpixels_heatmap(mse_2D_heatmap, True, 0.001, 10, f"MSE")
+
+        # calculate and plot RMSE
+        rmse_2D_heatmap, rmse_2D_map = self.calc_rmse(obs_destand_test, sim_destand_test, mapping)
+        plot_functions.chosenpixels_in_EU(rmse_2D_map, True, 0.001, 10, f"RMSE")
+        plot_functions.chosenpixels_heatmap(rmse_2D_heatmap, True, 0.001, 10, f"RMSE")
+
+        # calculate and plot NSE
+        nse_2D_heatmap, nse_2D_map = self.calc_nse(obs_destand_test, sim_destand_test, mapping)
+        plot_functions.chosenpixels_in_EU(nse_2D_map, False, -1, 1, f"NSE")
+        plot_functions.chosenpixels_heatmap(nse_2D_heatmap, False, -1, 1, f"NSE")
+
+    def calculate_accuracy_parameters(self):
+        dirpath = os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{MODEL_NAME}")
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
+        
+        obs_destand_test = np.nan_to_num(obs_destand_test)
+        sim_destand_test = np.nan_to_num(sim_destand_test)
+
+        obs_destand_test[obs_destand_test < 0.01] = 0.0
+        sim_destand_test[sim_destand_test < 0.01] = 0.0
+
+        mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
+        
+        obs = np.zeros((obs_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
+        obs[obs==0] = np.nan
+        sim = np.zeros((sim_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
+        sim[sim==0] = np.nan
+
+        ############### for choices in 2D #################
+        mapping_indexes = np.where(mapping==1)
+        for i in range(len(mapping_indexes[0])):
+            obs[:,mapping_indexes[0][i],mapping_indexes[1][i]] = obs_destand_test[:,i]
+            sim[:,mapping_indexes[0][i],mapping_indexes[1][i]] = sim_destand_test[:,i]
+
+        mean_bias_2D_heatmap = self.calc_mean_2D_bias(obs_destand_test, sim_destand_test)
+        mean_bias_2D_heatmap = mean_bias_2D_heatmap.reshape(X,Y)
+        correlation_2D_heatmap = self.calc_2Dheatmap_correlation(obs_destand_test, sim_destand_test)
+        mse_2D_heatmap = self.calc_2Dheatmap_MSE(obs_destand_test, sim_destand_test)
+
+        print(f"avg MSE: {np.mean(mse_2D_heatmap)}")
+        print(f"avg corr: {np.mean(correlation_2D_heatmap)}")
+        print(f"avg bias: {np.mean(mean_bias_2D_heatmap)}")
+        print(f"median MSE: {np.median(mse_2D_heatmap)}")
+        print(f"median corr: {np.median(correlation_2D_heatmap)}")
+        print(f"90th% MSE: {np.percentile(mse_2D_heatmap, 90)}")
+        print(f"10th% corr: {np.percentile(correlation_2D_heatmap, 10)}")
+
