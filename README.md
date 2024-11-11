@@ -36,8 +36,8 @@ The config.py is adjusted for the provided example. <br>
 ### Run the example
 To run the example install requirements and run the main.py file in addition to the argument for the needed mode as follow:
 ```
-python main.py -train # training mode
-python main.py -eval  # validation mode
-python main.py -calc  # calculation  
+python main.py --train # training mode
+python main.py --eval  # validation mode
+python main.py --calc  # calculation  
 ```
 The provided input data are already preprocessed and ready for training and validation.
