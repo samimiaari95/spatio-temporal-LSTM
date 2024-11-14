@@ -21,9 +21,7 @@ SOURCE_REGION = "rand100EU_yravg1mstd_ohe"
 # directory and inputs
 OUTPUTPATH = os.path.join(get_root_dir(), "outputs", "20yrs_ts", TARGET_REGION)
 INPUTPATH = os.path.join(get_root_dir(), "inputs", "20yrs_ts", SOURCE_REGION)
-FEATURES_FILES = ["TOT_PREC.npy", "vpd.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", 
-                  "soilind_1.npy", "soilind_2.npy", "soilind_3.npy", "soilind_4.npy", 
-                  "soilind_5.npy", "soilind_6.npy"]
+FEATURES_FILES = ["TOT_PREC.npy", "vpd.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", "soilind.npy"]#, "lon2D_ts.npy", "lat2D_ts.npy"]
 TARGETVAR_FILE = "wtd.npy"
 
 # time period
@@ -33,19 +31,19 @@ TEST_PERIOD = 365*4+LOOKBACK
 
 # lstm setup
 INPUT_SIZE = len(FEATURES_FILES)
-HIDDEN_SIZE = 160
+HIDDEN_SIZE = 256
 NUM_LAYERS = 1
 OUTPUT_SIZE = 1
-DROPOUT = 0.0
+DROPOUT = 0.0 # remember to implement it manually
 NUM_EPOCHS = 100
 LEARNING_RATE = 0.001
-LR_SCHEDULER = False
+LR_SCHEDULER = True
 LR_STEP_SIZE = 50
 LR_GAMMA = 0.1
-BATCH_SIZE = int((TRAINING_PERIOD-LOOKBACK))
+BATCH_SIZE = 1000 # or batchsize=training period: int((TRAINING_PERIOD-LOOKBACK))
 
 # model name
-MODEL_NAME = f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}lr{str(LR_GAMMA).replace('.','')}x{LR_STEP_SIZE}_{BATCH_SIZE}_prvpdsmxyindohe" if LR_SCHEDULER else f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}_{BATCH_SIZE}_prvpdsmxyindohe"
+MODEL_NAME = f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}x{NUM_LAYERS}lr{str(LR_GAMMA).replace('.','')}x{LR_STEP_SIZE}_{LOOKBACK}x{BATCH_SIZE}_prvpdsmxyind" if LR_SCHEDULER else f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}x{NUM_LAYERS}_{LOOKBACK}x{BATCH_SIZE}_prvpdsmxyind"
 logger.warning(f"Check model name: {MODEL_NAME}")
 
 
@@ -72,7 +70,7 @@ class AwesomeLSTM(nn.Module):
         # Forward propagate the LSTM
         h_out, _ = self.lstm(x, (h0, c0))  # out: tensor of shape (batch_size, seq_length, hidden_size)
 
-        # Apply dropout to the LSTM output
+        # Manually apply dropout to the LSTM output
         h_out = self.DROPOUT(h_out)
 
         # Pass through the fully connected layer (take the output of the last time step)
