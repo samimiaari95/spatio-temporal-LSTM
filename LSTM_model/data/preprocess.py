@@ -41,14 +41,14 @@ class preprocessing_data:
         var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
         print(varname)
         print(var.shape)
-        # douro
-        i = 150
-        j = 95
+        # seine
+        i = 195
+        j = 164
         grid_size = 30
         var = var[:, i:i+grid_size, j:j+grid_size]
 
         print(var.shape)
-        np.save(os.path.join(INPUTPATH, "DOURO_30x30", varname), var)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), "SEINE_30x30", varname), var)
 
     def features_correlation(self):
         plot_functions = plotting_helper()
@@ -150,6 +150,7 @@ class preprocessing_data:
     def select_yearlyavg_1mstd_wtd(self):
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
         wtdorg = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
+        criteria = 0.1 #m
         wtd = wtdorg[:, mapping==1]
 
         map_1mstd = np.zeros(mapping.shape)
@@ -158,15 +159,15 @@ class preprocessing_data:
         for i in range(wtd.shape[1]):
             print(i)
             yearly_std = []
-            for y in range(0, wtd.shape[0], 365):
-                oneyear_std = np.std(wtd[y:y+365, i])
+            for y in range(0, wtd.shape[0]-20, 182):
+                oneyear_std = np.std(wtd[y:y+182, i])
                 yearly_std.append(oneyear_std)
 
-            if np.mean(yearly_std)>1:
+            if np.mean(yearly_std)>criteria:
                 map_1mstd[incmap[0][i], incmap[1][i]] = 1
 
         print(np.sum(map_1mstd))
-        np.save(os.path.join(os.path.dirname(INPUTPATH), "mapping_yearlyavg1mstd.npy"), map_1mstd)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), f"mapping_meaninterannualstd{str(criteria).replace('.','')}.npy"), map_1mstd)
 
         # testing no errors in output
         wtd = wtdorg[:, map_1mstd==1]
@@ -174,11 +175,10 @@ class preprocessing_data:
         test = []
         for i in range(wtd.shape[1]):
             yearly_std = []
-            for y in range(0, wtd.shape[0], 365):
-                oneyear_std = np.std(wtd[y:y+365, i])
+            for y in range(0, wtd.shape[0]-20, 182):
+                oneyear_std = np.std(wtd[y:y+182, i])
                 yearly_std.append(oneyear_std)
-            print(np.mean(yearly_std))
-            if np.mean(yearly_std)>1:
+            if np.mean(yearly_std)>criteria:
                 test.append(True)
         test = np.array(test)
         print(np.unique(test))
@@ -251,4 +251,16 @@ class preprocessing_data:
         plt.ylabel('Water table depth (m)')
         plt.grid()
         plt.savefig(os.path.join(INPUTPATH, "timeseries", f"timeseries_{varname.replace('.npy','')}_{pixel}.png"))
+
+
+    def pixelscriteriainRB(self):
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_yearlyavg1mstd.npy"))
+        # seine
+        i = 195
+        j = 164
+        grid_size = 30
+        mapping = mapping[i:i+grid_size, j:j+grid_size]
+        print(np.sum(mapping))
+        selected = np.where(mapping==1)
+        print(selected)
 
