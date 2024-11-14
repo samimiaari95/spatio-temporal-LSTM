@@ -47,15 +47,15 @@ class postprocess_calculations:
         plt.savefig(os.path.join(OUTPUTPATH, f"timeseries_{pixel[0]}_{pixel[1]}.png"))
 
     def compare_timeseries_plots(self, pixel):
-        outputs = {"rand100EU_1mstd_ohe_100_16_365prvpdsmxyindohe":[], "rand100EU_1mstd_ohe_100_160_prvpdsmxyindohe":[]}
-        labels = {"rand100EU_1mstd_ohe_100_16_365prvpdsmxyindohe":"16 neurons - 365 batch size", "rand100EU_1mstd_ohe_100_160_prvpdsmxyindohe":"160 neurons - 365*14 batch size"}
+        outputs = {"100_256dr0x1lr01x50_365x1000_prvpdsmxyindlonlat":[], "100_256dr0x1lr01x50_365x1000_prvpdsmxyind":[]}
+        labels = {"100_256dr0x1lr01x50_365x1000_prvpdsmxyindlonlat":"with Lon & Lat", "100_256dr0x1lr01x50_365x1000_prvpdsmxyind":"without Lon & Lat"}
         
         for output in outputs.keys():
-            outputs[output] = np.load(os.path.join(OUTPUTPATH, output, f"sim_destand_{output}.npy"))
+            outputs[output] = np.load(os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{output}", f"sim_destand_{output}.npy"))
             outputs[output] = outputs[output].reshape(outputs[output].shape[0],X,Y)
 
 
-        obs_destand_test = np.load(os.path.join(OUTPUTPATH, output, f"obs_destand_{output}.npy"))
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{output}", f"obs_destand_{output}.npy"))
 
         obs_destand_test = obs_destand_test.reshape(obs_destand_test.shape[0],X,Y)
 
@@ -191,8 +191,8 @@ class postprocess_calculations:
         # calculate and plot correlation
         correlation_2D_map = self.calc_2D_correlation(obs, sim)
         correlation_2D_heatmap = self.calc_2Dheatmap_correlation(obs_destand_test, sim_destand_test)
-        plot_functions.chosenpixels_in_EU(correlation_2D_map, False, -1, 1, f"Correlation")
-        plot_functions.chosenpixels_heatmap(correlation_2D_heatmap, False, -1, 1, f"Correlation")
+        plot_functions.chosenpixels_in_EU(correlation_2D_map, False, 0, 1, f"Correlation")
+        plot_functions.chosenpixels_heatmap(correlation_2D_heatmap, False, 0, 1, f"Correlation")
 
         # calculate and plot MSE
         mse_2D_heatmap = self.calc_2Dheatmap_MSE(obs_destand_test, sim_destand_test)
