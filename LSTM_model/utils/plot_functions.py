@@ -9,6 +9,7 @@ import cartopy.feature as cfeature
 from shapely.geometry import Polygon
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
+from sklearn.metrics import r2_score
 from LSTM_model.model.config import *
 
 plt.rcParams.update({'font.size': 18})
@@ -359,6 +360,38 @@ class plotting_helper:
         print(f"saving {title}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
+    def chosenpixels_heatmap_seinetransfer(self, data, logscale, minval, maxval, title):
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+        fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+        
+        # get EU lon lat
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        # define limits and normalization
+        norm  = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
+
+        # define colorscale
+        cmap_colors = "viridis" if "MSE" in title else "coolwarm"
+        cmap = plt.get_cmap(cmap_colors)
+
+        cla = ax.pcolormesh(lons, lats, data, norm=norm, cmap=cmap, transform=ccrs.PlateCarree())
+        
+        # Add a colorbar
+        cbar = plt.colorbar(cla, ax=ax, orientation='vertical', pad=0.05)
+        colorbar_label = f"{title}" if title=="Correlation" else f"{title} (m)"
+        cbar.set_label(colorbar_label)
+
+        ax.gridlines(draw_labels=True)
+        # Add the value for each pixel
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                if (i==0 and j==8) or (i==0 and j==22) or (i==13 and j==22) or (i==14 and j==25) or (i==15 and j==25):
+                    ax.plot(lons[i,j], lats[i,j], marker='*', color="lime", markersize=15, 
+                            transform=ccrs.PlateCarree(), label='Special Point')
+
+        print(f"saving {title} heatmap")
+        fig.savefig(os.path.join(OUTPUTPATH, f"{title}_{MODEL_NAME}_heatmap.png"))
+
     def chosenpixels_heatmap(self, data, logscale, minval, maxval, title):
         fig, ax = plt.subplots(figsize=(16, 9))
         
@@ -460,7 +493,8 @@ class plotting_helper:
         fig.savefig(os.path.join(OUTPUTPATH, f"{ind}_{TARGET_REGION}.png"))
 
     def selectedpixels_in_EU(self):
-        mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
+        filter = "mapping_meaninterannualstd025"
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), f"{filter}.npy"))
         mapping[mapping == 0] = np.nan
         indices = np.where(~np.isnan(mapping))
         indices_list = list(zip(indices[0], indices[1]))
@@ -486,13 +520,9 @@ class plotting_helper:
         ax.gridlines(draw_labels=True)
         
         print(f"saving selected pixels at {TARGET_REGION}")
-        fig.savefig(os.path.join(OUTPUTPATH, f"selectedpixels_{TARGET_REGION}.png"))
+        fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), f"{filter}.png"))
 
     def plot_RB(self):
-        i = 195 #195+16
-        j = 164 #164+13
-        grid_size = 30
-        data = np.load(os.path.join(os.path.dirname(INPUTPATH), "topo.npy"))[0,i:i+grid_size, j:j+grid_size]
         data = np.zeros((30,30))
         print(data.shape)
 
@@ -524,9 +554,9 @@ class plotting_helper:
         ax.add_feature(shape_feature_seine, facecolor='none', edgecolor='red', linewidth=1)
 
         # seine region starting lat lon
-        i = 211 #195+16
-        j = 177 #164+13
-        grid_size = 10
+        i = 195 #195+16
+        j = 164 #164+13
+        grid_size = 30
         lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))
         lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))
         points = [[lons[i,j], lats[i,j]], [lons[i,j+grid_size], lats[i,j+grid_size]], [lons[i+grid_size,j+grid_size], lats[i+grid_size,j+grid_size]], [lons[i+grid_size,j], lats[i+grid_size,j]]]
@@ -535,4 +565,30 @@ class plotting_helper:
         ax.add_feature(study_area_feature_seine, edgecolor='blue', linewidth=2)
 
         print("saving seine")
-        fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "Seine_10x10.png"))
+        fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "Seine_30x30.png"))
+    
+    def plot_predr2(self, obs, sim):
+        # Calculate R2
+        r2 = r2_score(obs, sim)
+        print(r2)
+        # Scatter plot
+        plt.figure(figsize=(16, 9))
+        plt.scatter(obs, sim, color='k', alpha=0.6, label=f'$R^2$: {r2:.3f}')
+
+        # Plot identity line (y = x)
+        plt.plot([obs.min(), obs.max()],
+                [obs.min(), obs.max()],
+                color='red', linestyle='--', label='Identity Line')
+
+        # Add labels, title, and legend
+        plt.xlabel('Original Simulations')
+        plt.ylabel('Predictions')
+
+        plt.xscale("log")
+        plt.yscale("log")
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.5)
+
+        # Show the plot
+        print("saving r2")
+        plt.savefig(os.path.join(OUTPUTPATH, f"R2_{MODEL_NAME}.png"))
