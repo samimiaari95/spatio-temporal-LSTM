@@ -6,6 +6,7 @@ import matplotlib.dates as mdates
 from sklearn.preprocessing import OneHotEncoder
 from LSTM_model.model.config import *
 from LSTM_model.utils.plot_functions import plotting_helper
+from LSTM_model.utils.utils import utilities
 
 class preprocessing_data:
     def __init__(self) -> None:
@@ -264,3 +265,48 @@ class preprocessing_data:
         selected = np.where(mapping==1)
         print(selected)
 
+    def ensemble_choices(self):
+        utils = utilities()
+        nb_samples = 100
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
+        for m in range(100):
+            print(np.sum(mapping))
+            map1d = np.where(mapping==1)
+            utils.make_dir(os.path.join(INPUTPATH, f"100px_member_{m}"))            
+            samples = np.random.choice(len(map1d[0]), nb_samples, False)
+            samples.sort()
+            map_choices = np.zeros(mapping.shape)
+            for i, sample in enumerate(samples):
+                map_choices[map1d[0][sample],map1d[1][sample]] = 1
+
+            np.save(os.path.join(INPUTPATH, f"100px_member_{m}", "choices.npy"), map_choices)
+            mapping = np.where(map_choices==1, 0, mapping)
+    
+    def ensemble_cropvars(self):
+        for m in range(100):
+            print(f"100px_member_{m}")
+            mapping = np.load(os.path.join(INPUTPATH, f"100px_member_{m}", "choices.npy"))
+            varnames = {x:[] for x in FEATURES_FILES}
+            varnames["wtd.npy"] = []
+            for varname in varnames.keys():
+                var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
+                var = var[:,mapping==1]
+                np.save(os.path.join(INPUTPATH, f"100px_member_{m}", varname), var)
+    
+    def jobs_scripts(self):
+        filepath = get_root_dir()
+        f = open(filepath, "r")
+        sbatch = f.readlines()
+        f.close()
+        #sbatch = sbatch[:19]
+        jobname = f"100x100_256dr0x1lr1x50_365x1000_prvpdsmxyindlonlat_member{i}"
+        run_command_2 = "tclsh exfiltration.tcl"    
+        for i in range(0, 100):
+            case_path = f"cd /p/scratch/cslts/miaari1/infexfcases/test_case{i}"
+            sbatch.append(case_path)
+            sbatch.append(jobname)
+            sbatch.append(run_command_2)
+        
+        with open("/p/project/cslts/miaari1/parflow_simulations.sh", 'w') as sbatchfile:
+            sbatchfile.write('\n'.join(sbatch))
+        sbatchfile.close()
