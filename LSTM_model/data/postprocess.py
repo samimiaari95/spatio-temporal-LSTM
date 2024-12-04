@@ -5,6 +5,7 @@ import matplotlib.dates as mdates
 import pandas as pd
 import torch
 import torch.nn as nn
+from sklearn.metrics import r2_score
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.model.config import *
 
@@ -209,6 +210,7 @@ class postprocess_calculations:
         nse_2D_heatmap, nse_2D_map = self.calc_nse(obs_destand_test, sim_destand_test, mapping)
         plot_functions.chosenpixels_in_EU(nse_2D_map, False, -1, 1, f"NSE")
         plot_functions.chosenpixels_heatmap(nse_2D_heatmap, False, -1, 1, f"NSE")
+        plot_functions.plot_predr2(obs_destand_test[:,412], sim_destand_test[:,412])
 
     def calculate_accuracy_parameters(self):
         dirpath = os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{MODEL_NAME}")
@@ -246,4 +248,68 @@ class postprocess_calculations:
         print(f"median corr: {np.median(correlation_2D_heatmap)}")
         print(f"90th% MSE: {np.percentile(mse_2D_heatmap, 90)}")
         print(f"10th% corr: {np.percentile(correlation_2D_heatmap, 10)}")
+
+    def ensemble_results(self):
+        rmse = np.array([])
+        r2 = np.array([])
+        corr = np.array([])
+        for i in range(100):
+            print(i)
+            obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"100px_member_{i}", f"obs_destand_{MODEL_NAME}.npy"))
+            sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"100px_member_{i}", f"sim_destand_{MODEL_NAME}.npy"))
+            #print(sim_destand_test.shape)
+            obs_destand_test = np.nan_to_num(obs_destand_test)
+            sim_destand_test = np.nan_to_num(sim_destand_test)
+
+            obs_destand_test[obs_destand_test < 0.01] = 0.0
+            sim_destand_test[sim_destand_test < 0.01] = 0.0
+
+            for px in range(obs_destand_test.shape[1]):
+                r2_px = r2_score(obs_destand_test[:,px], sim_destand_test[:,px])
+                if r2_px>=-1:
+                    r2 = np.append(r2, r2_px)
+                
+                if np.std(obs_destand_test[:,px]) > 0 and np.std(sim_destand_test[:,px]) > 0:  # Avoid division by zero
+                    correlation_matrix = np.corrcoef(obs_destand_test[:,px], sim_destand_test[:,px])
+                    r = correlation_matrix[0, 1]
+                else:
+                    r = np.nan  # If there's no variation, set correlation to NaN
+                corr = np.append(corr, r)
+
+                rmsepx = np.sqrt(np.mean((obs_destand_test[:,px] - sim_destand_test[:,px]) ** 2))
+                rmse = np.append(rmse, rmsepx)
+
+        np.save(os.path.join(OUTPUTPATH, "corr.npy"), corr)
+        np.save(os.path.join(OUTPUTPATH, "rmse.npy"), rmse)
+        np.save(os.path.join(OUTPUTPATH, "r2.npy"), r2)
+
+    def plot_ensemble_results(self):
+        rmse = np.load(os.path.join(OUTPUTPATH, "rmse.npy"))
+        corr = np.load(os.path.join(OUTPUTPATH, "corr.npy"))
+        r2 = np.load(os.path.join(OUTPUTPATH, "r2.npy"))
+
+        print("plotting dist")
+        plt.figure(figsize=(8, 6))
+        plt.hist(rmse, bins=100, color='blue', alpha=0.7, edgecolor='black')  # 50 bins for better resolution
+        plt.xlabel('RMSE (m)', fontsize=12)
+        plt.ylabel('Frequency', fontsize=12)
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.savefig(os.path.join(OUTPUTPATH, f"rmse_dist.png"))
+
+        plt.figure(figsize=(8, 6))
+        plt.hist(corr, bins=100, color='blue', alpha=0.7, edgecolor='black')  # 50 bins for better resolution
+        plt.xlim(-1,1)
+        plt.xlabel('Correlation', fontsize=12)
+        plt.ylabel('Frequency', fontsize=12)
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.savefig(os.path.join(OUTPUTPATH, f"corr_dist.png"))
+
+        plt.figure(figsize=(8, 6))
+        plt.hist(r2, bins=100, color='blue', alpha=0.7, edgecolor='black')  # 50 bins for better resolution
+        #plt.title('Histogram of Data Distribution', fontsize=14)
+        plt.xlim(-1,1)
+        plt.xlabel('R2', fontsize=12)
+        plt.ylabel('Frequency', fontsize=12)
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.savefig(os.path.join(OUTPUTPATH, f"r2_dist.png"))
 
