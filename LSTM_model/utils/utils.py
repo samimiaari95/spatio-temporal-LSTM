@@ -15,6 +15,14 @@ class utilities:
                 self.make_dir(os.path.dirname(dir_path))
             else:
                 os.mkdir(dir_path)
+    
+    def write_file(filename, intval):
+        with open(filename, 'w') as fp:
+            fp.write(str(intval))
+    
+    def read_file(filename):
+        with open(filename) as fp:
+            return fp.read()
 
     def powerlaw_func(self, h, a, b):
             y = a*(h**b)
@@ -32,85 +40,6 @@ class utilities:
         variables = ncfile.variables
         for var in variables:
             print(ncfile[var])
-            continue
-            if var!="lon" and var!="lat" and var!="time" and var!="rlat" and var!="rlon" and var!="rotated_pole" and var!="pressure" and var!="time_bnds":
-                print(ncfile[var].long_name)
-                #if ncfile[var].long_name == "2m relative humidity":
-                #    print(ncfile[var])
-
-    def get_S4W_basin(self, lat2D, lon2D, region):
-        """ return a mask
-
-        Return a boolean mask-array (True = masked, False = not masked) based on
-        a passed set of longitude and latitude values and the name of the prudence
-        region.
-        The shape of the mask-array is set equal to the shape of input lat2D.
-        Source: http://prudence.dmi.dk/public/publications/PSICC/Christensen&Christensen.pdf p.38
-
-        Input values:
-        -------------
-        lat2D:    ndarray
-            2D latitude information for each pixel
-        lon2D:    ndarray
-            2D longitude information for each pixel
-        prudName: str
-            Short name of prudence region
-
-        Return value:
-        -------------
-        prudMask: ndarray
-            Ndarray of dtype boolean of the same shape as lat2D.
-            True = masked; False = not masked
-        """
-        if (region=='SEINE'):
-            regionMask = np.where((lat2D < 47.0) | (lat2D > 50.0)  | (lon2D < -2.0) | (lon2D >  3.0), False, True)
-        else:
-            print(f'Region {region} not found --> EXIT')
-        return regionMask
-
-    def get_prudenceMask(self, lat2D, lon2D, prudName):
-        """ return a prudance mask
-
-        Return a boolean mask-array (True = masked, False = not masked) based on
-        a passed set of longitude and latitude values and the name of the prudence
-        region.
-        The shape of the mask-array is set equal to the shape of input lat2D.
-        Source: http://prudence.dmi.dk/public/publications/PSICC/Christensen&Christensen.pdf p.38
-
-        Input values:
-        -------------
-        lat2D:    ndarray
-            2D latitude information for each pixel
-        lon2D:    ndarray
-            2D longitude information for each pixel
-        prudName: str
-            Short name of prudence region
-
-        Return value:
-        -------------
-        prudMask: ndarray
-            Ndarray of dtype boolean of the same shape as lat2D.
-            True = masked; False = not masked
-        """
-        if (prudName=='BI'):
-            prudMask = np.where((lat2D < 50.0) | (lat2D > 59.0)  | (lon2D < -10.0) | (lon2D >  2.0), False, True)
-        elif (prudName=='IP'):
-            prudMask = np.where((lat2D < 36.0) | (lat2D > 44.0)  | (lon2D < -10.0) | (lon2D >  3.0), False, True)
-        elif (prudName=='FR'):
-            prudMask = np.where((lat2D < 44.0) | (lat2D > 50.0)  | (lon2D < -5.0) | (lon2D >  5.0), False, True)
-        elif (prudName=='ME'):
-            prudMask = np.where((lat2D < 48.0) | (lat2D > 55.0)  | (lon2D < 2.0) | (lon2D >  16.0), False, True)
-        elif (prudName=='SC'):
-            prudMask = np.where((lat2D < 55.0) | (lat2D > 70.0)  | (lon2D < 5.0) | (lon2D >  30.0), False, True)
-        elif (prudName=='AL'):
-            prudMask = np.where((lat2D < 44.0) | (lat2D > 48.0)  | (lon2D < 5.0) | (lon2D >  15.0), False, True)
-        elif (prudName=='MD'):
-            prudMask = np.where((lat2D < 36.0) | (lat2D > 44.0)  | (lon2D < 3.0) | (lon2D >  25.0), False, True)
-        elif (prudName=='EA'):
-            prudMask = np.where((lat2D < 44.0) | (lat2D > 55.0)  | (lon2D < 16.0) | (lon2D >  30.0), False, True)
-        else:
-            print(f'prudance region {prudName} not found --> EXIT')
-        return prudMask
 
     def delete_files(self, dirpath, key):
         for file in os.listdir(dirpath):
@@ -140,7 +69,10 @@ class utilities:
             all_inputs = np.concatenate((all_inputs,f1), axis=0) if len(all_inputs)>0 else f1
 
         all_inputs = np.moveaxis(all_inputs, 0, -1)
-        
+        f1 = None
+        lookback_arrays = None
+        data = None
+        raw_data = None
         #print(np.unique(np.equal(raw_data[LOOKBACK-1], lookback_arrays[0,:,-1].reshape(X,Y))))
         #print(np.unique(np.equal(raw_data[LOOKBACK-1], f1[:,-1].reshape(TRAINING_PERIOD-LOOKBACK,X,Y)[0,:,:])))
         #print(np.unique(np.equal(raw_data[LOOKBACK-1], all_inputs[:,-1, -1].reshape(TRAINING_PERIOD-LOOKBACK,X,Y)[0,:,:])))
@@ -161,7 +93,7 @@ class utilities:
         data = (data - means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"])/means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"]
 
         data = data.flatten()
-
+        raw_data = None
         #print(np.unique(np.equal(raw_data[start, :, :], data.reshape(end-start, X, Y)[0,:,:])))
         return data, means_stds
 
