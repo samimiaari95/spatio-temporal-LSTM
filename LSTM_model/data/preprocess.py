@@ -1,4 +1,6 @@
 import os
+import pickle
+import h5py
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -310,3 +312,43 @@ class preprocessing_data:
         with open("/p/project/cslts/miaari1/parflow_simulations.sh", 'w') as sbatchfile:
             sbatchfile.write('\n'.join(sbatch))
         sbatchfile.close()
+
+    def stand_npy_hdf5(self):
+        utils = utilities()
+
+        if os.path.exists(os.path.join(OUTPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl")):
+            with open(os.path.join(OUTPUTPATH, f"meanstd_{SOURCE_REGION}_{MODEL_NAME}.pkl"), 'rb') as f:
+                means_stds = pickle.load(f)
+            f.close()
+        else:
+            means_stds = {}
+        # prepare input data, standardization, lookback and train time series
+        train_inputs, means_stds = utils.singleregion_inputfeatures(0, TRAINING_PERIOD, means_stds)
+
+        # prepare input data of target variable and standardize
+        obs_stand_train, means_stds = utils.singleregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
+
+        filename = "target1d_inputs3d_pointsxlookbackxfeatures.h5"
+        # Save the array in HDF5 format
+        with h5py.File(os.path.join(INPUTPATH, filename), "w") as h5_file:
+            # Create a dataset and store the 3D array
+            h5_file.create_dataset("input_data", data=train_inputs)
+            h5_file.create_dataset("target_data", data=obs_stand_train)
+        
+        print("successfully saved")
+
+        train_inputs = None
+        obs_stand_train = None
+        with h5py.File(os.path.join(INPUTPATH, filename), "r") as h5_file:
+            loaded_array = h5_file["input_data"][:]
+            print(loaded_array.shape)  # Should match the original array shape
+            loaded_array = h5_file["target_data"][:]
+            print(loaded_array.shape)  # Should match the original array shape
+
+
+        print(means_stds)
+        # save training data mean and std
+        with open(os.path.join(INPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"), 'wb') as f:
+            pickle.dump(means_stds, f)
+        f.close()
+        print("saved pickle")
