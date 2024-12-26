@@ -10,17 +10,19 @@ def get_root_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 # number of cells
-X = 10 #238
-Y = 10 #240
+X = 20 #238
+Y = 20 #240
 NB_CELLS = X*Y
 
+member = int(os.environ.get("ENS_MEMBER", 0))
+
 # study region
-TARGET_REGION = "rand100EU_yravg1mstd_ohe"
-SOURCE_REGION = "rand100EU_yravg1mstd_ohe"
+TARGET_REGION = f"400px_member_{member}"
+SOURCE_REGION = f"400px_member_{member}"
 
 # directory and inputs
-OUTPUTPATH = os.path.join(get_root_dir(), "outputs", "20yrs_ts", TARGET_REGION)
-INPUTPATH = os.path.join(get_root_dir(), "inputs", "20yrs_ts", SOURCE_REGION)
+OUTPUTPATH = os.path.join(get_root_dir(), "outputs", "20yrs_ts", "ensemble_400px", TARGET_REGION)
+INPUTPATH = os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px", SOURCE_REGION)
 FEATURES_FILES = ["TOT_PREC.npy", "vpd.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", "soilind.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
 TARGETVAR_FILE = "wtd.npy"
 
