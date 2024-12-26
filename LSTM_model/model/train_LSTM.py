@@ -1,6 +1,6 @@
 import os
-import pickle
 import h5py
+import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
@@ -15,14 +15,13 @@ class MyDataset(Dataset):
         self.device = torch.device('cuda')
     
     def __len__(self):
-        outputs = self.datafile["target_data"][:]
-        return len(outputs)
-    
+        return self.datafile["target_data"].shape[0]
+
     def __getitem__(self, idx):
         # all input features in one file of shape (datapoints, lookback, # of features)
         inputs = self.datafile["input_data"][idx]
         outputs = self.datafile["target_data"][idx]
-        return torch.tensor(inputs).float().to(self.device), torch.tensor(outputs).float().to(self.device)
+        return torch.from_numpy(inputs).float().to(self.device), torch.from_numpy(outputs).float().to(self.device)
         
 class train_LSTM_model():
 
@@ -53,28 +52,25 @@ class train_LSTM_model():
             utils.make_dir(os.path.join(OUTPUTPATH))
 
         # define mean and std dictionary
-        #means_stds = {}
+        means_stds = {}
         # prepare input data, standardization, lookback and train time series
-        #train_inputs, means_stds = utils.singleregion_inputfeatures(0, TRAINING_PERIOD, means_stds)
+        train_inputs, means_stds = utils.singleregion_inputfeatures(0, TRAINING_PERIOD, means_stds)
 
         # prepare input data of target variable and standardize
-        #obs_stand_train, means_stds = utils.singleregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
+        obs_stand_train, means_stds = utils.singleregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
 
         # save training data mean and std
-        #with open(os.path.join(OUTPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"), 'wb') as f:
-        #    pickle.dump(means_stds, f)
-        #f.close()
+        with open(os.path.join(OUTPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"), 'wb') as f:
+            pickle.dump(means_stds, f)
+        f.close()
 
         #print("creating dataloader")
-        #print(f"train features shape: {train_inputs.shape}") # (30*30*timeseries, lookback, features)
-        #print(f"train target shape: {obs_stand_train.shape}")
-        #print(device)
-        #dataset = TensorDataset(torch.tensor(train_inputs).float().to(device), torch.tensor(obs_stand_train).float().to(device))
-        dataset = MyDataset("target1d_inputs3d_pointsxlookbackxfeatures.h5")
+        dataset = TensorDataset(torch.tensor(train_inputs).float().to(device), torch.tensor(obs_stand_train).float().to(device))
+        #dataset = MyDataset("target1d_inputs3d_pointsxlookbackxfeatures.h5")
 
-        with open(os.path.join(OUTPUTPATH, f"meanstd_{SOURCE_REGION}_{MODEL_NAME}.pkl"), 'rb') as f:
-            means_stds = pickle.load(f)
-        f.close()
+        #with open(os.path.join(OUTPUTPATH, f"meanstd_{SOURCE_REGION}_{MODEL_NAME}.pkl"), 'rb') as f:
+        #    means_stds = pickle.load(f)
+        #f.close()
 
 
         train_sampler = torch.utils.data.distributed.DistributedSampler(dataset, shuffle=True, seed=0,)
@@ -86,7 +82,6 @@ class train_LSTM_model():
         optimizer = torch.optim.Adam(lstm_model.parameters(), lr=LEARNING_RATE)
         if LR_SCHEDULER: scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=LR_STEP_SIZE, gamma=LR_GAMMA)
 
-        #lstm_model = nn.DataParallel(lstm_model) # Wrap the model with DataParallel
         lstm_model = lstm_model.to(device) # Move the model to the GPU
         rank = torch.distributed.get_rank()
         world_size = torch.distributed.get_world_size()
