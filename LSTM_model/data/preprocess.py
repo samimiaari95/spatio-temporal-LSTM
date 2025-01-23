@@ -189,7 +189,7 @@ class preprocessing_data:
         print(len(yearly_std))
 
     def create_choices(self):
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_yearlyavg1mstd.npy"))
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "unchosen_pixels.npy"))
         map1d = np.where(mapping==1)
         nb_samples = 100
         samples = np.random.choice(len(map1d[0]), nb_samples, False)
@@ -200,15 +200,15 @@ class preprocessing_data:
 
         print(map_choices.shape)
         print(np.sum(map_choices))
-        np.save(os.path.join(INPUTPATH, "choices.npy"), map_choices)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "choices.npy"), map_choices)
         
     def crop_vars_mapping(self, varname):
-        mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
-        var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "choices.npy"))
+        var = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), varname))
         var = var[:,mapping==1]
         print(varname)
         print(var.shape)
-        np.save(os.path.join(INPUTPATH, varname), var)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", varname), var)
 
     def distribute_onehotencoding(self, vardata, varname):
         for i in range(vardata.shape[1]):
@@ -269,31 +269,31 @@ class preprocessing_data:
 
     def ensemble_choices(self):
         utils = utilities()
-        nb_samples = 100
+        nb_samples = 400
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
         for m in range(100):
             print(np.sum(mapping))
             map1d = np.where(mapping==1)
-            utils.make_dir(os.path.join(INPUTPATH, f"100px_member_{m}"))            
+            utils.make_dir(os.path.join(INPUTPATH, f"400px_member_{m}"))
             samples = np.random.choice(len(map1d[0]), nb_samples, False)
             samples.sort()
             map_choices = np.zeros(mapping.shape)
             for i, sample in enumerate(samples):
                 map_choices[map1d[0][sample],map1d[1][sample]] = 1
 
-            np.save(os.path.join(INPUTPATH, f"100px_member_{m}", "choices.npy"), map_choices)
+            np.save(os.path.join(INPUTPATH, f"400px_member_{m}", "choices.npy"), map_choices)
             mapping = np.where(map_choices==1, 0, mapping)
     
     def ensemble_cropvars(self):
         for m in range(100):
-            print(f"100px_member_{m}")
-            mapping = np.load(os.path.join(INPUTPATH, f"100px_member_{m}", "choices.npy"))
+            print(f"400px_member_{m}")
+            mapping = np.load(os.path.join(INPUTPATH, f"400px_member_{m}", "choices.npy"))
             varnames = {x:[] for x in FEATURES_FILES}
             varnames["wtd.npy"] = []
             for varname in varnames.keys():
                 var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
                 var = var[:,mapping==1]
-                np.save(os.path.join(INPUTPATH, f"100px_member_{m}", varname), var)
+                np.save(os.path.join(INPUTPATH, f"400px_member_{m}", varname), var)
     
     def jobs_scripts(self):
         filepath = get_root_dir()
@@ -352,3 +352,22 @@ class preprocessing_data:
             pickle.dump(means_stds, f)
         f.close()
         print("saved pickle")
+    
+    def ensemble_pixels(self):
+        choices = np.load(os.path.join(INPUTPATH, "choices.npy"))
+        all_choices = np.zeros(choices.shape)
+        for m in range(100):
+            choices = np.load(os.path.join(os.path.dirname(INPUTPATH), f"400px_member_{m}", "choices.npy"))
+            all_choices = np.where(choices==1, 1, all_choices)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), "ensemble_allchoices.npy"), all_choices)
+        print(np.sum(all_choices))
+    
+    def ensemble_transfer_pixels(self):
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "included_excl_waterbodies.npy"))
+        choices = np.load(os.path.join(os.path.dirname(INPUTPATH), "ensemble_allchoices.npy"))
+        print(np.sum(mapping))
+
+        mapping = np.where(choices==1, 0, mapping)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "unchosen_pixels.npy"), mapping)
+        print(np.sum(mapping))
+    
