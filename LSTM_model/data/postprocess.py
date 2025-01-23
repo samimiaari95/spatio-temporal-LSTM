@@ -20,7 +20,7 @@ class postprocess_calculations:
         cell_mse = cell_mse.reshape(X,Y)
         return cell_mse
 
-    def timeseries_plot(self, pixel):
+    def timeseries_plot(self, i,j):
         obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
         sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
 
@@ -34,9 +34,9 @@ class postprocess_calculations:
         dates = dates[(dates.month != 2) | (dates.day != 29)]
         fig, ax = plt.subplots(figsize=(16, 10))
         
-        print(f"plotting timeseries {pixel[0]}, {pixel[1]}")
-        ax.plot(dates, obs_destand_test[:,pixel[0],pixel[1]], "k-", label="Original simulations")
-        ax.plot(dates, sim_destand_test[:,pixel[0],pixel[1]], "k--", label="Predicted")
+        print(f"plotting timeseries {i}, {j}")
+        ax.plot(dates, obs_destand_test[:,i,j], "k-", label="Original simulations")
+        ax.plot(dates, sim_destand_test[:,i,j], "k--", label="Predicted")
         
         ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
@@ -45,7 +45,7 @@ class postprocess_calculations:
         plt.ylabel('Water table depth (m)')
         plt.legend()
         plt.grid()
-        plt.savefig(os.path.join(OUTPUTPATH, f"timeseries_{pixel[0]}_{pixel[1]}.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, f"timeseries_{i}_{j}.png"))
 
     def compare_timeseries_plots(self, pixel):
         outputs = {"100_256dr0x1lr01x50_365x1000_prvpdsmxyindlonlat":[], "100_256dr0x1lr01x50_365x1000_prvpdsmxyind":[]}
@@ -210,7 +210,7 @@ class postprocess_calculations:
         nse_2D_heatmap, nse_2D_map = self.calc_nse(obs_destand_test, sim_destand_test, mapping)
         plot_functions.chosenpixels_in_EU(nse_2D_map, False, -1, 1, f"NSE")
         plot_functions.chosenpixels_heatmap(nse_2D_heatmap, False, -1, 1, f"NSE")
-        plot_functions.plot_predr2(obs_destand_test[:,412], sim_destand_test[:,412])
+        #plot_functions.plot_predr2(obs_destand_test[:,412], sim_destand_test[:,412])
 
     def calculate_accuracy_parameters(self):
         dirpath = os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{MODEL_NAME}")
@@ -249,40 +249,6 @@ class postprocess_calculations:
         print(f"90th% MSE: {np.percentile(mse_2D_heatmap, 90)}")
         print(f"10th% corr: {np.percentile(correlation_2D_heatmap, 10)}")
 
-    def ensemble_results(self):
-        rmse = np.array([])
-        r2 = np.array([])
-        corr = np.array([])
-        for i in range(100):
-            print(i)
-            obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"100px_member_{i}", f"obs_destand_{MODEL_NAME}.npy"))
-            sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"100px_member_{i}", f"sim_destand_{MODEL_NAME}.npy"))
-            #print(sim_destand_test.shape)
-            obs_destand_test = np.nan_to_num(obs_destand_test)
-            sim_destand_test = np.nan_to_num(sim_destand_test)
-
-            obs_destand_test[obs_destand_test < 0.01] = 0.0
-            sim_destand_test[sim_destand_test < 0.01] = 0.0
-
-            for px in range(obs_destand_test.shape[1]):
-                r2_px = r2_score(obs_destand_test[:,px], sim_destand_test[:,px])
-                if r2_px>=-1:
-                    r2 = np.append(r2, r2_px)
-                
-                if np.std(obs_destand_test[:,px]) > 0 and np.std(sim_destand_test[:,px]) > 0:  # Avoid division by zero
-                    correlation_matrix = np.corrcoef(obs_destand_test[:,px], sim_destand_test[:,px])
-                    r = correlation_matrix[0, 1]
-                else:
-                    r = np.nan  # If there's no variation, set correlation to NaN
-                corr = np.append(corr, r)
-
-                rmsepx = np.sqrt(np.mean((obs_destand_test[:,px] - sim_destand_test[:,px]) ** 2))
-                rmse = np.append(rmse, rmsepx)
-
-        np.save(os.path.join(OUTPUTPATH, "corr.npy"), corr)
-        np.save(os.path.join(OUTPUTPATH, "rmse.npy"), rmse)
-        np.save(os.path.join(OUTPUTPATH, "r2.npy"), r2)
-
     def plot_ensemble_results(self):
         rmse = np.load(os.path.join(OUTPUTPATH, "rmse.npy"))
         corr = np.load(os.path.join(OUTPUTPATH, "corr.npy"))
@@ -313,3 +279,162 @@ class postprocess_calculations:
         plt.grid(axis='y', linestyle='--', alpha=0.7)
         plt.savefig(os.path.join(OUTPUTPATH, f"r2_dist.png"))
 
+    def plot_ensemble_timeseries(self, i, j):
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        nb_members = 100
+        print(obs_destand_test.shape)
+        obs_destand_test[obs_destand_test < 0.01] = 0.0
+
+        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
+        dates = dates[(dates.month != 2) | (dates.day != 29)]
+        fig, ax = plt.subplots(figsize=(16, 10))
+        
+        print(f"plotting timeseries {i},{j}")
+        timeserieslength = obs_destand_test.shape[0]
+        obs_destand_test = obs_destand_test.reshape(timeserieslength,X,Y)
+        ens_mean = np.zeros((timeserieslength, nb_members))
+        for m in range(nb_members):
+            sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
+            sim_destand_test[sim_destand_test < 0.01] = 0.0
+            sim_destand_test = sim_destand_test.reshape(timeserieslength,X,Y)
+            ens_mean[:,m] = sim_destand_test[:,i,j]
+            ax.plot(dates, sim_destand_test[:,i,j])
+
+        ax.plot(dates, obs_destand_test[:,i,j], "k-", label="Original simulations", linewidth=4.0)
+        ax.plot(dates, np.mean(ens_mean, axis=1), "k--", label="Ensemble mean", linewidth=4.0)
+
+        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+
+        plt.xticks(rotation=45)
+        plt.ylabel('Water table depth (m)')
+        plt.legend()
+        plt.grid()
+        plt.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "transfer_timeseries", f"ensemble_timeseries_{i}_{j}.png"))
+
+    def ens_mean(self):
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        obs_destand_test[obs_destand_test < 0.01] = 0.0
+
+        sim = np.zeros(obs_destand_test.shape)
+        for pixel in range(100):
+            ens_mean = np.zeros((obs_destand_test.shape[0], 100))
+            for m in range(100):
+                sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"100px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
+                sim_destand_test[sim_destand_test < 0.01] = 0.0
+                ens_mean[:,m] = sim_destand_test[:,pixel]
+            sim[:, pixel] = np.mean(ens_mean, axis=1)
+        print(obs_destand_test.shape)
+        print(sim.shape)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean", f"obs_destand_{MODEL_NAME}.npy"), obs_destand_test)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean", f"sim_destand_{MODEL_NAME}.npy"), sim)
+
+    def ens_minMSE(self):
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        print(obs_destand_test.shape)
+        obs_destand_test[obs_destand_test < 0.01] = 0.0
+        criterion = nn.MSELoss()
+        nb_members = 100
+
+        sim = np.zeros(obs_destand_test.shape)
+        for pixel in range(100):
+            mse = np.zeros((nb_members))
+            for m in range(nb_members):
+                sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
+                sim_destand_test[sim_destand_test < 0.01] = 0.0
+                mse[m] = criterion(torch.tensor(obs_destand_test[:,pixel]).float(), torch.tensor(sim_destand_test[:,pixel]).float()).item()
+            
+            print(mse)
+            print(np.argmin(mse))    
+            minsim = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{np.argmin(mse)}", f"sim_destand_{MODEL_NAME}.npy"))
+            sim[:, pixel] = minsim[:, pixel]
+        
+        print(obs_destand_test.shape)
+        print(sim.shape)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_minMSE", f"obs_destand_{MODEL_NAME}.npy"), obs_destand_test)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_minMSE", f"sim_destand_{MODEL_NAME}.npy"), sim)
+
+    def ens_timeseries_vs(self, i, j):
+        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        obs[obs < 0.01] = 0.0
+
+        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
+        dates = dates[(dates.month != 2) | (dates.day != 29)]
+        fig, ax = plt.subplots(figsize=(16, 10))
+
+        timeserieslength = obs.shape[0]
+        obs = obs.reshape(timeserieslength,X,Y)
+        sim100 = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
+        sim400 = np.load(os.path.join(OUTPUTPATH.replace("ensemble_weightedRMSE", "ensemble_mean"), f"sim_destand_{MODEL_NAME}.npy"))
+
+        sim100[sim100 < 0.01] = 0.0
+        sim400[sim400 < 0.01] = 0.0
+        sim100 = sim100.reshape(timeserieslength,X,Y)
+        sim400 = sim400.reshape(timeserieslength,X,Y)
+        
+        
+        ax.plot(dates, obs[:,i,j], "k-", label="Original simulations")
+        ax.plot(dates, sim100[:,i,j], "g--", label="Weighted mean")
+        ax.plot(dates, sim400[:,i,j], "b--", label="Mean")
+
+        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+
+        plt.xticks(rotation=45)
+        plt.ylabel('Water table depth (m)')
+        plt.legend()
+        plt.grid()
+        plt.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "timeseries_meanvsweightedRMSE", f"ensemble_timeseries_{i}_{j}.png"))
+
+    def ens_minRMSE(self):
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        print(obs_destand_test.shape)
+        obs_destand_test[obs_destand_test < 0.01] = 0.0
+        nb_members = 100
+
+        sim = np.zeros(obs_destand_test.shape)
+        for pixel in range(100):
+            rmse = np.zeros((nb_members))
+            for m in range(nb_members):
+                sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
+                sim_destand_test[sim_destand_test < 0.01] = 0.0
+                rmse[m] = np.sqrt(np.mean((obs_destand_test[:,pixel] - sim_destand_test[:,pixel]) ** 2))
+            
+            print(rmse)
+            print(np.argmin(rmse))    
+            minsim = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{np.argmin(rmse)}", f"sim_destand_{MODEL_NAME}.npy"))
+            sim[:, pixel] = minsim[:, pixel]
+        
+        print(obs_destand_test.shape)
+        print(sim.shape)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_minRMSE", f"obs_destand_{MODEL_NAME}.npy"), obs_destand_test)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_minRMSE", f"sim_destand_{MODEL_NAME}.npy"), sim)
+
+    def ens_weightRMSE(self):
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        obs_destand_test[obs_destand_test < 0.01] = 0.0
+
+        nb_members = 100
+        
+        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
+        
+        members_sim = np.array(members_sim)
+        members_sim = np.expand_dims(members_sim, axis=0)
+        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        #members_sim = np.moveaxis(members_sim, 0, -1)   # (timeseries, pixels, members)
+        members_sim[members_sim < 0.01] = 0.0
+        
+        sim = np.zeros(obs_destand_test.shape)
+        for pixel in range(100):
+            rmse_members = [np.sqrt(np.mean((obs_destand_test[:,pixel] - members_sim[m,:,pixel]) ** 2)) for m in range(nb_members)]
+            # Inverse error weighting
+            weights = 1 / np.array(rmse_members)
+            weights /= weights.sum()  # Normalize weights
+            #print("Weights assigned to ensemble members:", weights)
+            # Weighted ensemble prediction
+            sim[:, pixel] = np.dot(weights, members_sim[:,:,pixel])
+        
+        print(obs_destand_test.shape)
+        print(sim.shape)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_weightedRMSE", f"obs_destand_{MODEL_NAME}.npy"), obs_destand_test)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_weightedRMSE", f"sim_destand_{MODEL_NAME}.npy"), sim)
