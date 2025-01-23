@@ -191,3 +191,49 @@ class utilities:
 
         #print(np.unique(np.equal(raw_data[start, :, :], data.reshape(end-start, X, Y)[0,:,:])))
         return data, means_stds
+    
+    def transferpx_targetvar(self, start, end, means_stds):
+        raw_data = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", TARGETVAR_FILE))
+        raw_data = np.nan_to_num(raw_data)
+        raw_data[raw_data < 0.0] = 0
+
+        data = raw_data[start:end, :, :] if len(raw_data.shape)>2 else raw_data[start:end, :]
+        
+        if f"{TARGETVAR_FILE.replace('.npy','')}mean" not in means_stds.keys():
+            means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"] = np.mean(data)
+            means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"] = np.std(data)
+
+        data = (data - means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"])/means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"]
+
+        data = data.flatten()
+        raw_data = None
+        return data, means_stds
+
+    def transferpx_inputfeatures(self, start, end, means_stds):
+        all_inputs = np.array([])
+        for inputvar in FEATURES_FILES:
+            print(inputvar)
+            raw_data = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", inputvar))
+            raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS) if len(raw_data.shape)>2 else raw_data
+            data = raw_data[start:end, :]
+            data = np.moveaxis(data, 0, -1) # (cells, timeseries)
+            
+            if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys():
+                means_stds[f"{inputvar.replace('.npy','')}mean"] = np.mean(data)
+                means_stds[f"{inputvar.replace('.npy','')}std"] = np.std(data)
+
+            data = (data - means_stds[f"{inputvar.replace('.npy','')}mean"])/means_stds[f"{inputvar.replace('.npy','')}std"]
+            # TODO check if it also works for ensemble
+            lookback_arrays = [data[:, i-LOOKBACK:i] for i in range(LOOKBACK, end-start)]
+            lookback_arrays = np.array(lookback_arrays)
+
+            f1 = lookback_arrays.reshape(-1, LOOKBACK)
+            f1 = np.array([f1])
+            all_inputs = np.concatenate((all_inputs,f1), axis=0) if len(all_inputs)>0 else f1
+
+        all_inputs = np.moveaxis(all_inputs, 0, -1)
+        f1 = None
+        lookback_arrays = None
+        data = None
+        raw_data = None
+        return all_inputs, means_stds
