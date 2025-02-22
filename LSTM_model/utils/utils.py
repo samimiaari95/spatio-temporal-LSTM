@@ -45,6 +45,36 @@ class utilities:
         for file in os.listdir(dirpath):
             if key in file:
                 os.remove(os.path.join(dirpath, file))
+    
+    def calculate_kge(self, observed, predicted):
+        """
+        Compute Kling-Gupta Efficiency (KGE) between observed and predicted time series.
+
+        Parameters:
+        observed (numpy.ndarray): 1D array of observed values.
+        predicted (numpy.ndarray): 1D array of predicted values.
+
+        Returns:
+        float: KGE value
+        """
+        # Ensure both arrays have the same length
+        assert len(observed) == len(predicted), "Observed and predicted arrays must have the same length."
+
+        # Compute correlation coefficient (r)
+        r = np.corrcoef(observed, predicted)[0, 1]
+
+        # Compute mean and standard deviation
+        mu_o, mu_p = np.mean(observed), np.mean(predicted)
+        sigma_o, sigma_p = np.std(observed), np.std(predicted)
+
+        # Compute bias ratio (β) and variability ratio (γ)
+        beta = mu_p / mu_o
+        gamma = sigma_p / sigma_o
+
+        # Compute KGE
+        kge = 1 - np.sqrt((r - 1)**2 + (beta - 1)**2 + (gamma - 1)**2)
+
+        return kge
 
     def singleregion_inputfeatures(self, start, end, means_stds):
         all_inputs = np.array([])
@@ -210,6 +240,7 @@ class utilities:
         return data, means_stds
 
     def transferpx_inputfeatures(self, start, end, means_stds):
+        import matplotlib.pyplot as plt
         all_inputs = np.array([])
         for inputvar in FEATURES_FILES:
             print(inputvar)
@@ -217,12 +248,12 @@ class utilities:
             raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS) if len(raw_data.shape)>2 else raw_data
             data = raw_data[start:end, :]
             data = np.moveaxis(data, 0, -1) # (cells, timeseries)
-            
+            print(data[10,:])
             if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys():
                 means_stds[f"{inputvar.replace('.npy','')}mean"] = np.mean(data)
                 means_stds[f"{inputvar.replace('.npy','')}std"] = np.std(data)
 
-            data = (data - means_stds[f"{inputvar.replace('.npy','')}mean"])/means_stds[f"{inputvar.replace('.npy','')}std"]
+            #data = (data - means_stds[f"{inputvar.replace('.npy','')}mean"])/means_stds[f"{inputvar.replace('.npy','')}std"]
             # TODO check if it also works for ensemble
             lookback_arrays = [data[:, i-LOOKBACK:i] for i in range(LOOKBACK, end-start)]
             lookback_arrays = np.array(lookback_arrays)
@@ -236,4 +267,10 @@ class utilities:
         lookback_arrays = None
         data = None
         raw_data = None
+        timeseries = [i for i in range(10, 365*4*100, 100)]
+        print(all_inputs.shape)
+        print(len(timeseries))
+        print(all_inputs[timeseries,0,2])
+        plt.plot(all_inputs[timeseries,0,2])
+        plt.savefig("sm.png")
         return all_inputs, means_stds
