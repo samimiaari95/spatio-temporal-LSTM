@@ -151,8 +151,8 @@ class preprocessing_data:
         np.save(os.path.join(os.path.dirname(INPUTPATH), "mapping_1mstd.npy"), map_1mstd)
 
     def select_yearlyavg_1mstd_wtd(self):
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
-        wtdorg = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "included_excl_waterbodies.npy"))
+        wtdorg = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
         criteria = 0.1 #m
         wtd = wtdorg[:, mapping==1]
 
@@ -166,27 +166,14 @@ class preprocessing_data:
                 oneyear_std = np.std(wtd[y:y+182, i])
                 yearly_std.append(oneyear_std)
 
-            if np.mean(yearly_std)>criteria:
+            #if np.mean(yearly_std)>criteria:            
+            if 0.0 not in yearly_std:
                 map_1mstd[incmap[0][i], incmap[1][i]] = 1
 
         print(np.sum(map_1mstd))
-        np.save(os.path.join(os.path.dirname(INPUTPATH), f"mapping_meaninterannualstd{str(criteria).replace('.','')}.npy"), map_1mstd)
-
-        # testing no errors in output
-        wtd = wtdorg[:, map_1mstd==1]
-        print(wtd.shape)
-        test = []
-        for i in range(wtd.shape[1]):
-            yearly_std = []
-            for y in range(0, wtd.shape[0]-20, 182):
-                oneyear_std = np.std(wtd[y:y+182, i])
-                yearly_std.append(oneyear_std)
-            if np.mean(yearly_std)>criteria:
-                test.append(True)
-        test = np.array(test)
-        print(np.unique(test))
-        print(yearly_std)
-        print(len(yearly_std))
+        #np.save(os.path.join(os.path.dirname(INPUTPATH), f"mapping_meaninterannualstd{str(criteria).replace('.','')}.npy"), map_1mstd)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), f"mapping_0std6months.npy"), map_1mstd)
+        
 
     def create_choices(self):
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "unchosen_pixels.npy"))
@@ -294,6 +281,21 @@ class preprocessing_data:
                 var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
                 var = var[:,mapping==1]
                 np.save(os.path.join(INPUTPATH, f"400px_member_{m}", varname), var)
+
+    def ensemble_global_standardization(self):
+        means_stds = {}
+        mapping = np.load(os.path.join(INPUTPATH, "mapping_0std6months.npy"))
+        varnames = {x:[] for x in FEATURES_FILES}
+        varnames["wtd.npy"] = []
+        for varname in varnames.keys():
+            var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
+            var = var[:,mapping==1]
+            means_stds[f"{varname.replace('.npy','')}mean"] = np.mean(var)
+            means_stds[f"{varname.replace('.npy','')}std"] = np.std(var)
+        
+        with open(os.path.join(INPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"), 'wb') as f:
+            pickle.dump(means_stds, f)
+        f.close()
     
     def jobs_scripts(self):
         filepath = get_root_dir()
@@ -363,7 +365,7 @@ class preprocessing_data:
         print(np.sum(all_choices))
     
     def ensemble_transfer_pixels(self):
-        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "included_excl_waterbodies.npy"))
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_0std6months.npy"))
         choices = np.load(os.path.join(os.path.dirname(INPUTPATH), "ensemble_allchoices.npy"))
         print(np.sum(mapping))
 
