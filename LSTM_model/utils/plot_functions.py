@@ -406,7 +406,7 @@ class plotting_helper:
 
         # Add a colorbar
         cbar = plt.colorbar(cla, ax=ax, orientation='vertical', pad=0.05)
-        colorbar_label = f"{title}" if title=="Correlation" else f"{title} (m)"
+        colorbar_label = f"{title}" if title=="Correlation" or title=="NSE" or title=="KGE" else f"{title} (m)"
         cbar.set_label(colorbar_label)
 
         # Add the value for each pixel
@@ -426,8 +426,8 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
@@ -447,7 +447,7 @@ class plotting_helper:
                     transform=ccrs.PlateCarree(), label='Special Point')
 
         # Add a colorbar
-        colorbar_label = f"{title}" if title=="Correlation" else f"{title} (m)"
+        colorbar_label = f"{title}" if title=="Correlation" or title=="NSE" or title=="KGE" else f"{title} (m)"
         plt.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax, orientation='vertical', label=colorbar_label, pad=0.08)
 
         # Add coastlines, gridlines, etc.
@@ -457,11 +457,12 @@ class plotting_helper:
         print(f"saving {title}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}_{MODEL_NAME}.png"))
 
-    def onechosenpixel_in_EU(self, ind):
+    def onechosenpixel_in_EU(self, indexes):
         choices = np.load(os.path.join(INPUTPATH, "choices.npy"))    
         include = np.where(choices==1)
         map_choices = np.zeros(choices.shape)
-        map_choices[include[0][ind], include[1][ind]] = 1
+        for ind in indexes:
+            map_choices[include[0][ind], include[1][ind]] = 1
         map_choices[map_choices == 0] = np.nan
         indices = np.where(~np.isnan(map_choices))
         indices_list = list(zip(indices[0], indices[1]))
@@ -469,8 +470,8 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
@@ -489,12 +490,14 @@ class plotting_helper:
         ax.coastlines(color='black')
         ax.gridlines(draw_labels=True)
         
-        print(f"saving one pixel at {ind}")
-        fig.savefig(os.path.join(OUTPUTPATH, f"{ind}_{TARGET_REGION}.png"))
+        indexes = [str(x) for x in indexes]
+        indexes = "".join(indexes)
+        print(f"saving one pixel at {indexes}")
+        fig.savefig(os.path.join(OUTPUTPATH, f"{indexes}_{TARGET_REGION}.png"))
 
     def selectedpixels_in_EU(self):
-        filter = "mapping_meaninterannualstd025"
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), f"{filter}.npy"))
+        filter = "choices"
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", f"{filter}.npy"))
         mapping[mapping == 0] = np.nan
         indices = np.where(~np.isnan(mapping))
         indices_list = list(zip(indices[0], indices[1]))
@@ -502,8 +505,8 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))
+        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
+        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
