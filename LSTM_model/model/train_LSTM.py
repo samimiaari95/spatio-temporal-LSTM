@@ -52,7 +52,11 @@ class train_LSTM_model():
             utils.make_dir(os.path.join(OUTPUTPATH))
 
         # define mean and std dictionary
-        means_stds = {}
+        #means_stds = {}
+        with open(os.path.join(os.path.dirname(INPUTPATH), f"meanstd_ensemble_100px_100_256dr0x1lr01x50_365x1000_prvpdsmxyind.pkl"), 'rb') as f:
+            means_stds = pickle.load(f)
+        f.close()
+        
         # prepare input data, standardization, lookback and train time series
         train_inputs, means_stds = utils.singleregion_inputfeatures(0, TRAINING_PERIOD, means_stds)
 
