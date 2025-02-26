@@ -240,7 +240,6 @@ class utilities:
         return data, means_stds
 
     def transferpx_inputfeatures(self, start, end, means_stds):
-        import matplotlib.pyplot as plt
         all_inputs = np.array([])
         for inputvar in FEATURES_FILES:
             print(inputvar)
@@ -248,13 +247,12 @@ class utilities:
             raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS) if len(raw_data.shape)>2 else raw_data
             data = raw_data[start:end, :]
             data = np.moveaxis(data, 0, -1) # (cells, timeseries)
-            print(data[10,:])
-            if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys():
+            if f"{inputvar.replace('.npy','')}mean" not in means_stds.keys() and f"{inputvar.replace('.npy','')}std" not in means_stds.keys():
                 means_stds[f"{inputvar.replace('.npy','')}mean"] = np.mean(data)
                 means_stds[f"{inputvar.replace('.npy','')}std"] = np.std(data)
 
-            #data = (data - means_stds[f"{inputvar.replace('.npy','')}mean"])/means_stds[f"{inputvar.replace('.npy','')}std"]
-            # TODO check if it also works for ensemble
+            data = (data - means_stds[f"{inputvar.replace('.npy','')}mean"])/means_stds[f"{inputvar.replace('.npy','')}std"]
+
             lookback_arrays = [data[:, i-LOOKBACK:i] for i in range(LOOKBACK, end-start)]
             lookback_arrays = np.array(lookback_arrays)
 
@@ -267,10 +265,7 @@ class utilities:
         lookback_arrays = None
         data = None
         raw_data = None
-        timeseries = [i for i in range(10, 365*4*100, 100)]
-        print(all_inputs.shape)
-        print(len(timeseries))
-        print(all_inputs[timeseries,0,2])
-        plt.plot(all_inputs[timeseries,0,2])
-        plt.savefig("sm.png")
+        #timeseries = [i for i in range(10, 365*4*100, 100)]
+        #plt.plot(all_inputs[timeseries,-1,2])
+        #plt.savefig("sm1mcum.png")
         return all_inputs, means_stds
