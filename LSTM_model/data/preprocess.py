@@ -153,7 +153,7 @@ class preprocessing_data:
     def select_yearlyavg_1mstd_wtd(self):
         mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "included_excl_waterbodies.npy"))
         wtdorg = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
-        criteria = 0.1 #m
+        window_size = 182
         wtd = wtdorg[:, mapping==1]
 
         map_1mstd = np.zeros(mapping.shape)
@@ -161,22 +161,20 @@ class preprocessing_data:
         
         for i in range(wtd.shape[1]):
             print(i)
-            yearly_std = []
-            for y in range(0, wtd.shape[0]-20, 182):
-                oneyear_std = np.std(wtd[y:y+182, i])
-                yearly_std.append(oneyear_std)
+            # Compute the rolling standard deviation using a moving window
+            rolling_std = np.array([np.std(wtd[t:t + window_size, i]) for t in range(wtd.shape[0] - window_size + 1)])
 
-            #if np.mean(yearly_std)>criteria:            
-            if 0.0 not in yearly_std:
+            # Check if there is at least one window where std == 0
+            std_is_zero = np.any(rolling_std == 0)
+
+            if not std_is_zero:
                 map_1mstd[incmap[0][i], incmap[1][i]] = 1
 
         print(np.sum(map_1mstd))
-        #np.save(os.path.join(os.path.dirname(INPUTPATH), f"mapping_meaninterannualstd{str(criteria).replace('.','')}.npy"), map_1mstd)
-        np.save(os.path.join(os.path.dirname(INPUTPATH), f"mapping_0std6months.npy"), map_1mstd)
-        
+        np.save(os.path.join(os.path.dirname(INPUTPATH), f"mapping_0stdroll6months.npy"), map_1mstd)
 
     def create_choices(self):
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "unchosen_pixels.npy"))
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"))
         map1d = np.where(mapping==1)
         nb_samples = 100
         samples = np.random.choice(len(map1d[0]), nb_samples, False)
@@ -190,12 +188,13 @@ class preprocessing_data:
         np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "choices.npy"), map_choices)
         
     def crop_vars_mapping(self, varname):
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "choices.npy"))
-        var = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), varname))
-        var = var[:,mapping==1]
-        print(varname)
-        print(var.shape)
-        np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", varname), var)
+        vardata = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), varname))
+        for i in range(100):
+            print(f"var: {varname}, member: {i}")
+            var = vardata
+            mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", f"choices.npy"))
+            var = var[:,mapping==1]
+            np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", varname), var)
 
     def distribute_onehotencoding(self, vardata, varname):
         for i in range(vardata.shape[1]):
@@ -256,59 +255,46 @@ class preprocessing_data:
 
     def ensemble_choices(self):
         utils = utilities()
-        nb_samples = 400
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
+        nb_samples = 100
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "ensemble_allchoices.npy"))
         for m in range(100):
             print(np.sum(mapping))
             map1d = np.where(mapping==1)
-            utils.make_dir(os.path.join(INPUTPATH, f"400px_member_{m}"))
+            utils.make_dir(os.path.join(os.path.dirname(INPUTPATH), f"400px_member_{m}"))
             samples = np.random.choice(len(map1d[0]), nb_samples, False)
             samples.sort()
             map_choices = np.zeros(mapping.shape)
             for i, sample in enumerate(samples):
                 map_choices[map1d[0][sample],map1d[1][sample]] = 1
 
-            np.save(os.path.join(INPUTPATH, f"400px_member_{m}", "choices.npy"), map_choices)
+            np.save(os.path.join(os.path.dirname(INPUTPATH), f"400px_member_{m}", "choices.npy"), map_choices)
             mapping = np.where(map_choices==1, 0, mapping)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "unchosen_pixels.npy"), mapping)
     
     def ensemble_cropvars(self):
-        for m in range(100):
-            print(f"400px_member_{m}")
-            mapping = np.load(os.path.join(INPUTPATH, f"400px_member_{m}", "choices.npy"))
-            varnames = {x:[] for x in FEATURES_FILES}
-            varnames["wtd.npy"] = []
-            for varname in varnames.keys():
-                var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
+        varnames = [x for x in FEATURES_FILES]
+        varnames.append("wtd.npy")
+        for varname in varnames:
+            vardata = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), varname))
+            for m in range(100):
+                print(f"100px_member_{m}")
+                mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), f"100px_member_{m}", "choices.npy"))
+                var = vardata
                 var = var[:,mapping==1]
-                np.save(os.path.join(INPUTPATH, f"400px_member_{m}", varname), var)
-
-    def ensemble_global_standardization(self):
-        means_stds = {}
-        mapping = np.load(os.path.join(INPUTPATH, "mapping_0std6months.npy"))
-        varnames = {x:[] for x in FEATURES_FILES}
-        varnames["wtd.npy"] = []
-        for varname in varnames.keys():
-            var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
-            var = var[:,mapping==1]
-            means_stds[f"{varname.replace('.npy','')}mean"] = np.mean(var)
-            means_stds[f"{varname.replace('.npy','')}std"] = np.std(var)
-        
-        with open(os.path.join(INPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"), 'wb') as f:
-            pickle.dump(means_stds, f)
-        f.close()
+                np.save(os.path.join(os.path.dirname(INPUTPATH), f"100px_member_{m}", varname), var)
     
     def jobs_scripts(self):
-        filepath = get_root_dir()
+        filepath = os.path.join(get_root_dir(), "pythonjob_juwels_2nodes.sh")
         f = open(filepath, "r")
         sbatch = f.readlines()
         f.close()
-        #sbatch = sbatch[:19]
-        jobname = f"100x100_256dr0x1lr1x50_365x1000_prvpdsmxyindlonlat_member{i}"
+        sbatch = sbatch[:19]
+        #jobname = f"100x100_256dr0x1lr1x50_365x1000_prvpdsmxyindlonlat_member{i}"
         run_command_2 = "tclsh exfiltration.tcl"    
         for i in range(0, 100):
             case_path = f"cd /p/scratch/cslts/miaari1/infexfcases/test_case{i}"
             sbatch.append(case_path)
-            sbatch.append(jobname)
+            #sbatch.append(jobname)
             sbatch.append(run_command_2)
         
         with open("/p/project/cslts/miaari1/parflow_simulations.sh", 'w') as sbatchfile:
@@ -361,15 +347,42 @@ class preprocessing_data:
         for m in range(100):
             choices = np.load(os.path.join(os.path.dirname(INPUTPATH), f"400px_member_{m}", "choices.npy"))
             all_choices = np.where(choices==1, 1, all_choices)
-        np.save(os.path.join(os.path.dirname(INPUTPATH), "ensemble_allchoices.npy"), all_choices)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), "training_subsets.npy"), all_choices)
         print(np.sum(all_choices))
     
     def ensemble_transfer_pixels(self):
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_0std6months.npy"))
-        choices = np.load(os.path.join(os.path.dirname(INPUTPATH), "ensemble_allchoices.npy"))
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_0stdroll6months.npy"))
+        choices = np.load(os.path.join(os.path.dirname(INPUTPATH), "training_subsets.npy"))
         print(np.sum(mapping))
+        print(np.sum(choices))
+        print(np.sum(mapping)-np.sum(choices))
 
         mapping = np.where(choices==1, 0, mapping)
-        np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "unchosen_pixels.npy"), mapping)
+        np.save(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"), mapping)
         print(np.sum(mapping))
     
+    def split_mapping(self):
+        utils = utilities()
+        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "included_excl_waterbodies.npy"))
+        indices = np.where(mapping==1)
+        print(len(indices[0]))
+        indlength = len(indices[0])
+        num_splits = 100
+        split_indices0 = [indices[0][int((i)*indlength/num_splits):int((i+1)*indlength/num_splits)] for i in range(num_splits)]
+        split_indices1 = [indices[1][int((i)*indlength/num_splits):int((i+1)*indlength/num_splits)] for i in range(num_splits)]
+
+        split_arrays = [np.zeros(mapping.shape) for _ in range(num_splits)]
+        for i in range(num_splits):
+            split_arrays[i][(split_indices0[i], split_indices1[i])] = 1 
+
+        testsummapping = split_arrays[0]
+
+        for i in range(num_splits):
+            print(np.sum(split_arrays[i]))
+            utils.make_dir(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{i}"))
+            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{i}", f"mappingindices_{i}.npy"), split_arrays[i])
+            testsummapping = np.where(testsummapping==1, 1, split_arrays[i])
+        
+        print("total sum")
+        print(np.sum(testsummapping))
+        print(np.unique(np.equal(testsummapping, mapping), return_counts=True))
