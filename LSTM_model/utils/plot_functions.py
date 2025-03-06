@@ -416,6 +416,7 @@ class plotting_helper:
 
 
         print(f"saving {title} heatmap")
+        plt.tight_layout()
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}_{MODEL_NAME}_heatmap.png"))
 
 
@@ -455,6 +456,7 @@ class plotting_helper:
         ax.gridlines(draw_labels=True)
         
         print(f"saving {title}")
+        plt.tight_layout()
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}_{MODEL_NAME}.png"))
 
     def onechosenpixel_in_EU(self, indexes):

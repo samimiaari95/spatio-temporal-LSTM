@@ -2,9 +2,9 @@ import tarfile
 import os
 import numpy as np
 import argparse
-#from SLOTH.sloth.IO import readSa
+from SLOTH.sloth.IO import readSa
 from LSTM_model.utils.utils import utilities
-from LSTM_model.utils.volumetric_soilmoisture import calculate_soilmoisture
+#from LSTM_model.utils.volumetric_soilmoisture import calculate_soilmoisture
 from LSTM_model.model.config import *
 
 
@@ -104,8 +104,7 @@ class preprocess_rawdata:
                 continue
             day = dailyfile.replace(f"{month}.out.","").replace("_volsm.nc", "")
             day = (int(day)-1)/96 + 1
-            print(month)
-            print(day)
+            print(f"month: {month}, day: {day}")
             dailydata = dailydata[:, 6:, :, :] # NOTE soil moisture only at layer 6
             # soil layers thickness in https://icg4geo.icg.kfa-juelich.de/Configurations/TSMP_statfiles_IBG3/TSMP_EUR-11/-/blob/main/static.resource/06_Texture_Indicator/01_fitRescaleAnyClassify_SoilGridsv2017.py?ref_type=heads
             # also found in py file in scratch/static
