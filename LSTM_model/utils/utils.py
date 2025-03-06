@@ -31,6 +31,9 @@ class utilities:
     def linear_law(self, x, a, b) :
             return a + x * b
 
+    def exponential_func(self, x, a, b):
+        return a * np.exp(b * x)
+
     def read_nc(self, filepath, var):
         ncfile = nc.Dataset(filepath)
         return ncfile[var][:]
@@ -59,7 +62,12 @@ class utilities:
         """
         # Ensure both arrays have the same length
         assert len(observed) == len(predicted), "Observed and predicted arrays must have the same length."
-
+        
+        if np.isnan(observed).all() or np.isnan(predicted).all():
+            return np.nan
+        if np.std(observed) < 0.1:# or np.mean(observed) < 0.1: # if the std is close to zero, exclude pixel kge
+            return np.nan
+            
         # Compute correlation coefficient (r)
         r = np.corrcoef(observed, predicted)[0, 1]
 
