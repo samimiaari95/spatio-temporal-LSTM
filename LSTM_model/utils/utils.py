@@ -65,7 +65,7 @@ class utilities:
         
         if np.isnan(observed).all() or np.isnan(predicted).all():
             return np.nan
-        if np.std(observed) < 0.1:# or np.mean(observed) < 0.1: # if the std is close to zero, exclude pixel kge
+        if np.std(observed) < 0.1: # if the std is close to zero, exclude pixel kge
             return np.nan
             
         # Compute correlation coefficient (r)
