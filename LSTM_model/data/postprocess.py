@@ -538,8 +538,8 @@ class postprocess_calculations:
 
             # Calculate NSE
             nse = 1 - (np.sum((obs[:,pixel] - mean_prediction) ** 2) / np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
-            #if np.std(obs[:,pixel]) < 0.1:
-            #    nse = np.nan
+            if np.std(obs[:,pixel]) < 0.1:
+                nse = np.nan
             df_dic["NSE"].append(nse)
 
             # Calculate mean bias
@@ -553,8 +553,8 @@ class postprocess_calculations:
         #df = pd.DataFrame(df_dic)
         #df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
 
-        xtitle = 'y-$\hat{y}$'
-        ytitle = "Original simulations standard deviation"
+        xtitle = r"$\sum_{t=1}^{T} \left( y_{t} - \bar{y} \right)^{2}$"
+        ytitle = r"$\sigma{}_{Original simulations}$"
 
         plt.figure()
         plt.scatter(x_axis, y_axis, marker='o', color='k')
