@@ -173,8 +173,8 @@ class postprocess_calculations:
         obs_destand_test = np.nan_to_num(obs_destand_test)
         sim_destand_test = np.nan_to_num(sim_destand_test)
 
-        obs_destand_test[obs_destand_test < 0.01] = 0.0
-        sim_destand_test[sim_destand_test < 0.01] = 0.0
+        #obs_destand_test[obs_destand_test < 0.01] = 0.0
+        #sim_destand_test[sim_destand_test < 0.01] = 0.0
 
         mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
         
@@ -192,7 +192,7 @@ class postprocess_calculations:
         # calculate and plot mean bias
         mean_bias_2D_map = self.calc_mean_2D_bias(obs, sim)
         mean_bias_2D_heatmap = self.calc_mean_2D_bias(obs_destand_test, sim_destand_test)
-        plot_functions.chosenpixels_in_EU(mean_bias_2D_map, False, -1, 1, f"Mean bias")
+        plot_functions.chosenpixels_in_EU(mean_bias_2D_map, False, -10, 10, f"Mean bias")
         plot_functions.chosenpixels_heatmap(mean_bias_2D_heatmap.reshape(X,Y), False, -10, 10, f"Mean bias")
 
         # calculate and plot correlation
@@ -204,8 +204,8 @@ class postprocess_calculations:
         # calculate and plot MSE
         mse_2D_heatmap = self.calc_2Dheatmap_MSE(obs_destand_test, sim_destand_test)
         mse_2D_map = self.calc_2D_MSE(obs_destand_test, sim_destand_test, mapping)
-        plot_functions.chosenpixels_in_EU(mse_2D_map, True, 0.001, 10, f"MSE")
-        plot_functions.chosenpixels_heatmap(mse_2D_heatmap, True, 0.001, 10, f"MSE")
+        plot_functions.chosenpixels_in_EU(mse_2D_map, True, 0.01, 10, f"MSE")
+        plot_functions.chosenpixels_heatmap(mse_2D_heatmap, True, 0.01, 10, f"MSE")
 
         # calculate and plot RMSE
         rmse_2D_heatmap, rmse_2D_map = self.calc_rmse(obs_destand_test, sim_destand_test, mapping)
@@ -231,10 +231,10 @@ class postprocess_calculations:
         plot_functions.chosenpixels_in_EU(kge_2D_map, False, -1, 1, f"KGE")
         plot_functions.chosenpixels_heatmap(kge_2D_heatmap, False, -1, 1, f"KGE")
 
-        for i in range(X):
-            for j in range(Y):
-                pass
-                self.plot_ensemble_timeseries(i, j, f'{correlation_2D_heatmap[i,j]:.2f}', f'{rmse_2D_heatmap[i,j]:.2f}', f'{kge_2D_heatmap[i,j]:.2f}')
+        #for i in range(X):
+        #    for j in range(Y):
+        #        pass
+        #        self.plot_ensemble_timeseries(i, j, f'{correlation_2D_heatmap[i,j]:.2f}', f'{rmse_2D_heatmap[i,j]:.2f}', f'{kge_2D_heatmap[i,j]:.2f}')
 
     def calculate_accuracy_parameters(self):
         dirpath = os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{MODEL_NAME}")
@@ -307,7 +307,7 @@ class postprocess_calculations:
         obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
         nb_members = 100
         print(obs_destand_test.shape)
-        obs_destand_test[obs_destand_test < 0.01] = 0.0
+        obs_destand_test[obs_destand_test < 0.0] = 0.0
 
         dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
         dates = dates[(dates.month != 2) | (dates.day != 29)]
@@ -318,8 +318,8 @@ class postprocess_calculations:
         obs_destand_test = obs_destand_test.reshape(timeserieslength,X,Y)
         ens_mean = np.zeros((timeserieslength, nb_members))
         for m in range(nb_members):
-            sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
-            sim_destand_test[sim_destand_test < 0.01] = 0.0
+            sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"100px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
+            sim_destand_test[sim_destand_test < 0.0] = 0.0
             sim_destand_test = sim_destand_test.reshape(timeserieslength,X,Y)
             ens_mean[:,m] = sim_destand_test[:,i,j]
             ax.plot(dates, sim_destand_test[:,i,j], color="gray")
@@ -339,14 +339,14 @@ class postprocess_calculations:
 
     def ens_mean(self):
         obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        obs_destand_test[obs_destand_test < 0.01] = 0.0
+        obs_destand_test[obs_destand_test < 0.0] = 0.0
 
         sim = np.zeros(obs_destand_test.shape)
         for pixel in range(100):
             ens_mean = np.zeros((obs_destand_test.shape[0], 100))
             for m in range(100):
-                sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
-                sim_destand_test[sim_destand_test < 0.01] = 0.0
+                sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"100px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
+                sim_destand_test[sim_destand_test < 0.0] = 0.0
                 ens_mean[:,m] = sim_destand_test[:,pixel]
             sim[:, pixel] = np.mean(ens_mean, axis=1)
         print(obs_destand_test.shape)
@@ -531,39 +531,40 @@ class postprocess_calculations:
             
             if np.std(obs[:,pixel]) < 0.1: # if the std is close to zero, exclude pixel kge
                 alpha = np.nan
-            #if np.mean(obs[:,pixel]) < 0.1: # if the mean is close to zero, offset all values by 1
-            #    beta = np.nan
+                beta = np.nan
             
             df_dic["Beta"].append(beta)
             df_dic["Alpha"].append(alpha)
 
             # Calculate NSE
             nse = 1 - (np.sum((obs[:,pixel] - mean_prediction) ** 2) / np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
-            if np.std(obs[:,pixel]) < 0.1:
-                nse = np.nan
+            #if np.std(obs[:,pixel]) < 0.1:
+            #    nse = np.nan
             df_dic["NSE"].append(nse)
 
             # Calculate mean bias
             bias_mean = np.mean(mean_prediction - obs[:,pixel])
             df_dic["Absolute mean bias"].append(bias_mean)
             
-            x_axis.append(ensemble_std)
-            y_axis.append(beta)
+            x_axis.append(np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
+            y_axis.append(np.std(obs[:,pixel]))
             
         ####### save to csv ########
         #df = pd.DataFrame(df_dic)
         #df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
 
-        xtitle = "std"
-        ytitle = "Beta"
+        xtitle = 'y-$\hat{y}$'
+        ytitle = "Original simulations standard deviation"
 
         plt.figure()
         plt.scatter(x_axis, y_axis, marker='o', color='k')
         plt.xlabel(f'{xtitle}')
         plt.ylabel(f'{ytitle}')
-        #plt.xlim(0,1)
+        #plt.xlim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
+        #plt.ylim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
         plt.xscale("log")
         plt.yscale("log")
+        #plt.yscale("symlog")
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
         #plt.plot([min(yval), max(yval)], [min(yval), max(yval)], color='red', linestyle='--', label=f"R²={round(r2, 2)}")
