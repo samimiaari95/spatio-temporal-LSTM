@@ -1,5 +1,7 @@
 import os
+import math
 import numpy as np
+import skill_metrics as sm
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
@@ -10,6 +12,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 from scipy.optimize import curve_fit
+from scipy.stats import gaussian_kde
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.utils.utils import utilities
 from LSTM_model.model.config import *
@@ -464,17 +467,54 @@ class postprocess_calculations:
         np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_weightedRMSE", f"obs_destand_{MODEL_NAME}.npy"), obs_destand_test)
         np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_weightedRMSE", f"sim_destand_{MODEL_NAME}.npy"), sim)
 
+    def plot_ensemble_statsvsacc_timeseries(self, i, r, stat):
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        nb_members = 100
+        print(obs_destand_test.shape)
+        obs_destand_test[obs_destand_test < 0.0] = 0.0
+
+        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
+        dates = dates[(dates.month != 2) | (dates.day != 29)]
+        fig, ax = plt.subplots(figsize=(16, 10))
+        
+        print(f"plotting timeseries {i} with r: {r} and stat: {stat}")
+        #timeserieslength = obs_destand_test.shape[0]
+        #obs_destand_test = obs_destand_test.reshape(timeserieslength,X,Y)
+        ens_mean = np.zeros(obs_destand_test.shape)
+        for m in range(nb_members):
+            sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
+            sim_destand_test[sim_destand_test < 0.0] = 0.0
+            #sim_destand_test = sim_destand_test.reshape(timeserieslength,X,Y)
+            ens_mean[:,m] = sim_destand_test[:,i]
+            ax.plot(dates, sim_destand_test[:,i], color="gray")
+
+        ax.plot(dates, obs_destand_test[:,i], "k-", label="Original simulations", linewidth=4.0)
+        ax.plot(dates, np.mean(ens_mean, axis=1), "k--", label="Ensemble mean", linewidth=4.0)
+        ax.scatter([], [], color="k", label=f"Correlation: {r}, Ensemble variance: {stat}")
+
+        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+
+        plt.xticks(rotation=45)
+        plt.ylabel('Water table depth (m)')
+        plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.11), ncol=3)
+        plt.grid()
+        plt.savefig(os.path.join(OUTPUTPATH, "transfer_timeseries_statvsacc", f"ensemble_timeseries_{i}.png"))
+
+
     def ensemble_statvsacc(self):
         util = utilities()
         obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        obs[obs < 0.0] = 0.0
         
         nb_members = 100
         members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
         members_sim = np.array(members_sim)
         members_sim = np.expand_dims(members_sim, axis=0)
         members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        members_sim[members_sim < 0.0] = 0.0
         
-        df_dic = {"Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Variance":[], "IQR":[], "std":[]}
+        df_dic = {"Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Variance":[], "IQR (75-25%)":[], "IQR (100-0%)":[], "std":[], "cv":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
 
         x_axis = []
         y_axis = []
@@ -494,7 +534,306 @@ class postprocess_calculations:
             # Spread interquantile range (IQR) between 75th and 25th percentiles
             ensemble_iqr = np.percentile(ensemble_predictions, 75, axis=1) - np.percentile(ensemble_predictions, 25, axis=1)  # IQR
             iqr_mean = np.mean(ensemble_iqr)
-            df_dic["IQR"].append(iqr_mean)
+            df_dic["IQR (75-25%)"].append(iqr_mean)
+
+            iqr100 = np.percentile(ensemble_predictions, 100, axis=1) - np.percentile(ensemble_predictions, 0, axis=1)
+            iqr100_mean = np.mean(iqr100)
+            df_dic["IQR (100-0%)"].append(iqr100_mean)
+
+            # Calculate the std for each time step
+            ensemble_std = np.std(ensemble_predictions, axis=1)
+            ensemble_std = np.mean(ensemble_std)
+            df_dic["std"].append(ensemble_std)
+
+            # Calculate diversity by Pairwise correlation
+            correlation_matrix = np.corrcoef(ensemble_predictions.T)  # Transpose to get members on rows
+            pairwisecorr = np.mean(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]) # Compute diversity as 1 - average correlation
+            df_dic["Pairwise correlation"].append(pairwisecorr)
+
+            # calculate coefficient of variation
+            cv = ensemble_std/np.mean(mean_prediction)
+            df_dic["cv"].append(cv)
+            
+            ########### Calculate accuracy metrics ###########
+            # Calculate the correlation between the mean prediction and observation
+            correlationobs = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
+            df_dic["Pearson correlation"].append(correlationobs)
+
+            # Calculate the RMSE between the mean prediction and observation
+            rmse = np.sqrt(np.mean((obs[:,pixel] - mean_prediction) ** 2))
+            df_dic["RMSE"].append(rmse)
+
+            # Calculate MSE
+
+            # Calculate KGE
+            kge = util.calculate_kge(obs[:,pixel], mean_prediction)
+            df_dic["KGE"].append(kge)
+            
+            #### KGE terms analysis ####
+            # Compute mean and standard deviation
+            mu_o, mu_p = np.mean(obs[:,pixel]), np.mean(mean_prediction)
+            sigma_o, sigma_p = np.std(obs[:,pixel]), np.std(mean_prediction)
+            
+            # Compute bias ratio (β) and variability ratio (γ)
+            beta = mu_p / mu_o
+            alpha = sigma_p / sigma_o
+            
+            if np.std(obs[:,pixel]) < 0.1: # if the std is close to zero, exclude pixel kge
+                alpha = np.nan
+                beta = np.nan
+            
+            df_dic["Beta"].append(beta)
+            df_dic["Alpha"].append(alpha)
+            df_dic["(Alpha-1)^2"].append((alpha-1)**2)
+            df_dic["(Beta-1)^2"].append((beta-1)**2)
+            df_dic["(r-1)^2"].append((correlationobs-1)**2)
+
+
+            # Calculate NSE
+            nse = 1 - (np.sum((obs[:,pixel] - mean_prediction) ** 2) / np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
+            if np.std(obs[:,pixel]) < 0.1:
+                nse = np.nan
+            df_dic["NSE"].append(nse)
+
+            # Calculate mean bias
+            bias_mean = np.mean(mean_prediction - obs[:,pixel])
+            df_dic["Absolute mean bias"].append(bias_mean)
+            
+            x_axis.append((correlationobs-1)**2)
+            y_axis.append(kge)
+            #self.plot_ensemble_statsvsacc_timeseries(pixel, f'{correlationobs:.2f}', f'{math.ceil(ensemble_variance)}')
+            #if ensemble_variance>70 and correlationobs>0.85:
+            #    print(ensemble_variance)
+            #    print(correlationobs)
+            #print(f"pixel index is: {pixel}")
+            
+        ####### save to csv ########
+        df = pd.DataFrame(df_dic)
+        df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
+
+        xtitle = "(r-1)^2"
+        ytitle = "KGE"
+
+        plt.figure()
+        plt.scatter(x_axis, y_axis, marker='o', color='k')
+        plt.xlabel(f'{xtitle}')
+        plt.ylabel(f'{ytitle}')
+        #plt.xlim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
+        #plt.ylim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
+        #plt.xscale("log")
+        #plt.yscale("log")
+        #plt.yscale("symlog")
+        plt.xlim(-1,1)
+        plt.ylim(-1, 1)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        print(f"plotting: {ytitle}_{xtitle}")
+        #plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"{ytitle}_{xtitle}.png"))
+
+    def ensemble_statvsacc_fitting(self):
+        utils = utilities()
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
+        xstats = {"std":"exp", "Variance":"exp", "Pairwise correlation":"lin", "IQR (75-25%)":"exp", "IQR (100-0%)":"exp"}
+        ystats = {"RMSE":"exp", "Pearson correlation":"lin", "KGE":"lin", "Absolute mean bias":"exp", "NSE":"lin", "Beta":"exp", "Alpha":"exp", "(Alpha-1)^2":"exp", "(Beta-1)^2":"exp", "(r-1)^2":"exp"}
+        for xstat in xstats.keys():
+            for ystat in ystats.keys():
+                print(f"fitting {xstat} with {ystat}")
+
+                logarithmicfit = False
+                if xstats[xstat]=="exp" and ystats[ystat]=="exp":
+                    fittype = "powerlaw"
+                elif xstats[xstat]=="exp" or ystats[ystat]=="exp":
+                    fittype = "exponential"
+                    if xstats[xstat]=="exp" and ystats[ystat]=="lin":
+                        logarithmicfit = True
+                else:
+                    fittype = "linear"
+                
+                xval = stat[xstat].values
+                yval = stat[ystat].values if not ystat=="Absolute mean bias" else np.absolute(stat[ystat].values)
+
+                if ystat=="Pearson correlation":
+                    xval = xval[~np.isnan(yval)]
+                    yval = yval[~np.isnan(yval)]
+                    xval = xval[yval>=0.0]
+                    yval = yval[yval>=0.0]
+                
+                if ystat=="KGE" or ystat=="NSE":
+                    xval = xval[~np.isnan(yval)]
+                    yval = yval[~np.isnan(yval)]
+                    xval = xval[yval>=-1]
+                    yval = yval[yval>=-1]
+
+                if ystat=="Beta" or ystat=="Alpha" or ystat=="(Alpha-1)^2" or ystat=="(Beta-1)^2" or ystat=="(r-1)^2":
+                    xval = xval[~np.isnan(yval)]
+                    yval = yval[~np.isnan(yval)]
+                
+                if ystat=="Absolute mean bias":
+                    xval = xval[yval>=0.01]
+                    yval = yval[yval>=0.01]
+                
+                if xstat=="Pairwise correlation" and ystat=="Pearson correlation":
+                    yval = yval[xval>=0.2]
+                    xval = xval[xval>=0.2]
+                #if xstat=="IQR (75-25%)" and ystat=="Pearson correlation":
+                #    yval = yval[xval<=10]
+                #    xval = xval[xval<=10]
+                if xstat=="Pairwise correlation" and ystat=="KGE":
+                    yval = yval[xval>=0.2]
+                    xval = xval[xval>=0.2]
+                if xstat=="Pairwise correlation" and ystat=="NSE":
+                    yval = yval[xval>=0.6]
+                    xval = xval[xval>=0.6]
+                        
+                
+                logx, logy, xminlim, xmaxlim, yminlim, ymaxlim = None, None, None, None, None, None
+                if xstat=="std" or xstat=="Variance" or xstat=="IQR (75-25%)" or xstat=="IQR (100-0%)":
+                    logx = True
+                if ystat=="RMSE" or ystat=="Absolute mean bias" or ystat=="Alpha" or ystat=="Beta" or ystat=="(Alpha-1)^2" or ystat=="(Beta-1)^2" or ystat=="(r-1)^2":
+                    logy = True
+                if xstat=="Pairwise correlation":
+                    xminlim = 0
+                    xmaxlim = 1
+                if ystat=="Pearson correlation" or ystat=="NSE":
+                    yminlim = 0
+                    ymaxlim = 1
+                if ystat=="KGE":
+                    yminlim = -1
+                    ymaxlim = 1
+                
+                if fittype=="linear":
+                    # Fit a linear model
+                    params, covariance = curve_fit(utils.linear_law, xval, yval)
+                    a_fit, b_fit = params
+                    # fitting accuracy
+                    y_fit = [utils.linear_law(x, a_fit, b_fit) for x in xval]
+                    R_square = r2_score(yval, y_fit)
+                    #print(f"R2 = {R_square}")
+                    #print(f"Fitted a: {a_fit} and b:{b_fit}")
+                    lin_eq = f'$y={b_fit:.2f}x+{a_fit:.2f}$' if a_fit>=0 else f'$y={b_fit:.2f}x{a_fit:.2f}$'
+                    textstr = '\n'.join((
+                        lin_eq,
+                        f'$R^2$ = {R_square:.3f}'))
+                    x_fit = [min(xval), max(xval)]
+                    y_fit = [utils.linear_law(x, a_fit, b_fit) for x in x_fit]
+
+
+                if fittype=="powerlaw":
+                    # Fit power law
+                    # linearize
+                    y_lin = np.log(yval)
+                    x_lin = np.log(xval)
+                    # Fit the function
+                    params, covariance = curve_fit(utils.linear_law, x_lin, y_lin)
+                    a_fit, b_fit = params
+                    # fitting accuracy
+                    y_fit = [utils.linear_law(x, a_fit, b_fit) for x in x_lin]
+                    R_square = r2_score(y_lin, y_fit)
+                    #print(f"R2 = {R_square}")
+                    # back transform to power law
+                    a_fit = np.exp(a_fit)
+                    #print(f"Fitted a: {a_fit} and b:{b_fit}")
+                    textstr = '\n'.join((
+                        f'y={a_fit:.2f}x^{b_fit:.2f}',
+                        f'$R^2$ = {R_square:.3f}'))
+
+                    x_fit = [min(xval), max(xval)]
+                    y_fit = [utils.powerlaw_func(x, a_fit, b_fit) for x in x_fit]
+
+                if fittype=="exponential":
+                    # Define a function to fit (e.g., exponential decay or polynomial)
+                    def log_func(x, a, b):
+                        return a + b * np.log(x)
+                    def exp_func(x, a, b):
+                        return a* np.exp(b * x)  # Exponential model without offset
+
+                    # Fit the curve
+                    if logarithmicfit:
+                        popt, _ = curve_fit(log_func, xval, yval)
+                        a_fit, b_fit = popt
+                        y_pred = log_func(xval, *popt)
+                        r2 = r2_score(yval, y_pred)  # Compute R²
+                        
+                        # Generate fitted values
+                        x_fit = np.linspace(min(xval), max(xval), 100)
+                        y_fit = log_func(x_fit, *popt)
+                        logeq = f'y={a_fit:.2f}+{b_fit:.3f}log(x)' if b_fit>=0 else f'y={a_fit:.2f}{b_fit:.3f}log(x)'
+                        textstr = '\n'.join((
+                                logeq,
+                                f'$R^2$ = {r2:.3f}'))
+                    else:
+                        popt, _ = curve_fit(exp_func, xval, yval, p0=(1, -0.1))  # Initial guesses for parameters
+                        a_fit, b_fit = popt
+                        y_pred = exp_func(xval, *popt)  # Fitted values for the actual x
+
+                        r2 = r2_score(yval, y_pred)  # Compute R²
+                        
+                        # Generate fitted values
+                        x_fit = np.linspace(min(xval), max(xval), 100)
+                        y_fit = exp_func(x_fit, *popt)
+
+                        textstr = '\n'.join((
+                                f'y={a_fit:.2f}e^{b_fit:.3f}x',
+                                f'$R^2$ = {r2:.3f}'))
+                    
+
+                plt.figure()
+                plt.plot(x_fit, y_fit, color="r", label=textstr, linestyle='--')
+                plt.scatter(xval, yval, marker='o', color='k')
+                plt.xlabel(xstat)
+                plt.ylabel(ystat)
+                if logx:
+                    plt.xscale("log")
+                if logy:
+                    plt.yscale("log")
+                if xminlim:
+                    plt.xlim(xminlim, xmaxlim)
+                if yminlim:
+                    plt.ylim(yminlim, ymaxlim)
+                
+                plt.grid(True, linestyle='--', alpha=0.7)
+                plt.tight_layout()
+                plt.legend()
+                plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"fitted_{ystat}_{xstat}.png"))
+
+    def taylor_diagram(self):
+
+        util = utilities()
+        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        
+        nb_members = 100
+        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
+        members_sim = np.array(members_sim)
+        members_sim = np.expand_dims(members_sim, axis=0)
+        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        
+        df_dic = {"Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Variance":[], "IQR (75-25%)":[], "IQR (100-0%)":[], "std":[]}
+
+        stds = [] # we have 100 obs std, while the plot takes only one obs std
+        corr = []
+        rmses = []
+        for pixel in range(100):
+            ensemble_predictions = members_sim[:,:,pixel]
+            ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
+            # Calculate the mean prediction for each time step
+            mean_prediction = np.mean(ensemble_predictions, axis=1)
+            
+            ########### Calculate ensemble statistics ###########
+            # Calculate the variance for each time step
+            ensemble_variance = np.var(ensemble_predictions, axis=1)
+            ensemble_variance = np.mean(ensemble_variance)
+            df_dic["Variance"].append(ensemble_variance)
+
+            # Calculate ensemble statistics (e.g., diversity, spread, etc.)
+            # Spread interquantile range (IQR) between 75th and 25th percentiles
+            ensemble_iqr = np.percentile(ensemble_predictions, 75, axis=1) - np.percentile(ensemble_predictions, 25, axis=1)  # IQR
+            iqr_mean = np.mean(ensemble_iqr)
+            df_dic["IQR (75-25%)"].append(iqr_mean)
+
+            iqr100 = np.percentile(ensemble_predictions, 100, axis=1) - np.percentile(ensemble_predictions, 0, axis=1)
+            iqr100_mean = np.mean(iqr100)
+            df_dic["IQR (100-0%)"].append(iqr100_mean)
+
             # Calculate the std for each time step
             ensemble_std = np.std(ensemble_predictions, axis=1)
             ensemble_std = np.mean(ensemble_std)
@@ -546,192 +885,478 @@ class postprocess_calculations:
             bias_mean = np.mean(mean_prediction - obs[:,pixel])
             df_dic["Absolute mean bias"].append(bias_mean)
             
-            x_axis.append(np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
-            y_axis.append(np.std(obs[:,pixel]))
+            #x_axis.append(ensemble_variance)
+            #y_axis.append((beta-1)**2)
+      
+        # Example data
+        # Reference dataset (e.g., observations)
+        ref_std = 1.0  # Standard deviation of the reference dataset
+        ref_data = np.random.normal(0, ref_std, 100)  # Generate some random data
+
+        # Model datasets (e.g., predictions from different models)
+        model1_std = 0.8  # Standard deviation of model 1
+        model1_corr = 0.9  # Correlation of model 1 with reference
+        model1_data = np.random.normal(0, model1_std, 100)  # Generate some random data
+
+        model2_std = 1.2  # Standard deviation of model 2
+        model2_corr = 0.7  # Correlation of model 2 with reference
+        model2_data = np.random.normal(0, model2_std, 100)  # Generate some random data
+
+        # Calculate statistics for the Taylor diagram
+        # Standard deviation
+        stddev = np.array([ref_std, model1_std, model2_std])
+
+        # Correlation
+        corr = np.array([1.0, model1_corr, model2_corr])
+
+        # RMS difference (RMSE)
+        rmse = np.array([0.0, np.sqrt(np.mean((ref_data - model1_data)**2)), np.sqrt(np.mean((ref_data - model2_data)**2))])
+
+        sm.taylor_diagram(stddev, rmse, corr, markerColor='r', markerSize=10)
+
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "taylor_diag.png"))
+    
+    def pdf_TL_EU(self):
+        def calc_correlation(obs, sim):
+            correlation_map = []#np.zeros(obs.shape[1])
+            # Iterate over each grid cell
+            for i in range(obs.shape[1]):
+                # Extract the time series for the current grid cell
+                time_series1 = obs[:, i]
+                time_series2 = sim[:, i]
+                # Calculate the Pearson correlation coefficient
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:  # Avoid division by zero
+                    correlation_matrix = np.corrcoef(time_series1, time_series2)
+                    r = correlation_matrix[0, 1]
+                else:
+                    r = np.nan  # If there's no variation, set correlation to NaN
+                
+                # Store the correlation coefficient in the map
+                correlation_map.append(r)
+            return correlation_map
+
+        def map_eligible_to_transfer(target_map, transfer_subset):
+            flat_target_map = target_map.flatten()
+            flat_transfer_subset = transfer_subset.flatten()
+            intersecting_indices = np.where((flat_transfer_subset == 1) & (flat_target_map == 1))[0]
+            target_indices = np.where(flat_target_map==1)[0]
+            indices = np.where(np.isin(target_indices, intersecting_indices))[0]
+            return indices
+
+        def load_obs_sim(target):
+            obs_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            sim_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
+            obs_destand_test = np.nan_to_num(obs_destand_test)
+            sim_destand_test = np.nan_to_num(sim_destand_test)
+            obs_destand_test[obs_destand_test < 0.0] = 0.0
+            sim_destand_test[sim_destand_test < 0.0] = 0.0
+            return obs_destand_test, sim_destand_test
+
+        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        print("starting the pdf calculation")
+        #### Transfer exercise subset #####
+        corr_TL_ex = []
+        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        nb_members = 100
+        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
+        members_sim = np.array(members_sim)
+        members_sim = np.expand_dims(members_sim, axis=0)
+        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        for pixel in range(100):
+            ensemble_predictions = members_sim[:,:,pixel]
+            ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
+            # Calculate the mean prediction for each time step
+            mean_prediction = np.mean(ensemble_predictions, axis=1)
+            corr = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
+            corr_TL_ex.append(corr)
+        print(len(corr_TL_ex))
+
+        ##### Transfer eligible dataset #####
+        total_EU_corr = []
+        length = 0
+        for target in range(100):
+            obs_destand_test, sim_destand_test = load_obs_sim(target)
+            length = length + obs_destand_test.shape[1]
+            corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
+            total_EU_corr.extend(corr_EU)
+        print(len(total_EU_corr))
+
+        #### Transfer subset ####
+        # TODO check why the original mapping file size is 12938 
+        # but the total indices here are 12932
+        original_transfersubset_size = 12938
+        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"))
+        transfer_EU_corr = []
+        for target in range(100):
+            obs_destand_test, sim_destand_test = load_obs_sim(target)
+            target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            indices = map_eligible_to_transfer(target_map, transfer_subset)
+            obs_destand_test = obs_destand_test[:, indices]
+            sim_destand_test = sim_destand_test[:, indices]
+            corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
+            transfer_EU_corr.extend(corr_EU)
+        print(len(transfer_EU_corr))
+        
+        corr_TL_ex = np.array(corr_TL_ex)
+        corr_TL_ex = corr_TL_ex[~np.isnan(corr_TL_ex)]
+        total_EU_corr = np.array(total_EU_corr)
+        total_EU_corr = total_EU_corr[~np.isnan(total_EU_corr)]
+        transfer_EU_corr = np.array(transfer_EU_corr)
+        transfer_EU_corr = transfer_EU_corr[~np.isnan(transfer_EU_corr)]
+        # Ensure both lists have the same min and max by clipping (if needed)
+        min_val = -1
+        max_val = 1
+
+        # Create kernel density estimates
+        kde1 = gaussian_kde(corr_TL_ex)
+        kde2 = gaussian_kde(total_EU_corr)
+        kde3 = gaussian_kde(transfer_EU_corr)
+
+        # Create a range of values for plotting
+        x = np.linspace(min_val, max_val, length)
+
+        # Plot the PDFs
+        plt.figure(figsize=(10, 6))
+        plt.plot(x, kde2(x), label=f'Transfer eligible dataset (n={length})', color='red')
+        plt.plot(x, kde3(x), label=f'Transfer subset (n={original_transfersubset_size})', color='green')
+        plt.plot(x, kde1(x), label=f'Transfer exerciese subset (n={len(corr_TL_ex)})', color='blue')
+
+        # Add plot elements
+        plt.xlabel('Pearson correlation')
+        plt.ylabel('Probability Density')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+
+        # Show the plot
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "corr_pdf.png"))
+
+    def corr_components(self):
+        def pearson_nominator(x, y):
+            """Calculate covariance between two arrays (numerator of Pearson correlation)"""
+            return np.sum((x - np.mean(x)) * (y - np.mean(y)))
+
+        def pearson_denominator(y, y_hat):
+            y_dev = y - np.mean(y)                # Deviations from mean (y)
+            y_hat_dev = y_hat - np.mean(y_hat)    # Deviations from mean (ŷ)
+            return np.sqrt(np.sum(y_dev**2)) * np.sqrt(np.sum(y_hat_dev**2))
+
+        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        obs[obs < 0.0] = 0.0
+        #ens_mean = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
+        
+        nb_members = 100
+        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
+        members_sim = np.array(members_sim)
+        members_sim = np.expand_dims(members_sim, axis=0)
+        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        members_sim[members_sim < 0.0] = 0.0
+        covariances = []
+        correlations = []
+        for pixel in range(100):
+            ensemble_predictions = members_sim[:,:,pixel]
+            ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
+            # Calculate the mean prediction for each time step
+            mean_prediction = np.mean(ensemble_predictions, axis=1)
+            cov = pearson_denominator(obs[:,pixel], mean_prediction)
+            covariances.append(cov)
+            corr = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
+            correlations.append(corr)
             
-        ####### save to csv ########
-        #df = pd.DataFrame(df_dic)
-        #df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
-
-        xtitle = r"$\sum_{t=1}^{T} \left( y_{t} - \bar{y} \right)^{2}$"
-        ytitle = r"$\sigma{}_{Original simulations}$"
-
+        print(min(covariances), max(covariances))
         plt.figure()
-        plt.scatter(x_axis, y_axis, marker='o', color='k')
-        plt.xlabel(f'{xtitle}')
-        plt.ylabel(f'{ytitle}')
+        plt.scatter(covariances, correlations, marker='o', color='k')
+        plt.xlabel(f'std(obs) * std(sim)')
+        plt.ylabel(f'Pearson correlation')
         #plt.xlim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
         #plt.ylim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
         plt.xscale("log")
-        plt.yscale("log")
-        #plt.yscale("symlog")
+        #plt.yscale("log")
+        #plt.xscale("symlog")
+        #plt.xlim(0,1)
+        plt.ylim(-1, 1)
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
-        #plt.plot([min(yval), max(yval)], [min(yval), max(yval)], color='red', linestyle='--', label=f"R²={round(r2, 2)}")
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"{ytitle}_{xtitle}.png"))
+        #print(f"plotting: {ytitle}_{xtitle}")
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"Pearson correlation_stdobssim.png"))
 
-    def ensemble_statvsacc_fitting(self):
-        utils = utilities()
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
-        xstats = {"std":None, "Variance":None, "Pairwise correlation":None, "IQR":None}
-        ystats = {"RMSE":None, "Pearson correlation":None, "KGE":None, "Absolute mean bias":None}
-        xstat = "IQR"
-        ystat = "Absolute mean bias"
-        fittype = "powerlaw"
+    def timeseries_exclude_percentiles(self):
+        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        obs[obs < 0.0] = 0.0
+        
+        nb_members = 100
+        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
+        members_sim = np.array(members_sim)
+        members_sim = np.expand_dims(members_sim, axis=0)
+        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        members_sim[members_sim < 0.0] = 0.0
+        xaxis = []
+        yaxis = []
+        for pixel in range(100):
+            ensemble_predictions = members_sim[:,:,pixel]
+            timeseries_data = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
+            
+            # Compute the 25th and 75th percentiles across all timeseries
+            q25 = np.percentile(timeseries_data, 10, axis=1)
+            q75 = np.percentile(timeseries_data, 90, axis=1)
+            #print(q25)
+            #print(q75)
 
-        xval = stat[xstat].values
-        yval = stat[ystat].values if not ystat=="Absolute mean bias" else np.absolute(stat[ystat].values)
+            # Find timeseries within the interquartile range
+            valid_mask = [np.all((timeseries_data[:,m] >= q25) & (timeseries_data[:,m] <= q75), axis=0) for m in range(nb_members)]
+            valid_mask = np.array(valid_mask)
+            print(len(valid_mask[valid_mask==True]))
+            
+            # Filter timeseries
+            filtered_timeseries = timeseries_data[:, valid_mask]
 
-        if ystat=="KGE":
-            xval = xval[~np.isnan(yval)]
-            yval = yval[~np.isnan(yval)]
+            # Calculate the mean prediction for each time step after percentiles
+            mean_prediction = np.mean(filtered_timeseries, axis=1)
+        
+            ensemble_variance = np.var(filtered_timeseries, axis=1)
+            ensemble_variance = np.mean(ensemble_variance)
+
+            corr = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
+
+            xaxis.append(ensemble_variance)
+            yaxis.append(corr)
+            # Plot the remaining timeseries
+            dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
+            dates = dates[(dates.month != 2) | (dates.day != 29)]
+            fig, ax = plt.subplots(figsize=(16, 10))
+            
+            for m in range(len(filtered_timeseries[1])):
+                ts = filtered_timeseries[:, m]
+                ax.plot(dates, ts, color="gray")
+
+            ax.plot(dates, obs[:,pixel], "k-", label="Original simulations", linewidth=4.0)
+            ax.plot(dates, mean_prediction, "k--", label="Ensemble mean", linewidth=4.0)
+            ax.scatter([], [], color="k", label=f"r: {corr:.2f}, Ensemble variance: {math.ceil(ensemble_variance)}, nb b/w 10-90%: {int(len(filtered_timeseries[1]))}")
+
+
+            ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+
+            plt.xticks(rotation=45)
+            plt.ylabel('Water table depth (m)')
+            plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.11), ncol=3)
+            plt.grid()
+            plt.savefig(os.path.join(OUTPUTPATH, "transfer_timeseries_statvsacc", f"ensemble_timeseries_{pixel}_10-90percentiles.png"))
+        
+    def fit_stat_vs_acc_excl_percentiles(self):
+        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        obs[obs < 0.0] = 0.0
+        
+        nb_members = 100
+        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
+        members_sim = np.array(members_sim)
+        members_sim = np.expand_dims(members_sim, axis=0)
+        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        members_sim[members_sim < 0.0] = 0.0
+        xaxis = []
+        yaxis = []
+        for pixel in range(100):
+            ensemble_predictions = members_sim[:,:,pixel]
+            timeseries_data = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
+            
+            # Compute the 25th and 75th percentiles across all timeseries
+            q25 = np.percentile(timeseries_data, 10, axis=1)
+            q75 = np.percentile(timeseries_data, 90, axis=1)
+            
+            # Find timeseries within the interquartile range
+            valid_mask = [np.all((timeseries_data[:,m] >= q25) & (timeseries_data[:,m] <= q75), axis=0) for m in range(nb_members)]
+            valid_mask = np.array(valid_mask)
+            print(len(valid_mask[valid_mask==True]))
+            
+            # Filter timeseries
+            filtered_timeseries = timeseries_data[:, valid_mask]
+
+            # Calculate the mean prediction for each time step after percentiles
+            mean_prediction = np.mean(filtered_timeseries, axis=1)
+        
+            ensemble_variance = np.var(filtered_timeseries, axis=1)
+            ensemble_variance = np.mean(ensemble_variance)
+
+            corr = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
+
+            xaxis.append(ensemble_variance)
+            yaxis.append(corr)
+            
+        ystat = "Pearson correlation"
+        xstat = "Variance"
+        yval = np.array(yaxis)
+        xval = np.array(xaxis)
+        fittype = "exponential"
+        logarithmicfit = True
 
         if ystat=="Pearson correlation":
             xval = xval[~np.isnan(yval)]
             yval = yval[~np.isnan(yval)]
-            xval = xval[yval>=0]
-            yval = yval[yval>=0]
+            xval = xval[yval>=0.0]
+            yval = yval[yval>=0.0]
+        
+        if ystat=="KGE" or ystat=="NSE":
+            xval = xval[~np.isnan(yval)]
+            yval = yval[~np.isnan(yval)]
+            xval = xval[yval>=-1]
+            yval = yval[yval>=-1]
 
-
-        if fittype=="linear":
-            # Fit a linear model
-            params, covariance = curve_fit(utils.linear_law, xval, yval)
-            a_fit, b_fit = params
-            # fitting accuracy
-            y_fit = [utils.linear_law(x, a_fit, b_fit) for x in xval]
-            R_square = r2_score(yval, y_fit)
-            print(f"R2 = {R_square}")
-            print(f"Fitted a: {a_fit} and b:{b_fit}")
-            lin_eq = f'$y={b_fit:.2f}x+{a_fit:.2f}$' if a_fit>=0 else f'$y={b_fit:.2f}x{a_fit:.2f}$'
-            textstr = '\n'.join((
-                lin_eq,
-                f'$R^2$ = {R_square:.3f}'))
-            x_fit = [min(xval), max(xval)]
-            y_fit = [utils.linear_law(x, a_fit, b_fit) for x in x_fit]
-
-
-        if fittype=="powerlaw":
-            # Fit power law
-            # linearize
-            y_lin = np.log(yval)
-            x_lin = np.log(xval)
-            # Fit the function
-            params, covariance = curve_fit(utils.linear_law, x_lin, y_lin)
-            a_fit, b_fit = params
-            # fitting accuracy
-            y_fit = [utils.linear_law(x, a_fit, b_fit) for x in x_lin]
-            R_square = r2_score(y_lin, y_fit)
-            print(f"R2 = {R_square}")
-            # back transform to power law
-            a_fit = np.exp(a_fit)
-            print(f"Fitted a: {a_fit} and b:{b_fit}")
-            textstr = '\n'.join((
-                f'y={a_fit:.2f}x^{b_fit:.2f}',
-                f'$R^2$ = {R_square:.3f}'))
-
-            x_fit = [min(xval), max(xval)]
-            y_fit = [utils.powerlaw_func(x, a_fit, b_fit) for x in x_fit]
+        if ystat=="Beta" or ystat=="Alpha" or ystat=="(Alpha-1)^2" or ystat=="(Beta-1)^2":
+            xval = xval[~np.isnan(yval)]
+            yval = yval[~np.isnan(yval)]
+        
+        if ystat=="Absolute mean bias":
+            xval = xval[yval>=0.01]
+            yval = yval[yval>=0.01]
+        
+        if xstat=="Pairwise correlation" and ystat=="Pearson correlation":
+            yval = yval[xval>=0.2]
+            xval = xval[xval>=0.2]
+        #if xstat=="IQR (75-25%)" and ystat=="Pearson correlation":
+        #    yval = yval[xval<=10]
+        #    xval = xval[xval<=10]
+        if xstat=="Pairwise correlation" and ystat=="KGE":
+            yval = yval[xval>=0.2]
+            xval = xval[xval>=0.2]
+        if xstat=="Pairwise correlation" and ystat=="NSE":
+            yval = yval[xval>=0.6]
+            xval = xval[xval>=0.6]
+                
+        
+        logx, logy, xminlim, xmaxlim, yminlim, ymaxlim = None, None, None, None, None, None
+        if xstat=="std" or xstat=="Variance" or xstat=="IQR (75-25%)" or xstat=="IQR (100-0%)":
+            logx = True
+        if ystat=="RMSE" or ystat=="Absolute mean bias" or ystat=="Alpha" or ystat=="Beta" or ystat=="(Alpha-1)^2" or ystat=="(Beta-1)^2":
+            logy = True
+        if xstat=="Pairwise correlation":
+            xminlim = 0
+            xmaxlim = 1
+        if ystat=="Pearson correlation" or ystat=="NSE":
+            yminlim = 0
+            ymaxlim = 1
+        if ystat=="KGE":
+            yminlim = -1
+            ymaxlim = 1
+        
 
         if fittype=="exponential":
-            params, covariance = curve_fit(utils.exponential_func, xval, yval, p0=[1.9,-1.4])
-            # Extract fitted parameters
-            a_fit, b_fit = params
-            print(f"Fitted a: {a_fit} and b:{b_fit}")
-            # Calculate R-squared for the fit
-            y_pred = utils.exponential_func(xval, a_fit, b_fit)
-            residuals = yval - y_pred
-            ss_res = np.sum(residuals**2)
-            ss_tot = np.sum((yval - np.mean(yval))**2)
-            R_square = 1 - (ss_res / ss_tot)
-            print(f"R2 = {R_square}")
-            print(r2_score(yval, y_pred))
+            # Define a function to fit (e.g., exponential decay or polynomial)
+            def log_func(x, a, b):
+                return a + b * np.log(x)
+            def exp_func(x, a, b):
+                return a* np.exp(b * x)  # Exponential model without offset
 
-            x_fit = [min(xval), max(xval)]
-            y_fit = [utils.exponential_func(x, a_fit, b_fit) for x in x_fit]
-                        
-            textstr = '\n'.join((
-                f'y={a_fit:.2f}e^{b_fit:.2f}x',
-                f'$R^2$ = {R_square:.3f}'))
+            # Fit the curve
+            if logarithmicfit:
+                popt, _ = curve_fit(log_func, xval, yval)
+                a_fit, b_fit = popt
+                y_pred = log_func(xval, *popt)
+                r2 = r2_score(yval, y_pred)  # Compute R²
+                
+                # Generate fitted values
+                x_fit = np.linspace(min(xval), max(xval), 100)
+                y_fit = log_func(x_fit, *popt)
+                logeq = f'y={a_fit:.2f}+{b_fit:.3f}log(x)' if b_fit>=0 else f'y={a_fit:.2f}{b_fit:.3f}log(x)'
+                textstr = '\n'.join((
+                        logeq,
+                        f'$R^2$ = {r2:.3f}'))
+            else:
+                popt, _ = curve_fit(exp_func, xval, yval, p0=(1, -0.1))  # Initial guesses for parameters
+                a_fit, b_fit = popt
+                y_pred = exp_func(xval, *popt)  # Fitted values for the actual x
+
+                r2 = r2_score(yval, y_pred)  # Compute R²
+                
+                # Generate fitted values
+                x_fit = np.linspace(min(xval), max(xval), 100)
+                y_fit = exp_func(x_fit, *popt)
+
+                textstr = '\n'.join((
+                        f'y={a_fit:.2f}e^{b_fit:.3f}x',
+                        f'$R^2$ = {r2:.3f}'))
+            
 
         plt.figure()
         plt.plot(x_fit, y_fit, color="r", label=textstr, linestyle='--')
         plt.scatter(xval, yval, marker='o', color='k')
         plt.xlabel(xstat)
         plt.ylabel(ystat)
-        if fittype=="linear":
-            #plt.xlim(0, 1)
-            ylim = 0 if ystat=="Pearson correlation" else min(yval)
-            plt.ylim(ylim, 1)
-        if fittype=="powerlaw":
+        if logx:
             plt.xscale("log")
+        if logy:
             plt.yscale("log")
-        if fittype=="exponential":
-            if xstat=="Variance":
-                plt.xscale("log")
-            if ystat=="Absolute mean bias" or ystat=="RMSE":
-                plt.yscale("log")
+        if xminlim:
+            plt.xlim(xminlim, xmaxlim)
+        if yminlim:
+            plt.ylim(yminlim, ymaxlim)
+        
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
         plt.legend()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"fitted_{ystat}_{xstat}.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"fitted_{ystat}_{xstat}_excl%.png"))
 
-    def fit_exp(self):
-        # Load the CSV file
-        file_path = os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv")
-        df = pd.read_csv(file_path)
-
-        xstat = "std"
-        ystat = "KGE"
-
-        # Extract Variance (X) and KGE (Y)
-        x = df[xstat].values
-        y = df[ystat].values
-        x = np.array(x)
-        y = np.array(y)
+    def confirm_choices_mapping(self):
+        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"))
+        transfer_ex_subset = np.load(os.path.join(INPUTPATH, "choices.npy"))
+        ind = np.where(transfer_ex_subset==1)
         
-        if ystat=="KGE":
-            x = x[~np.isnan(y)]
-            y = y[~np.isnan(y)]
+        ##### load exercise #####
+        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+        sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
+        obs_destand_test = np.nan_to_num(obs_destand_test)
+        sim_destand_test = np.nan_to_num(sim_destand_test)
+        obs_destand_test[obs_destand_test < 0.0] = 0.0
+        sim_destand_test[sim_destand_test < 0.0] = 0.0
+        mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
+        obs = np.zeros((obs_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
+        obs[obs==0] = np.nan
+        sim = np.zeros((sim_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
+        sim[sim==0] = np.nan
+        mapping_indexes = np.where(mapping==1)
+        for i in range(len(mapping_indexes[0])):
+            obs[:,mapping_indexes[0][i],mapping_indexes[1][i]] = obs_destand_test[:,i]
+            sim[:,mapping_indexes[0][i],mapping_indexes[1][i]] = sim_destand_test[:,i]
+        corr_ex = np.corrcoef(sim[:,100,119], obs[:,100,119])[0, 1]
 
-        if ystat=="Pearson correlation":
-            x = x[~np.isnan(y)]
-            y = y[~np.isnan(y)]
-            x = x[y>=0]
-            y = y[y>=0]
-
-        # Define a function to fit (e.g., exponential decay or polynomial)
-        def fit_func(x, a, b):
-            return a* np.exp(b * x)  # Exponential model without offset
-
-        # Fit the curve
-        popt, _ = curve_fit(fit_func, x, y, p0=(1, -0.1))  # Initial guesses for parameters
-
-        a_fit, b_fit = popt
-        print(f"Fitted a: {a_fit} and b:{b_fit}")
-        # Generate fitted values for plotting
-        y_pred = fit_func(x, *popt)  # Fitted values for the actual x
-        r2 = r2_score(y, y_pred)  # Compute R²
+        ##### load EU #####
+        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM/outputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        target_mapping = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_0", f"mappingindices_0.npy"))
+        indexes = np.where(target_mapping==1)
         
-        # Generate fitted values
-        x_fit = [min(x), max(x)]#np.linspace(min(x), max(x), 1000)
-        y_fit = [fit_func(xfit, *popt) for xfit in x_fit]
+        xind = np.where(indexes[0]==100)
+        yind = np.where(indexes[1]==119)
+        pixel = 48
+        
+        obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), "400px_member_9", f"obs_destand_{MODEL_NAME}_0.npy"))
+        print(obs_destand_EU.shape)
+        members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_0.npy")) for m in range(100)]
+        members_sim = np.array(members_sim)
+        members_sim = np.expand_dims(members_sim, axis=0)
+        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        ensemble_predictions = members_sim[:,:,pixel]
+        ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
+        # Calculate the mean prediction for each time step
+        mean_prediction = np.mean(ensemble_predictions, axis=1)
+        corr_EU = np.corrcoef(mean_prediction, obs_destand_EU[:,pixel])[0, 1]
 
-        textstr = '\n'.join((
-                f'y={a_fit:.2f}e^{b_fit:.3f}x',
-                f'$R^2$ = {r2:.3f}'))
-        print(r2)
-        # Plot data and fitted curve
-        plt.figure()
-        plt.scatter(x, y, marker='o', color='k')
-        plt.plot(x_fit, y_fit, color="r", label=textstr, linestyle='--')
-        plt.xlabel(xstat)
-        plt.ylabel(ystat)
-        if xstat=="std" or xstat=="Variance":
-            plt.xscale("log")
-        if ystat=="Absolute mean bias" or ystat=="RMSE":
-            plt.yscale("log")
+        print(corr_ex)
+        print(corr_EU)
 
-        plt.grid(True, linestyle='--', alpha=0.7)
-        plt.tight_layout()
-        plt.legend()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"fitted_{ystat}_{xstat}.png"))
+    def concat_EU_outputs(self):
+        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM/outputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        
+        for target in range(100):
+            obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            members_sim = np.array(members_sim)
+            members_sim = np.expand_dims(members_sim, axis=0)
+            members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+            mean_prediction = np.mean(members_sim, axis=0)
+            print(obs_destand_EU.shape)
+            print(mean_prediction.shape)
+            np.save(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"), obs_destand_EU)
+            np.save(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}_{target}.npy"), mean_prediction)
+            print(f"saved {target} target pixels")
+    
