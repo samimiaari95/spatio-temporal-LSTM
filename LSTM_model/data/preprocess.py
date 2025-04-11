@@ -349,7 +349,7 @@ class preprocessing_data:
             all_choices = np.where(choices==1, 1, all_choices)
         np.save(os.path.join(os.path.dirname(INPUTPATH), "training_subsets.npy"), all_choices)
         print(np.sum(all_choices))
-    
+      
     def ensemble_transfer_pixels(self):
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_0stdroll6months.npy"))
         choices = np.load(os.path.join(os.path.dirname(INPUTPATH), "training_subsets.npy"))
@@ -360,7 +360,7 @@ class preprocessing_data:
         mapping = np.where(choices==1, 0, mapping)
         np.save(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"), mapping)
         print(np.sum(mapping))
-    
+
     def split_mapping(self):
         utils = utilities()
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "included_excl_waterbodies.npy"))
@@ -386,3 +386,16 @@ class preprocessing_data:
         print("total sum")
         print(np.sum(testsummapping))
         print(np.unique(np.equal(testsummapping, mapping), return_counts=True))
+
+    def exclude_iceland(self):
+        filepath = os.path.join(os.path.dirname(get_root_dir()), "fork/validation_400_withcriteria_43200/inputs/20yrs_ts/ensemble_400px/target_pixels", "transfer_subset.npy")
+
+        mappingfile = np.load(filepath)
+        lon = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
+        lat = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        iceland_indx = np.where((lon< 0) & (lat> 60))
+        print(np.sum(mappingfile))
+        print(np.sum(mappingfile[iceland_indx]))
+        mappingfile[iceland_indx] = 0
+        print(np.sum(mappingfile))
+        np.save(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "transfer_subset_0stdroll6months_43226exICELAND.npy"), mappingfile)
