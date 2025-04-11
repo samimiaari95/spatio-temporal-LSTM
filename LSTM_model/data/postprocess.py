@@ -985,14 +985,11 @@ class postprocess_calculations:
         correlation = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
         rmse = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
         
+        # NOTE some pixels have simulated std=0 and so the correlation is NaN
         #### Transfer & training filtered subsets ####
         EUfiltered_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43200/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        # the original mapping file pixels size is 12938 but the total transfer pixels here are 12932
-        # this difference is because the 12938 are taken from the 43226 but the 12932 are evaluated from the 43200
-        # so the 8 pixels lost are from the 26 pixels removed to have a 43200 for easier evaluation
-        # NOTE some pixels have simulated std=0 and so the correlation is NaN
-        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"))
-        training_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "training_subset.npy"))
+        transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EUfiltered_inpath)), "transfer_subset.npy"))
+        training_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EUfiltered_inpath)), "training_subset.npy"))
         original_transfersubset_size = int(np.sum(transfer_subset))
         original_trainingsubset_size = int(np.sum(training_subset))
         for target in range(100):
@@ -1426,6 +1423,18 @@ class postprocess_calculations:
                     r = np.nan
                 correlation_map.append(r)
             return correlation_map
+        
+        def calc_RMSE(obs, sim):
+            RMSE_allcells = []
+            for i in range(obs.shape[1]):
+                time_series1 = obs[:, i]
+                time_series2 = sim[:, i]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    rmse = np.sqrt(np.mean((time_series1 - time_series2) ** 2))
+                else:
+                    rmse = np.nan
+                RMSE_allcells.append(rmse)
+            return RMSE_allcells
 
         def mapping_targetmap_to_transfersubset(target_map, transfer_subset):
             flat_target_map = target_map.flatten()
@@ -1449,31 +1458,51 @@ class postprocess_calculations:
             return obs_destand_test, sim_destand_test
         
         plot_functions = plotting_helper()
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM1/inputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
-        #EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM1/outputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        #EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43200/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withoutcriteria_57120/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
         print("starting calculations")
 
         #### Transfer subset ####
-        # the original mapping file pixels size is 12938 but the total transfer pixels here are 12932
-        # this difference is because the 12938 are taken from the 43226 but the 12932 are evaluated from the 43200
-        # so the 8 pixels lost are from the 26 pixels removed to have a 43200 for easier evaluation
-        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"))
-        print(np.sum(transfer_subset))
+        
+        # filtered subset
+        #transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
+        #training_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "training_subset.npy"))
+        
+        # unfiltered subset
+        subsets_dir = os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px_org")
+        transfer_subset = np.load(os.path.join(subsets_dir, "transfer_subset_unfiltered.npy"))
+        training_subset = np.load(os.path.join(subsets_dir, "training_subset.npy"))
+        
+        #rollsubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "ensemble_400px_org", "mapping_0stdroll6months.npy"))
+        #print(np.sum(rollsubset))
+        #waterbodiessubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "included_excl_waterbodies.npy"))
+        #print(np.sum(waterbodiessubset))
+        #transfer_subset = np.where(rollsubset==1, 0, waterbodiessubset)
 
         corr2d = np.zeros(transfer_subset.shape)
         corr2d[corr2d==0] = np.nan
-        transfer_EU_corr = []
+        rmse2d = np.zeros(transfer_subset.shape)
+        rmse2d[rmse2d==0] = np.nan
         for target in range(100):
             obs_destand_test, sim_destand_test = load_obs_sim(target)
             target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             indices, indices_2d = mapping_targetmap_to_transfersubset(target_map, transfer_subset)
+            indices_train, indices_2d_train = mapping_targetmap_to_transfersubset(target_map, training_subset)
 
-            obs_destand_test = obs_destand_test[:, indices]
-            sim_destand_test = sim_destand_test[:, indices]
-            corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
-            #corr_EU = calc_RMSE(sim_destand_test, obs_destand_test)
-            transfer_EU_corr.extend(corr_EU)
-            
+            obs_transfer = obs_destand_test[:, indices]
+            sim_transfer = sim_destand_test[:, indices]
+            corr_EU = calc_correlation(sim_transfer, obs_transfer)
+            rmse_EU = calc_RMSE(sim_transfer, obs_transfer)
             corr2d[indices_2d] = corr_EU
+            rmse2d[indices_2d] = rmse_EU
+
+            obs_train = obs_destand_test[:, indices_train]
+            sim_train = sim_destand_test[:, indices_train]
+            corr_EU = calc_correlation(sim_train, obs_train)
+            rmse_EU = calc_RMSE(sim_train, obs_train)
+            corr2d[indices_2d_train] = corr_EU
+            rmse2d[indices_2d_train] = rmse_EU
+
         plot_functions.EU_2Dmap(data_map=corr2d, logscale=False, minval=0, maxval=1, title="Pearson correlation")
+        plot_functions.EU_2Dmap(data_map=rmse2d, logscale=True, minval=0.01, maxval=10, title="RMSE")
         
