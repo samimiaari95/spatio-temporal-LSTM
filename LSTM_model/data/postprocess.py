@@ -1,7 +1,6 @@
 import os
 import math
 import numpy as np
-import skill_metrics as sm
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
@@ -13,6 +12,7 @@ from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
+from typing import Dict, Union, List, Optional
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.utils.utils import utilities
 from LSTM_model.model.config import *
@@ -796,146 +796,175 @@ class postprocess_calculations:
                 plt.legend()
                 plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"fitted_{ystat}_{xstat}.png"))
 
-    def taylor_diagram(self):
-
-        util = utilities()
-        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
+    def plot_cdfs(self,
+        data_dict: Dict[str, Union[list, np.ndarray]],
+        colors: Optional[List[str]] = None,
+        linestyles: Optional[List[str]] = None,
+        title: str = "Cumulative Distribution Function (CDF)",
+        xlabel: str = "Values",
+        ylabel: str = "Cumulative Probability",
+        logscale: bool = False,
+        grid: bool = True,
+        figsize: tuple = (10, 6)
+    ) -> plt.Figure:
+        """
+        Plot CDFs for multiple datasets using dictionary input.
         
-        nb_members = 100
-        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
-        members_sim = np.array(members_sim)
-        members_sim = np.expand_dims(members_sim, axis=0)
-        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        Args:
+            data_dict: Dictionary where keys are labels and values are data lists
+            colors: Optional list of line colors (matches dictionary order)
+            linestyles: Optional list of line styles (matches dictionary order)
+            title: Plot title
+            xlabel: X-axis label
+            ylabel: Y-axis label
+            grid: Whether to show grid
+            figsize: Figure size
         
-        df_dic = {"Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Variance":[], "IQR (75-25%)":[], "IQR (100-0%)":[], "std":[]}
+        Returns:
+            matplotlib Figure object
+        """
+        # Extract labels and data from dictionary
+        labels = list(data_dict.keys())
+        data_lists = list(data_dict.values())
+        n = len(data_dict)
+        
+        # Set default styles if not provided
+        if colors is None:
+            colors = plt.cm.tab10(np.linspace(0, 1, n))  # Use colormap
+        if linestyles is None:
+            linestyles = ['-'] * n  # Solid lines by default
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Plot each dataset
+        for (label, data), color, ls in zip(data_dict.items(), colors, linestyles):
+            arr = np.array(data)
+            sorted_data = np.sort(arr)
+            cdf = np.arange(1, len(sorted_data)+1) / len(sorted_data)
+            ax.plot(sorted_data, cdf, label=label, color=color, linestyle=ls, linewidth=2)
+        
+        # Add plot decorations
+        #ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        if logscale:
+            ax.set_xscale('log')
+        ax.legend()
+        if grid:
+            ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"cdf_{xlabel}_unfvsf.png"))
+        return print(f"plotted cdfs of {xlabel}")
 
-        stds = [] # we have 100 obs std, while the plot takes only one obs std
-        corr = []
-        rmses = []
-        for pixel in range(100):
-            ensemble_predictions = members_sim[:,:,pixel]
-            ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
-            # Calculate the mean prediction for each time step
-            mean_prediction = np.mean(ensemble_predictions, axis=1)
+    def plot_pdfs(self,
+        data_dict: Dict[str, Union[list, np.ndarray]],
+        colors: Optional[List[str]] = None,
+        linestyles: Optional[List[str]] = None,
+        title: str = "Probability Density Function (PDF)",
+        xlabel: str = "Values",
+        ylabel: str = "Density",
+        logscale: bool = False,
+        grid: bool = True,
+        figsize: tuple = (10, 6),
+        bandwidth: Optional[float] = None,
+        alpha: float = 0.7,
+        show_hist: bool = False,
+        bins: Union[int, str] = 'auto'
+    ) -> plt.Figure:
+        """
+        Plot PDFs for multiple datasets using dictionary input.
+        
+        Args:
+            data_dict: Dictionary where keys are labels and values are data lists
+            colors: Optional list of line colors
+            linestyles: Optional list of line styles
+            title: Plot title
+            xlabel: X-axis label
+            ylabel: Y-axis label
+            grid: Whether to show grid
+            figsize: Figure size
+            bandwidth: Bandwidth for KDE (None for automatic)
+            alpha: Transparency for histogram (if shown)
+            show_hist: Overlay histograms
+            bins: Number of bins for histogram (if shown)
+        
+        Returns:
+            matplotlib Figure object
+        """
+        # Extract labels and data
+        labels = list(data_dict.keys())
+        data_lists = list(data_dict.values())
+        n = len(data_dict)
+        
+        # Set default styles
+        if colors is None:
+            colors = plt.cm.tab10(np.linspace(0, 1, n))
+        if linestyles is None:
+            linestyles = ['-'] * n
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Calculate global min/max for x-axis
+        all_data = np.concatenate(list(data_dict.values()))
+        x_min, x_max = np.min(all_data), np.max(all_data)
+        x_vals = np.linspace(x_min, x_max, 1000)
+        
+        # Plot each dataset
+        for (label, data), color, ls in zip(data_dict.items(), colors, linestyles):
+            arr = np.array(data)
             
-            ########### Calculate ensemble statistics ###########
-            # Calculate the variance for each time step
-            ensemble_variance = np.var(ensemble_predictions, axis=1)
-            ensemble_variance = np.mean(ensemble_variance)
-            df_dic["Variance"].append(ensemble_variance)
-
-            # Calculate ensemble statistics (e.g., diversity, spread, etc.)
-            # Spread interquantile range (IQR) between 75th and 25th percentiles
-            ensemble_iqr = np.percentile(ensemble_predictions, 75, axis=1) - np.percentile(ensemble_predictions, 25, axis=1)  # IQR
-            iqr_mean = np.mean(ensemble_iqr)
-            df_dic["IQR (75-25%)"].append(iqr_mean)
-
-            iqr100 = np.percentile(ensemble_predictions, 100, axis=1) - np.percentile(ensemble_predictions, 0, axis=1)
-            iqr100_mean = np.mean(iqr100)
-            df_dic["IQR (100-0%)"].append(iqr100_mean)
-
-            # Calculate the std for each time step
-            ensemble_std = np.std(ensemble_predictions, axis=1)
-            ensemble_std = np.mean(ensemble_std)
-            df_dic["std"].append(ensemble_std)
-
-            # Calculate diversity by Pairwise correlation
-            correlation_matrix = np.corrcoef(ensemble_predictions.T)  # Transpose to get members on rows
-            pairwisecorr = np.mean(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]) # Compute diversity as 1 - average correlation
-            df_dic["Pairwise correlation"].append(pairwisecorr)
+            # Kernel Density Estimation
+            kde = gaussian_kde(arr, bw_method=bandwidth)
+            ax.plot(x_vals, kde(x_vals), label=label, color=color, 
+                linestyle=ls, linewidth=2)
             
-            ########### Calculate accuracy metrics ###########
-            # Calculate the correlation between the mean prediction and observation
-            correlationobs = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
-            df_dic["Pearson correlation"].append(correlationobs)
+            # Optional histogram
+            if show_hist:
+                ax.hist(arr, bins=bins, density=True, alpha=alpha, 
+                    color=color, histtype='stepfilled')
+        
+        # Add plot decorations
+        #ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        if logscale:
+            ax.set_xscale('log')
+        ax.legend()
+        if grid:
+            ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"pdf_{xlabel}_unfvsf.png"))
+        return print(f"plotted pdfs of {xlabel}")
 
-            # Calculate the RMSE between the mean prediction and observation
-            rmse = np.sqrt(np.mean((obs[:,pixel] - mean_prediction) ** 2))
-            df_dic["RMSE"].append(rmse)
-
-            # Calculate MSE
-
-            # Calculate KGE
-            kge = util.calculate_kge(obs[:,pixel], mean_prediction)
-            df_dic["KGE"].append(kge)
-            
-            #### KGE terms analysis ####
-            # Compute mean and standard deviation
-            mu_o, mu_p = np.mean(obs[:,pixel]), np.mean(mean_prediction)
-            sigma_o, sigma_p = np.std(obs[:,pixel]), np.std(mean_prediction)
-            
-            # Compute bias ratio (β) and variability ratio (γ)
-            beta = mu_p / mu_o
-            alpha = sigma_p / sigma_o
-            
-            if np.std(obs[:,pixel]) < 0.1: # if the std is close to zero, exclude pixel kge
-                alpha = np.nan
-                beta = np.nan
-            
-            df_dic["Beta"].append(beta)
-            df_dic["Alpha"].append(alpha)
-
-            # Calculate NSE
-            nse = 1 - (np.sum((obs[:,pixel] - mean_prediction) ** 2) / np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
-            if np.std(obs[:,pixel]) < 0.1:
-                nse = np.nan
-            df_dic["NSE"].append(nse)
-
-            # Calculate mean bias
-            bias_mean = np.mean(mean_prediction - obs[:,pixel])
-            df_dic["Absolute mean bias"].append(bias_mean)
-            
-            #x_axis.append(ensemble_variance)
-            #y_axis.append((beta-1)**2)
-      
-        # Example data
-        # Reference dataset (e.g., observations)
-        ref_std = 1.0  # Standard deviation of the reference dataset
-        ref_data = np.random.normal(0, ref_std, 100)  # Generate some random data
-
-        # Model datasets (e.g., predictions from different models)
-        model1_std = 0.8  # Standard deviation of model 1
-        model1_corr = 0.9  # Correlation of model 1 with reference
-        model1_data = np.random.normal(0, model1_std, 100)  # Generate some random data
-
-        model2_std = 1.2  # Standard deviation of model 2
-        model2_corr = 0.7  # Correlation of model 2 with reference
-        model2_data = np.random.normal(0, model2_std, 100)  # Generate some random data
-
-        # Calculate statistics for the Taylor diagram
-        # Standard deviation
-        stddev = np.array([ref_std, model1_std, model2_std])
-
-        # Correlation
-        corr = np.array([1.0, model1_corr, model2_corr])
-
-        # RMS difference (RMSE)
-        rmse = np.array([0.0, np.sqrt(np.mean((ref_data - model1_data)**2)), np.sqrt(np.mean((ref_data - model2_data)**2))])
-
-        sm.taylor_diagram(stddev, rmse, corr, markerColor='r', markerSize=10)
-
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "taylor_diag.png"))
-    
     def pdf_TL_EU(self):
         def calc_correlation(obs, sim):
-            correlation_map = []#np.zeros(obs.shape[1])
-            # Iterate over each grid cell
+            correlation_map = []
             for i in range(obs.shape[1]):
-                # Extract the time series for the current grid cell
                 time_series1 = obs[:, i]
                 time_series2 = sim[:, i]
-                # Calculate the Pearson correlation coefficient
-                if np.std(time_series1) > 0 and np.std(time_series2) > 0:  # Avoid division by zero
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
                     correlation_matrix = np.corrcoef(time_series1, time_series2)
                     r = correlation_matrix[0, 1]
                 else:
-                    r = np.nan  # If there's no variation, set correlation to NaN
-                
-                # Store the correlation coefficient in the map
+                    r = np.nan
                 correlation_map.append(r)
             return correlation_map
+        
+        def calc_RMSE(obs, sim):
+            RMSE_allcells = []
+            for i in range(obs.shape[1]):
+                time_series1 = obs[:, i]
+                time_series2 = sim[:, i]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    rmse = np.sqrt(np.mean((time_series1 - time_series2) ** 2))
+                else:
+                    rmse = np.nan
+                RMSE_allcells.append(rmse)
+            return RMSE_allcells
 
-        def map_eligible_to_transfer(target_map, transfer_subset):
+        def intersect_subsets(target_map, transfer_subset):
             flat_target_map = target_map.flatten()
             flat_transfer_subset = transfer_subset.flatten()
             intersecting_indices = np.where((flat_transfer_subset == 1) & (flat_target_map == 1))[0]
@@ -943,93 +972,117 @@ class postprocess_calculations:
             indices = np.where(np.isin(target_indices, intersecting_indices))[0]
             return indices
 
-        def load_obs_sim(target):
-            obs_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
-            sim_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
+        def load_obs_sim(dirpath, target):
+            obs_destand_test = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            sim_destand_test = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
             obs_destand_test = np.nan_to_num(obs_destand_test)
             sim_destand_test = np.nan_to_num(sim_destand_test)
             obs_destand_test[obs_destand_test < 0.0] = 0.0
             sim_destand_test[sim_destand_test < 0.0] = 0.0
             return obs_destand_test, sim_destand_test
 
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
         print("starting the pdf calculation")
-        #### Transfer exercise subset #####
-        corr_TL_ex = []
-        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        nb_members = 100
-        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
-        members_sim = np.array(members_sim)
-        members_sim = np.expand_dims(members_sim, axis=0)
-        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
-        for pixel in range(100):
-            ensemble_predictions = members_sim[:,:,pixel]
-            ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
-            # Calculate the mean prediction for each time step
-            mean_prediction = np.mean(ensemble_predictions, axis=1)
-            corr = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
-            corr_TL_ex.append(corr)
-        print(len(corr_TL_ex))
-
-        ##### Transfer eligible dataset #####
-        total_EU_corr = []
-        length = 0
-        for target in range(100):
-            obs_destand_test, sim_destand_test = load_obs_sim(target)
-            length = length + obs_destand_test.shape[1]
-            corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
-            total_EU_corr.extend(corr_EU)
-        print(len(total_EU_corr))
-
-        #### Transfer subset ####
-        # TODO check why the original mapping file size is 12938 
-        # but the total indices here are 12932
-        original_transfersubset_size = 12938
-        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"))
-        transfer_EU_corr = []
-        for target in range(100):
-            obs_destand_test, sim_destand_test = load_obs_sim(target)
-            target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            indices = map_eligible_to_transfer(target_map, transfer_subset)
-            obs_destand_test = obs_destand_test[:, indices]
-            sim_destand_test = sim_destand_test[:, indices]
-            corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
-            transfer_EU_corr.extend(corr_EU)
-        print(len(transfer_EU_corr))
+        correlation = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
+        rmse = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
         
-        corr_TL_ex = np.array(corr_TL_ex)
-        corr_TL_ex = corr_TL_ex[~np.isnan(corr_TL_ex)]
-        total_EU_corr = np.array(total_EU_corr)
-        total_EU_corr = total_EU_corr[~np.isnan(total_EU_corr)]
-        transfer_EU_corr = np.array(transfer_EU_corr)
-        transfer_EU_corr = transfer_EU_corr[~np.isnan(transfer_EU_corr)]
-        # Ensure both lists have the same min and max by clipping (if needed)
-        min_val = -1
-        max_val = 1
+        #### Transfer & training filtered subsets ####
+        EUfiltered_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43200/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        # the original mapping file pixels size is 12938 but the total transfer pixels here are 12932
+        # this difference is because the 12938 are taken from the 43226 but the 12932 are evaluated from the 43200
+        # so the 8 pixels lost are from the 26 pixels removed to have a 43200 for easier evaluation
+        # NOTE some pixels have simulated std=0 and so the correlation is NaN
+        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"))
+        training_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "training_subset.npy"))
+        original_transfersubset_size = int(np.sum(transfer_subset))
+        original_trainingsubset_size = int(np.sum(training_subset))
+        for target in range(100):
+            obs_destand_test, sim_destand_test = load_obs_sim(EUfiltered_inpath, target)
+            target_map = np.load(os.path.join(os.path.dirname(EUfiltered_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            transfer_indices = intersect_subsets(target_map, transfer_subset)
+            training_indices = intersect_subsets(target_map, training_subset)
+            corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
+            rmse_EU = calc_RMSE(sim_destand_test, obs_destand_test)
+            corr_EU = np.array(corr_EU)
+            rmse_EU = np.array(rmse_EU)
+            
+            correlation["transfer_filtered"].extend(corr_EU[transfer_indices].tolist())
+            correlation["training_filtered"].extend(corr_EU[training_indices].tolist())
+            rmse["transfer_filtered"].extend(rmse_EU[transfer_indices].tolist())
+            rmse["training_filtered"].extend(rmse_EU[training_indices].tolist())
 
-        # Create kernel density estimates
-        kde1 = gaussian_kde(corr_TL_ex)
-        kde2 = gaussian_kde(total_EU_corr)
-        kde3 = gaussian_kde(transfer_EU_corr)
+        #### Transfer & training unfiltered subsets ####
+        EUunfiltered_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withoutcriteria_57120/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        subsets_dir = os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px_org")
+        transfer_subset = np.load(os.path.join(subsets_dir, "transfer_subset_unfiltered.npy"))
+        training_subset = np.load(os.path.join(subsets_dir, "training_subset.npy"))
+        original_transfersubset_size = int(np.sum(transfer_subset))
+        original_trainingsubset_size = int(np.sum(training_subset))
+        for target in range(100):
+            obs_destand_test, sim_destand_test = load_obs_sim(EUunfiltered_inpath, target)
+            target_map = np.load(os.path.join(os.path.dirname(EUunfiltered_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            transfer_indices = intersect_subsets(target_map, transfer_subset)
+            training_indices = intersect_subsets(target_map, training_subset)
+            corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
+            rmse_EU = calc_RMSE(sim_destand_test, obs_destand_test)
+            corr_EU = np.array(corr_EU)
+            rmse_EU = np.array(rmse_EU)
+            
+            correlation["transfer_unfiltered"].extend(corr_EU[transfer_indices].tolist())
+            correlation["training_unfiltered"].extend(corr_EU[training_indices].tolist())
+            rmse["transfer_unfiltered"].extend(rmse_EU[transfer_indices].tolist())
+            rmse["training_unfiltered"].extend(rmse_EU[training_indices].tolist())
+       
+        print(len(correlation["transfer_filtered"]))
+        print(len(correlation["training_filtered"]))
+        print(len(rmse["transfer_filtered"]))
+        print(len(rmse["training_filtered"]))
+        print(len(correlation["transfer_unfiltered"]))
+        print(len(correlation["training_unfiltered"]))
+        print(len(rmse["transfer_unfiltered"]))
+        print(len(rmse["training_unfiltered"]))
+        
+        for key in correlation.keys():
+            correlation[key] = np.array(correlation[key])
+            correlation[key] = correlation[key][~np.isnan(correlation[key])]
 
-        # Create a range of values for plotting
-        x = np.linspace(min_val, max_val, length)
+        for key in rmse.keys():
+            rmse[key] = np.array(rmse[key])
+            rmse[key] = rmse[key][~np.isnan(rmse[key])]
 
-        # Plot the PDFs
-        plt.figure(figsize=(10, 6))
-        plt.plot(x, kde2(x), label=f'Transfer eligible dataset (n={length})', color='red')
-        plt.plot(x, kde3(x), label=f'Transfer subset (n={original_transfersubset_size})', color='green')
-        plt.plot(x, kde1(x), label=f'Transfer exerciese subset (n={len(corr_TL_ex)})', color='blue')
+        #### plot Pearson correlation ####
+        self.plot_cdfs(data_dict={
+            f'Transfer subset filtered (n={len(correlation["transfer_filtered"])})': correlation["transfer_filtered"],
+            f'Training subset filtered (n={len(correlation["training_filtered"])})': correlation["training_filtered"],
+            f'Transfer subset unfiltered (n={len(correlation["transfer_unfiltered"])})': correlation["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(correlation["training_unfiltered"])})': correlation["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='Pearson correlation')
 
-        # Add plot elements
-        plt.xlabel('Pearson correlation')
-        plt.ylabel('Probability Density')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
+        self.plot_pdfs(data_dict={
+            f'Transfer subset filtered (n={len(correlation["transfer_filtered"])})': correlation["transfer_filtered"],
+            f'Training subset filtered (n={len(correlation["training_filtered"])})': correlation["training_filtered"],
+            f'Transfer subset unfiltered (n={len(correlation["transfer_unfiltered"])})': correlation["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(correlation["training_unfiltered"])})': correlation["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='Pearson correlation')
 
-        # Show the plot
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "corr_pdf.png"))
+         #### plot RMSE ####
+        self.plot_cdfs(data_dict={
+            f'Transfer subset filtered (n={len(rmse["transfer_filtered"])})': rmse["transfer_filtered"],
+            f'Training subset filtered (n={len(rmse["training_filtered"])})': rmse["training_filtered"],
+            f'Transfer subset unfiltered (n={len(rmse["transfer_unfiltered"])})': rmse["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(rmse["training_unfiltered"])})': rmse["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='RMSE', logscale=True)
+
+        self.plot_pdfs(data_dict={
+            f'Transfer subset filtered (n={len(rmse["transfer_filtered"])})': rmse["transfer_filtered"],
+            f'Training subset filtered (n={len(rmse["training_filtered"])})': rmse["training_filtered"],
+            f'Transfer subset unfiltered (n={len(rmse["transfer_unfiltered"])})': rmse["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(rmse["training_unfiltered"])})': rmse["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='RMSE', logscale=True)
+        return
 
     def corr_components(self):
         def pearson_nominator(x, y):
@@ -1344,8 +1397,8 @@ class postprocess_calculations:
         print(corr_EU)
 
     def concat_EU_outputs(self):
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
-        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM/outputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43200/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43200/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
         
         for target in range(100):
             obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
@@ -1359,4 +1412,68 @@ class postprocess_calculations:
             np.save(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"), obs_destand_EU)
             np.save(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}_{target}.npy"), mean_prediction)
             print(f"saved {target} target pixels")
-    
+
+    def map_1Dto2D_EU(self):
+        def calc_correlation(obs, sim):
+            correlation_map = []
+            for i in range(obs.shape[1]):
+                time_series1 = obs[:, i]
+                time_series2 = sim[:, i]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    correlation_matrix = np.corrcoef(time_series1, time_series2)
+                    r = correlation_matrix[0, 1]
+                else:
+                    r = np.nan
+                correlation_map.append(r)
+            return correlation_map
+
+        def mapping_targetmap_to_transfersubset(target_map, transfer_subset):
+            flat_target_map = target_map.flatten()
+            flat_transfer_subset = transfer_subset.flatten()
+            intersecting_indices = np.where((flat_transfer_subset == 1) & (flat_target_map == 1))[0]
+            target_indices = np.where(flat_target_map==1)[0]
+            # get 1D list of indices of pixels in the flattened target map=1 and at the same time included in the transfer subset
+            indices = np.where(np.isin(target_indices, intersecting_indices))[0]
+            # get tuple of x and y indices of the pixels in the target map=1 and at the same time included in the transfer subset
+            indices_2d = np.where(target_map==1)
+            indices_2d = (indices_2d[0][indices], indices_2d[1][indices])
+            return indices, indices_2d
+
+        def load_obs_sim(target):
+            obs_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            sim_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
+            obs_destand_test = np.nan_to_num(obs_destand_test)
+            sim_destand_test = np.nan_to_num(sim_destand_test)
+            obs_destand_test[obs_destand_test < 0.0] = 0.0
+            sim_destand_test[sim_destand_test < 0.0] = 0.0
+            return obs_destand_test, sim_destand_test
+        
+        plot_functions = plotting_helper()
+        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM1/inputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        #EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/spatio-temporal-LSTM1/outputs/20yrs_ts/ensemble_400px_eu", "ensemble_mean")
+        print("starting calculations")
+
+        #### Transfer subset ####
+        # the original mapping file pixels size is 12938 but the total transfer pixels here are 12932
+        # this difference is because the 12938 are taken from the 43226 but the 12932 are evaluated from the 43200
+        # so the 8 pixels lost are from the 26 pixels removed to have a 43200 for easier evaluation
+        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "transfer_subset.npy"))
+        print(np.sum(transfer_subset))
+
+        corr2d = np.zeros(transfer_subset.shape)
+        corr2d[corr2d==0] = np.nan
+        transfer_EU_corr = []
+        for target in range(100):
+            obs_destand_test, sim_destand_test = load_obs_sim(target)
+            target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            indices, indices_2d = mapping_targetmap_to_transfersubset(target_map, transfer_subset)
+
+            obs_destand_test = obs_destand_test[:, indices]
+            sim_destand_test = sim_destand_test[:, indices]
+            corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
+            #corr_EU = calc_RMSE(sim_destand_test, obs_destand_test)
+            transfer_EU_corr.extend(corr_EU)
+            
+            corr2d[indices_2d] = corr_EU
+        plot_functions.EU_2Dmap(data_map=corr2d, logscale=False, minval=0, maxval=1, title="Pearson correlation")
+        
