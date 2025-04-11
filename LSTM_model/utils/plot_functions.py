@@ -12,7 +12,7 @@ from matplotlib.cm import ScalarMappable
 from sklearn.metrics import r2_score
 from LSTM_model.model.config import *
 
-plt.rcParams.update({'font.size': 18})
+plt.rcParams.update({'font.size': 14})
 
 class plotting_helper:
     def __init__(self) -> None:
@@ -517,7 +517,7 @@ class plotting_helper:
         cla = ax.pcolormesh(lons, lats, mapping, transform=ccrs.PlateCarree())
 
         for index in indices_list:
-            ax.plot(lons[index], lats[index], marker='*', color="r", markersize=15, 
+            ax.plot(lons[index], lats[index], marker='*', color="k", markersize=15, 
                     transform=ccrs.PlateCarree(), label='Special Point')
 
         # Add coastlines, gridlines, etc.
@@ -597,3 +597,33 @@ class plotting_helper:
         # Show the plot
         print("saving r2")
         plt.savefig(os.path.join(OUTPUTPATH, f"R2_{MODEL_NAME}.png"))
+
+    def EU_2Dmap(self, data_map, logscale, minval, maxval, title):
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        # get EU lon lat
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+
+        # Create a figure and an axis with a Cartopy projection
+        fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+        cmap_colors = "viridis" if "MSE" in title else "coolwarm"
+        cmap = plt.get_cmap(cmap_colors)
+
+        # define limits and normalization
+        norm = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
+
+        # Plot the 2D EU map
+        cla = ax.pcolormesh(lons, lats, data_map, cmap=cmap, norm=norm, transform=ccrs.PlateCarree())
+
+        # Add a colorbar
+        colorbar_label = f"{title}" if title=="Pearson correlation" or title=="NSE" or title=="KGE" else f"{title} (m)"
+        plt.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax, orientation='vertical', label=colorbar_label, pad=0.08)
+
+        # Add coastlines, gridlines, etc.
+        ax.coastlines()
+        ax.gridlines(draw_labels=True)
+        
+        print(f"saving {title}")
+        plt.tight_layout()
+        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_{title}_{MODEL_NAME}.png"))
