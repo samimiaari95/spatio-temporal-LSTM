@@ -6,13 +6,8 @@ import matplotlib.dates as mdates
 import pandas as pd
 import torch
 import torch.nn as nn
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.pipeline import make_pipeline
+from sklearn.metrics import r2_score
 from scipy.optimize import curve_fit
-from scipy.stats import gaussian_kde
-from typing import Dict, Union, List, Optional
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.utils.utils import utilities
 from LSTM_model.model.config import *
@@ -503,115 +498,125 @@ class postprocess_calculations:
 
 
     def ensemble_statvsacc(self):
-        util = utilities()
-        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        obs[obs < 0.0] = 0.0
+        utils = utilities()
+        EU_filtering = "validation_400_withoutcriteria_57120"
+        EU_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_filtering}/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_outpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_filtering}/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        transfer_subset = np.load(os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px_org", "transfer_subset_unfiltered.npy"))
         
-        nb_members = 100
-        members_sim = [np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}.npy")) for m in range(nb_members)]
-        members_sim = np.array(members_sim)
-        members_sim = np.expand_dims(members_sim, axis=0)
-        members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
-        members_sim[members_sim < 0.0] = 0.0
-        
+        #transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
         df_dic = {"Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Variance":[], "IQR (75-25%)":[], "IQR (100-0%)":[], "std":[], "cv":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
-
         x_axis = []
         y_axis = []
-        for pixel in range(100):
-            ensemble_predictions = members_sim[:,:,pixel]
-            ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
-            # Calculate the mean prediction for each time step
-            mean_prediction = np.mean(ensemble_predictions, axis=1)
-            
-            ########### Calculate ensemble statistics ###########
-            # Calculate the variance for each time step
-            ensemble_variance = np.var(ensemble_predictions, axis=1)
-            ensemble_variance = np.mean(ensemble_variance)
-            df_dic["Variance"].append(ensemble_variance)
+        for target in range(100):
+            target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            transfer_indices, ind2d = utils.intersect_subsets(target_map, transfer_subset)
+            obs = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            obs = obs[:, transfer_indices] # keep only transfer pixels
+            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            members_sim = np.array(members_sim)
+            members_sim = np.expand_dims(members_sim, axis=0)
+            members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+            members_sim = members_sim[:,:,transfer_indices] # keep only transfer pixels
+            obs[obs < 0.0] = 0.0
+            members_sim[members_sim < 0.0] = 0.0
+            print(f"number of pixels: {members_sim.shape[2]} in target: {target}")
+            for pixel in range(members_sim.shape[2]):
+                ensemble_predictions = members_sim[:,:,pixel]
+                ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
+                # Calculate the mean prediction for each time step
+                mean_prediction = np.mean(ensemble_predictions, axis=1)
+                if np.std(obs[:,pixel])==0.0 or np.std(mean_prediction)==0.0 or np.isnan(obs[:,pixel]).all() or np.isnan(mean_prediction).all():
+                    continue
+                
+                ########### Calculate ensemble statistics ###########
+                # Calculate the variance for each time step
+                ensemble_variance = np.var(ensemble_predictions, axis=1)
+                ensemble_variance = np.mean(ensemble_variance)
+                df_dic["Variance"].append(ensemble_variance)
 
-            # Calculate ensemble statistics (e.g., diversity, spread, etc.)
-            # Spread interquantile range (IQR) between 75th and 25th percentiles
-            ensemble_iqr = np.percentile(ensemble_predictions, 75, axis=1) - np.percentile(ensemble_predictions, 25, axis=1)  # IQR
-            iqr_mean = np.mean(ensemble_iqr)
-            df_dic["IQR (75-25%)"].append(iqr_mean)
+                # Calculate ensemble statistics (e.g., diversity, spread, etc.)
+                # Spread interquantile range (IQR) between 75th and 25th percentiles
+                ensemble_iqr = np.percentile(ensemble_predictions, 75, axis=1) - np.percentile(ensemble_predictions, 25, axis=1)  # IQR
+                iqr_mean = np.mean(ensemble_iqr)
+                df_dic["IQR (75-25%)"].append(iqr_mean)
 
-            iqr100 = np.percentile(ensemble_predictions, 100, axis=1) - np.percentile(ensemble_predictions, 0, axis=1)
-            iqr100_mean = np.mean(iqr100)
-            df_dic["IQR (100-0%)"].append(iqr100_mean)
+                iqr100 = np.percentile(ensemble_predictions, 100, axis=1) - np.percentile(ensemble_predictions, 0, axis=1)
+                iqr100_mean = np.mean(iqr100)
+                df_dic["IQR (100-0%)"].append(iqr100_mean)
 
-            # Calculate the std for each time step
-            ensemble_std = np.std(ensemble_predictions, axis=1)
-            ensemble_std = np.mean(ensemble_std)
-            df_dic["std"].append(ensemble_std)
+                # Calculate the std for each time step
+                ensemble_std = np.std(ensemble_predictions, axis=1)
+                ensemble_std = np.mean(ensemble_std)
+                df_dic["std"].append(ensemble_std)
 
-            # Calculate diversity by Pairwise correlation
-            correlation_matrix = np.corrcoef(ensemble_predictions.T)  # Transpose to get members on rows
-            pairwisecorr = np.mean(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]) # Compute diversity as 1 - average correlation
-            df_dic["Pairwise correlation"].append(pairwisecorr)
+                # Calculate diversity by Pairwise correlation
+                correlation_matrix = np.corrcoef(ensemble_predictions.T)  # Transpose to get members on rows
+                pairwisecorr = np.mean(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]) # Compute diversity as 1 - average correlation
+                df_dic["Pairwise correlation"].append(pairwisecorr)
 
-            # calculate coefficient of variation
-            cv = ensemble_std/np.mean(mean_prediction)
-            df_dic["cv"].append(cv)
-            
-            ########### Calculate accuracy metrics ###########
-            # Calculate the correlation between the mean prediction and observation
-            correlationobs = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
-            df_dic["Pearson correlation"].append(correlationobs)
+                # calculate coefficient of variation
+                cv = ensemble_std/np.mean(mean_prediction)
+                df_dic["cv"].append(cv)
+                
+                ########### Calculate accuracy metrics ###########
+                # Calculate the correlation between the mean prediction and observation
+                correlationobs = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
+                df_dic["Pearson correlation"].append(correlationobs)
 
-            # Calculate the RMSE between the mean prediction and observation
-            rmse = np.sqrt(np.mean((obs[:,pixel] - mean_prediction) ** 2))
-            df_dic["RMSE"].append(rmse)
+                # Calculate the RMSE between the mean prediction and observation
+                rmse = np.sqrt(np.mean((obs[:,pixel] - mean_prediction) ** 2))
+                df_dic["RMSE"].append(rmse)
 
-            # Calculate MSE
-
-            # Calculate KGE
-            kge = util.calculate_kge(obs[:,pixel], mean_prediction)
-            df_dic["KGE"].append(kge)
-            
-            #### KGE terms analysis ####
-            # Compute mean and standard deviation
-            mu_o, mu_p = np.mean(obs[:,pixel]), np.mean(mean_prediction)
-            sigma_o, sigma_p = np.std(obs[:,pixel]), np.std(mean_prediction)
-            
-            # Compute bias ratio (β) and variability ratio (γ)
-            beta = mu_p / mu_o
-            alpha = sigma_p / sigma_o
-            
-            if np.std(obs[:,pixel]) < 0.1: # if the std is close to zero, exclude pixel kge
-                alpha = np.nan
-                beta = np.nan
-            
-            df_dic["Beta"].append(beta)
-            df_dic["Alpha"].append(alpha)
-            df_dic["(Alpha-1)^2"].append((alpha-1)**2)
-            df_dic["(Beta-1)^2"].append((beta-1)**2)
-            df_dic["(r-1)^2"].append((correlationobs-1)**2)
+                # Calculate KGE
+                kge = utils.calculate_kge(obs[:,pixel], mean_prediction)
+                df_dic["KGE"].append(kge)
+                
+                ### KGE terms analysis ####
+                # Compute mean and standard deviation
+                mu_o, mu_p = np.mean(obs[:,pixel]), np.mean(mean_prediction)
+                sigma_o, sigma_p = np.std(obs[:,pixel]), np.std(mean_prediction)
+                
+                # Compute bias ratio (β) and variability ratio (γ)
+                beta = mu_p / mu_o
+                alpha = sigma_p / sigma_o
+                
+                #if np.std(obs[:,pixel]) < 0.1: # if the std is close to zero, exclude pixel kge
+                #alpha = np.nan
+                #beta = np.nan
+                
+                df_dic["Beta"].append(beta)
+                df_dic["Alpha"].append(alpha)
+                df_dic["(Alpha-1)^2"].append((alpha-1)**2)
+                df_dic["(Beta-1)^2"].append((beta-1)**2)
+                df_dic["(r-1)^2"].append((correlationobs-1)**2)
 
 
-            # Calculate NSE
-            nse = 1 - (np.sum((obs[:,pixel] - mean_prediction) ** 2) / np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
-            if np.std(obs[:,pixel]) < 0.1:
-                nse = np.nan
-            df_dic["NSE"].append(nse)
+                # Calculate NSE
+                nse = 1 - (np.sum((obs[:,pixel] - mean_prediction) ** 2) / np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
+                #nsecomp = np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2)
+                #if np.std(obs[:,pixel]) < 0.1:
+                #    nse = np.nan
+                df_dic["NSE"].append(nse)
 
-            # Calculate mean bias
-            bias_mean = np.mean(mean_prediction - obs[:,pixel])
-            df_dic["Absolute mean bias"].append(bias_mean)
-            
-            x_axis.append((correlationobs-1)**2)
-            y_axis.append(kge)
-            #self.plot_ensemble_statsvsacc_timeseries(pixel, f'{correlationobs:.2f}', f'{math.ceil(ensemble_variance)}')
-            #if ensemble_variance>70 and correlationobs>0.85:
-            #    print(ensemble_variance)
-            #    print(correlationobs)
-            #print(f"pixel index is: {pixel}")
+                # Calculate mean bias
+                bias_mean = np.mean(mean_prediction - obs[:,pixel])
+                df_dic["Absolute mean bias"].append(bias_mean)
+                
+                #x_axis.append(correlationobs)
+                #y_axis.append(kge)
+                #self.plot_ensemble_statsvsacc_timeseries(pixel, f'{correlationobs:.2f}', f'{math.ceil(ensemble_variance)}')
+                #if ensemble_variance>70 and correlationobs>0.85:
+                #    print(ensemble_variance)
+                #    print(correlationobs)
+                #print(f"pixel index is: {pixel}")
             
         ####### save to csv ########
         df = pd.DataFrame(df_dic)
-        df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
+        df.to_csv(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", "ensemble_statistics.csv"), index=False)
 
-        xtitle = "(r-1)^2"
+        xtitle = "Pearson correlation"
+        #xtitle = r"\sum\left( O-\bar{O} \right)^2"
         ytitle = "KGE"
 
         plt.figure()
@@ -622,17 +627,18 @@ class postprocess_calculations:
         #plt.ylim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
         #plt.xscale("log")
         #plt.yscale("log")
-        #plt.yscale("symlog")
+        plt.yscale("symlog")
         plt.xlim(-1,1)
-        plt.ylim(-1, 1)
+        #plt.ylim(-1, 1)
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
         print(f"plotting: {ytitle}_{xtitle}")
-        #plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"{ytitle}_{xtitle}.png"))
+        #plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", f"{ytitle}_{xtitle}.png"))
 
     def ensemble_statvsacc_fitting(self):
         utils = utilities()
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
+        EU_filtering = "validation_400_withoutcriteria_57120"
+        stat = pd.read_csv(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", "ensemble_statistics.csv"))
         xstats = {"std":"exp", "Variance":"exp", "Pairwise correlation":"lin", "IQR (75-25%)":"exp", "IQR (100-0%)":"exp"}
         ystats = {"RMSE":"exp", "Pearson correlation":"lin", "KGE":"lin", "Absolute mean bias":"exp", "NSE":"lin", "Beta":"exp", "Alpha":"exp", "(Alpha-1)^2":"exp", "(Beta-1)^2":"exp", "(r-1)^2":"exp"}
         for xstat in xstats.keys():
@@ -655,8 +661,8 @@ class postprocess_calculations:
                 if ystat=="Pearson correlation":
                     xval = xval[~np.isnan(yval)]
                     yval = yval[~np.isnan(yval)]
-                    xval = xval[yval>=0.0]
-                    yval = yval[yval>=0.0]
+                    #xval = xval[yval>=0.0]
+                    #yval = yval[yval>=0.0]
                 
                 if ystat=="KGE" or ystat=="NSE":
                     xval = xval[~np.isnan(yval)]
@@ -672,18 +678,18 @@ class postprocess_calculations:
                     xval = xval[yval>=0.01]
                     yval = yval[yval>=0.01]
                 
-                if xstat=="Pairwise correlation" and ystat=="Pearson correlation":
-                    yval = yval[xval>=0.2]
-                    xval = xval[xval>=0.2]
+                if xstat=="Pairwise correlation":
+                    yval = yval[xval>=0.0]
+                    xval = xval[xval>=0.0]
                 #if xstat=="IQR (75-25%)" and ystat=="Pearson correlation":
                 #    yval = yval[xval<=10]
                 #    xval = xval[xval<=10]
-                if xstat=="Pairwise correlation" and ystat=="KGE":
-                    yval = yval[xval>=0.2]
-                    xval = xval[xval>=0.2]
-                if xstat=="Pairwise correlation" and ystat=="NSE":
-                    yval = yval[xval>=0.6]
-                    xval = xval[xval>=0.6]
+                # if xstat=="Pairwise correlation" and ystat=="KGE":
+                #     yval = yval[xval>=0.2]
+                #     xval = xval[xval>=0.2]
+                # if xstat=="Pairwise correlation" and ystat=="NSE":
+                #     yval = yval[xval>=0.6]
+                #     xval = xval[xval>=0.6]
                         
                 
                 logx, logy, xminlim, xmaxlim, yminlim, ymaxlim = None, None, None, None, None, None
@@ -694,12 +700,17 @@ class postprocess_calculations:
                 if xstat=="Pairwise correlation":
                     xminlim = 0
                     xmaxlim = 1
-                if ystat=="Pearson correlation" or ystat=="NSE":
-                    yminlim = 0
-                    ymaxlim = 1
-                if ystat=="KGE":
+                if ystat=="Pearson correlation":
                     yminlim = -1
                     ymaxlim = 1
+                if ystat=="KGE" or ystat=="NSE":
+                    yminlim = -1
+                    ymaxlim = 1
+                
+                if xstat=="Pairwise correlation" and ystat=="Pearson correlation":
+                    fittype = "exponential"
+                    logarithmicfit = True
+                    logx = True
                 
                 if fittype=="linear":
                     # Fit a linear model
@@ -794,149 +805,7 @@ class postprocess_calculations:
                 plt.grid(True, linestyle='--', alpha=0.7)
                 plt.tight_layout()
                 plt.legend()
-                plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"fitted_{ystat}_{xstat}.png"))
-
-    def plot_cdfs(self,
-        data_dict: Dict[str, Union[list, np.ndarray]],
-        colors: Optional[List[str]] = None,
-        linestyles: Optional[List[str]] = None,
-        title: str = "Cumulative Distribution Function (CDF)",
-        xlabel: str = "Values",
-        ylabel: str = "Cumulative Probability",
-        logscale: bool = False,
-        grid: bool = True,
-        figsize: tuple = (10, 6)
-    ) -> plt.Figure:
-        """
-        Plot CDFs for multiple datasets using dictionary input.
-        
-        Args:
-            data_dict: Dictionary where keys are labels and values are data lists
-            colors: Optional list of line colors (matches dictionary order)
-            linestyles: Optional list of line styles (matches dictionary order)
-            title: Plot title
-            xlabel: X-axis label
-            ylabel: Y-axis label
-            grid: Whether to show grid
-            figsize: Figure size
-        
-        Returns:
-            matplotlib Figure object
-        """
-        # Extract labels and data from dictionary
-        labels = list(data_dict.keys())
-        data_lists = list(data_dict.values())
-        n = len(data_dict)
-        
-        # Set default styles if not provided
-        if colors is None:
-            colors = plt.cm.tab10(np.linspace(0, 1, n))  # Use colormap
-        if linestyles is None:
-            linestyles = ['-'] * n  # Solid lines by default
-        
-        # Create figure
-        fig, ax = plt.subplots(figsize=figsize)
-        
-        # Plot each dataset
-        for (label, data), color, ls in zip(data_dict.items(), colors, linestyles):
-            arr = np.array(data)
-            sorted_data = np.sort(arr)
-            cdf = np.arange(1, len(sorted_data)+1) / len(sorted_data)
-            ax.plot(sorted_data, cdf, label=label, color=color, linestyle=ls, linewidth=2)
-        
-        # Add plot decorations
-        #ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        if logscale:
-            ax.set_xscale('log')
-        ax.legend()
-        if grid:
-            ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"cdf_{xlabel}_unfvsf.png"))
-        return print(f"plotted cdfs of {xlabel}")
-
-    def plot_pdfs(self,
-        data_dict: Dict[str, Union[list, np.ndarray]],
-        colors: Optional[List[str]] = None,
-        linestyles: Optional[List[str]] = None,
-        title: str = "Probability Density Function (PDF)",
-        xlabel: str = "Values",
-        ylabel: str = "Density",
-        logscale: bool = False,
-        grid: bool = True,
-        figsize: tuple = (10, 6),
-        bandwidth: Optional[float] = None,
-        alpha: float = 0.7,
-        show_hist: bool = False,
-        bins: Union[int, str] = 'auto'
-    ) -> plt.Figure:
-        """
-        Plot PDFs for multiple datasets using dictionary input.
-        
-        Args:
-            data_dict: Dictionary where keys are labels and values are data lists
-            colors: Optional list of line colors
-            linestyles: Optional list of line styles
-            title: Plot title
-            xlabel: X-axis label
-            ylabel: Y-axis label
-            grid: Whether to show grid
-            figsize: Figure size
-            bandwidth: Bandwidth for KDE (None for automatic)
-            alpha: Transparency for histogram (if shown)
-            show_hist: Overlay histograms
-            bins: Number of bins for histogram (if shown)
-        
-        Returns:
-            matplotlib Figure object
-        """
-        # Extract labels and data
-        labels = list(data_dict.keys())
-        data_lists = list(data_dict.values())
-        n = len(data_dict)
-        
-        # Set default styles
-        if colors is None:
-            colors = plt.cm.tab10(np.linspace(0, 1, n))
-        if linestyles is None:
-            linestyles = ['-'] * n
-        
-        # Create figure
-        fig, ax = plt.subplots(figsize=figsize)
-        
-        # Calculate global min/max for x-axis
-        all_data = np.concatenate(list(data_dict.values()))
-        x_min, x_max = np.min(all_data), np.max(all_data)
-        x_vals = np.linspace(x_min, x_max, 1000)
-        
-        # Plot each dataset
-        for (label, data), color, ls in zip(data_dict.items(), colors, linestyles):
-            arr = np.array(data)
-            
-            # Kernel Density Estimation
-            kde = gaussian_kde(arr, bw_method=bandwidth)
-            ax.plot(x_vals, kde(x_vals), label=label, color=color, 
-                linestyle=ls, linewidth=2)
-            
-            # Optional histogram
-            if show_hist:
-                ax.hist(arr, bins=bins, density=True, alpha=alpha, 
-                    color=color, histtype='stepfilled')
-        
-        # Add plot decorations
-        #ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        if logscale:
-            ax.set_xscale('log')
-        ax.legend()
-        if grid:
-            ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"pdf_{xlabel}_unfvsf.png"))
-        return print(f"plotted pdfs of {xlabel}")
+                plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", f"fitted_{ystat}_{xstat}.png"))
 
     def pdf_TL_EU(self):
         def calc_correlation(obs, sim):
@@ -963,14 +832,29 @@ class postprocess_calculations:
                     rmse = np.nan
                 RMSE_allcells.append(rmse)
             return RMSE_allcells
-
-        def intersect_subsets(target_map, transfer_subset):
-            flat_target_map = target_map.flatten()
-            flat_transfer_subset = transfer_subset.flatten()
-            intersecting_indices = np.where((flat_transfer_subset == 1) & (flat_target_map == 1))[0]
-            target_indices = np.where(flat_target_map==1)[0]
-            indices = np.where(np.isin(target_indices, intersecting_indices))[0]
-            return indices
+        
+        def calc_KGE_NSE_bias(obs, sim):
+            kge = utils.calculate_kge(obs, sim)
+            all_kge = []
+            nse = 1 - (np.sum((obs - sim) ** 2) / np.sum((obs - np.mean(obs)) ** 2))
+            all_nse = []
+            bias_mean = np.mean(sim - obs)
+            all_bias = []
+            for pixel in range(obs.shape[1]):
+                time_series1 = obs[:, pixel]
+                time_series2 = sim[:, pixel]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    kge = utils.calculate_kge(time_series1, time_series2) if np.std(time_series1)>=0.1 else np.nan
+                    nse = 1 - (np.sum((time_series1 - time_series2) ** 2) / np.sum((time_series1 - np.mean(time_series1)) ** 2)) if np.std(time_series1)>=0.1 else np.nan
+                    bias_mean = np.mean(time_series2 - time_series1)
+                else:
+                    kge = np.nan
+                    nse = np.nan
+                    bias_mean = np.nan
+                all_kge.append(kge)
+                all_nse.append(nse)
+                all_bias.append(bias_mean)
+            return all_kge, all_nse, all_bias
 
         def load_obs_sim(dirpath, target):
             obs_destand_test = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
@@ -981,13 +865,17 @@ class postprocess_calculations:
             sim_destand_test[sim_destand_test < 0.0] = 0.0
             return obs_destand_test, sim_destand_test
 
+        utils = utilities()
         print("starting the pdf calculation")
         correlation = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
         rmse = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
+        kge = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
+        nse = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
+        bias = {"transfer_unfiltered":[], "training_unfiltered":[], "transfer_filtered":[], "training_filtered":[]}
         
         # NOTE some pixels have simulated std=0 and so the correlation is NaN
         #### Transfer & training filtered subsets ####
-        EUfiltered_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43200/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EUfiltered_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
         transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EUfiltered_inpath)), "transfer_subset.npy"))
         training_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EUfiltered_inpath)), "training_subset.npy"))
         original_transfersubset_size = int(np.sum(transfer_subset))
@@ -995,17 +883,27 @@ class postprocess_calculations:
         for target in range(100):
             obs_destand_test, sim_destand_test = load_obs_sim(EUfiltered_inpath, target)
             target_map = np.load(os.path.join(os.path.dirname(EUfiltered_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            transfer_indices = intersect_subsets(target_map, transfer_subset)
-            training_indices = intersect_subsets(target_map, training_subset)
+            transfer_indices, ind2d = utils.intersect_subsets(target_map, transfer_subset)
+            training_indices, ind2d = utils.intersect_subsets(target_map, training_subset)
             corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
             rmse_EU = calc_RMSE(sim_destand_test, obs_destand_test)
+            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_destand_test, sim_destand_test)
             corr_EU = np.array(corr_EU)
             rmse_EU = np.array(rmse_EU)
+            kge_EU = np.array(kge_EU)
+            nse_EU = np.array(nse_EU)
+            bias_EU = np.array(bias_EU)
             
             correlation["transfer_filtered"].extend(corr_EU[transfer_indices].tolist())
             correlation["training_filtered"].extend(corr_EU[training_indices].tolist())
             rmse["transfer_filtered"].extend(rmse_EU[transfer_indices].tolist())
             rmse["training_filtered"].extend(rmse_EU[training_indices].tolist())
+            kge["transfer_filtered"].extend(kge_EU[transfer_indices].tolist())
+            kge["training_filtered"].extend(kge_EU[training_indices].tolist())
+            nse["transfer_filtered"].extend(nse_EU[transfer_indices].tolist())
+            nse["training_filtered"].extend(nse_EU[training_indices].tolist())
+            bias["transfer_filtered"].extend(bias_EU[transfer_indices].tolist())
+            bias["training_filtered"].extend(bias_EU[training_indices].tolist())
 
         #### Transfer & training unfiltered subsets ####
         EUunfiltered_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withoutcriteria_57120/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
@@ -1017,17 +915,28 @@ class postprocess_calculations:
         for target in range(100):
             obs_destand_test, sim_destand_test = load_obs_sim(EUunfiltered_inpath, target)
             target_map = np.load(os.path.join(os.path.dirname(EUunfiltered_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            transfer_indices = intersect_subsets(target_map, transfer_subset)
-            training_indices = intersect_subsets(target_map, training_subset)
+            transfer_indices, ind2d = utils.intersect_subsets(target_map, transfer_subset)
+            training_indices, ind2d = utils.intersect_subsets(target_map, training_subset)
             corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
             rmse_EU = calc_RMSE(sim_destand_test, obs_destand_test)
+            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_destand_test, sim_destand_test)
             corr_EU = np.array(corr_EU)
             rmse_EU = np.array(rmse_EU)
+            kge_EU = np.array(kge_EU)
+            nse_EU = np.array(nse_EU)
+            bias_EU = np.array(bias_EU)
             
             correlation["transfer_unfiltered"].extend(corr_EU[transfer_indices].tolist())
             correlation["training_unfiltered"].extend(corr_EU[training_indices].tolist())
             rmse["transfer_unfiltered"].extend(rmse_EU[transfer_indices].tolist())
             rmse["training_unfiltered"].extend(rmse_EU[training_indices].tolist())
+            kge["transfer_unfiltered"].extend(kge_EU[transfer_indices].tolist())
+            kge["training_unfiltered"].extend(kge_EU[training_indices].tolist())
+            nse["transfer_unfiltered"].extend(nse_EU[transfer_indices].tolist())
+            nse["training_unfiltered"].extend(nse_EU[training_indices].tolist())
+            bias["transfer_unfiltered"].extend(bias_EU[transfer_indices].tolist())
+            bias["training_unfiltered"].extend(bias_EU[training_indices].tolist())
+
        
         print(len(correlation["transfer_filtered"]))
         print(len(correlation["training_filtered"]))
@@ -1046,39 +955,102 @@ class postprocess_calculations:
             rmse[key] = np.array(rmse[key])
             rmse[key] = rmse[key][~np.isnan(rmse[key])]
 
+        for key in kge.keys():
+            kge[key] = np.array(kge[key])
+            kge[key] = kge[key][~np.isnan(kge[key])]
+
+        for key in nse.keys():
+            nse[key] = np.array(nse[key])
+            nse[key] = nse[key][~np.isnan(nse[key])]
+
+        for key in bias.keys():
+            bias[key] = np.array(bias[key])
+            bias[key] = bias[key][~np.isnan(bias[key])]
+
         #### plot Pearson correlation ####
-        self.plot_cdfs(data_dict={
+        utils.plot_cdfs(data_dict={
             f'Transfer subset filtered (n={len(correlation["transfer_filtered"])})': correlation["transfer_filtered"],
             f'Training subset filtered (n={len(correlation["training_filtered"])})': correlation["training_filtered"],
             f'Transfer subset unfiltered (n={len(correlation["transfer_unfiltered"])})': correlation["transfer_unfiltered"],
             f'Training subset unfiltered (n={len(correlation["training_unfiltered"])})': correlation["training_unfiltered"]
         }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
-        xlabel='Pearson correlation')
+        xlabel='Pearson correlation', title='unfvsf')
 
-        self.plot_pdfs(data_dict={
+        utils.plot_pdfs(data_dict={
             f'Transfer subset filtered (n={len(correlation["transfer_filtered"])})': correlation["transfer_filtered"],
             f'Training subset filtered (n={len(correlation["training_filtered"])})': correlation["training_filtered"],
             f'Transfer subset unfiltered (n={len(correlation["transfer_unfiltered"])})': correlation["transfer_unfiltered"],
             f'Training subset unfiltered (n={len(correlation["training_unfiltered"])})': correlation["training_unfiltered"]
         }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
-        xlabel='Pearson correlation')
+        xlabel='Pearson correlation', title='unfvsf')
 
-         #### plot RMSE ####
-        self.plot_cdfs(data_dict={
+        #### plot RMSE ####
+        utils.plot_cdfs(data_dict={
             f'Transfer subset filtered (n={len(rmse["transfer_filtered"])})': rmse["transfer_filtered"],
             f'Training subset filtered (n={len(rmse["training_filtered"])})': rmse["training_filtered"],
             f'Transfer subset unfiltered (n={len(rmse["transfer_unfiltered"])})': rmse["transfer_unfiltered"],
             f'Training subset unfiltered (n={len(rmse["training_unfiltered"])})': rmse["training_unfiltered"]
         }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
-        xlabel='RMSE', logscale=True)
+        xlabel='RMSE', logscale=True, title='unfvsf')
 
-        self.plot_pdfs(data_dict={
+        utils.plot_pdfs(data_dict={
             f'Transfer subset filtered (n={len(rmse["transfer_filtered"])})': rmse["transfer_filtered"],
             f'Training subset filtered (n={len(rmse["training_filtered"])})': rmse["training_filtered"],
             f'Transfer subset unfiltered (n={len(rmse["transfer_unfiltered"])})': rmse["transfer_unfiltered"],
             f'Training subset unfiltered (n={len(rmse["training_unfiltered"])})': rmse["training_unfiltered"]
         }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
-        xlabel='RMSE', logscale=True)
+        xlabel='RMSE', logscale=True, title='unfvsf')
+
+        #### plot KGE ####
+        utils.plot_cdfs(data_dict={
+            f'Transfer subset filtered (n={len(kge["transfer_filtered"])})': kge["transfer_filtered"],
+            f'Training subset filtered (n={len(kge["training_filtered"])})': kge["training_filtered"],
+            f'Transfer subset unfiltered (n={len(kge["transfer_unfiltered"])})': kge["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(kge["training_unfiltered"])})': kge["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='KGE', symlog=True, title='unfvsf')
+
+        utils.plot_pdfs(data_dict={
+            f'Transfer subset filtered (n={len(kge["transfer_filtered"])})': kge["transfer_filtered"],
+            f'Training subset filtered (n={len(kge["training_filtered"])})': kge["training_filtered"],
+            f'Transfer subset unfiltered (n={len(kge["transfer_unfiltered"])})': kge["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(kge["training_unfiltered"])})': kge["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='KGE', symlog=True, title='unfvsf')
+
+        #### plot NSE ####
+        utils.plot_cdfs(data_dict={
+            f'Transfer subset filtered (n={len(nse["transfer_filtered"])})': nse["transfer_filtered"],
+            f'Training subset filtered (n={len(nse["training_filtered"])})': nse["training_filtered"],
+            f'Transfer subset unfiltered (n={len(nse["transfer_unfiltered"])})': nse["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(nse["training_unfiltered"])})': nse["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='NSE', symlog=True, title='unfvsf')
+
+        utils.plot_pdfs(data_dict={
+            f'Transfer subset filtered (n={len(nse["transfer_filtered"])})': nse["transfer_filtered"],
+            f'Training subset filtered (n={len(nse["training_filtered"])})': nse["training_filtered"],
+            f'Transfer subset unfiltered (n={len(nse["transfer_unfiltered"])})': nse["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(nse["training_unfiltered"])})': nse["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='NSE', symlog=True, title='unfvsf')
+
+        #### plot Bias ####
+        utils.plot_cdfs(data_dict={
+            f'Transfer subset filtered (n={len(bias["transfer_filtered"])})': bias["transfer_filtered"],
+            f'Training subset filtered (n={len(bias["training_filtered"])})': bias["training_filtered"],
+            f'Transfer subset unfiltered (n={len(bias["transfer_unfiltered"])})': bias["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(bias["training_unfiltered"])})': bias["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='Mean bias', title='unfvsf')
+
+        utils.plot_pdfs(data_dict={
+            f'Transfer subset filtered (n={len(bias["transfer_filtered"])})': bias["transfer_filtered"],
+            f'Training subset filtered (n={len(bias["training_filtered"])})': bias["training_filtered"],
+            f'Transfer subset unfiltered (n={len(bias["transfer_unfiltered"])})': bias["transfer_unfiltered"],
+            f'Training subset unfiltered (n={len(bias["training_unfiltered"])})': bias["training_unfiltered"]
+        }, colors=['green', 'red', 'blue', 'orange'], linestyles=['-', ':', '-', ':'],
+        xlabel='Mean bias', title='unfvsf')
         return
 
     def corr_components(self):
@@ -1436,18 +1408,6 @@ class postprocess_calculations:
                 RMSE_allcells.append(rmse)
             return RMSE_allcells
 
-        def mapping_targetmap_to_transfersubset(target_map, transfer_subset):
-            flat_target_map = target_map.flatten()
-            flat_transfer_subset = transfer_subset.flatten()
-            intersecting_indices = np.where((flat_transfer_subset == 1) & (flat_target_map == 1))[0]
-            target_indices = np.where(flat_target_map==1)[0]
-            # get 1D list of indices of pixels in the flattened target map=1 and at the same time included in the transfer subset
-            indices = np.where(np.isin(target_indices, intersecting_indices))[0]
-            # get tuple of x and y indices of the pixels in the target map=1 and at the same time included in the transfer subset
-            indices_2d = np.where(target_map==1)
-            indices_2d = (indices_2d[0][indices], indices_2d[1][indices])
-            return indices, indices_2d
-
         def load_obs_sim(target):
             obs_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
             sim_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
@@ -1458,6 +1418,7 @@ class postprocess_calculations:
             return obs_destand_test, sim_destand_test
         
         plot_functions = plotting_helper()
+        utils = utilities()
         #EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43200/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
         EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withoutcriteria_57120/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
         print("starting calculations")
@@ -1486,8 +1447,8 @@ class postprocess_calculations:
         for target in range(100):
             obs_destand_test, sim_destand_test = load_obs_sim(target)
             target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            indices, indices_2d = mapping_targetmap_to_transfersubset(target_map, transfer_subset)
-            indices_train, indices_2d_train = mapping_targetmap_to_transfersubset(target_map, training_subset)
+            indices, indices_2d = utils.intersect_subsets(target_map, transfer_subset)
+            indices_train, indices_2d_train = utils.intersect_subsets(target_map, training_subset)
 
             obs_transfer = obs_destand_test[:, indices]
             sim_transfer = sim_destand_test[:, indices]
@@ -1505,4 +1466,108 @@ class postprocess_calculations:
 
         plot_functions.EU_2Dmap(data_map=corr2d, logscale=False, minval=0, maxval=1, title="Pearson correlation")
         plot_functions.EU_2Dmap(data_map=rmse2d, logscale=True, minval=0.01, maxval=10, title="RMSE")
+
+    def ensmean_3d(self):
+        # TODO review it because it got messy
+        utils = utilities()
+        print("calculating 2d ensemble mean")
+        dirpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        subset = np.load(os.path.join(os.path.dirname(os.path.dirname(dirpath)), "transfer_subset.npy"))
+        print(np.sum(subset))
+        obs3d = np.zeros((TEST_PERIOD-LOOKBACK,subset.shape[0], subset.shape[1]))
+        obs3d[obs3d==0] = np.nan
+        sim3d = np.zeros((TEST_PERIOD-LOOKBACK,subset.shape[0], subset.shape[1]))
+        sim3d[sim3d==0] = np.nan
+        for target in range(100):
+            obs_destand_test, sim_destand_test = load_obs_sim(target)
+            target_map = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            indices, indices_2d = utils.intersect_subsets(target_map, subset)
+            
+            obs_destand_test = obs_destand_test[:, indices]
+            sim_destand_test = sim_destand_test[:, indices]
+            for i in range(len(indices_2d[0])):
+                obs3d[:,indices_2d[0][i],indices_2d[1][i]] = obs_destand_test[:,i]
+                sim3d[:,indices_2d[0][i],indices_2d[1][i]] = sim_destand_test[:,i]
+        print(obs3d[~np.isnan(obs3d)].shape)
+        print(sim3d[~np.isnan(sim3d)].shape)
+        print(f"length of timeseries: {sim3d.shape[0]}")
+        print(f"calculated length of timeseries: {len(sim3d[~np.isnan(sim3d)])/np.sum(subset)}")
+        np.save(os.path.join(outpath, "obs3d_ensmean.npy"), obs3d)
+        np.save(os.path.join(outpath, "sim3d_ensmean.npy"), sim3d)
+        print("saved ensemble mean")    
+
+    def calculate_mapped_stats(self):
+        EU_filtering = "validation_400_withcriteria_43226"
+        inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_filtering}/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        outpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_filtering}/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        data1_path = os.path.join(outpath, "obs3d_ensmean.npy")
+        data2_path = os.path.join(outpath, "sim3d_ensmean.npy")
+        mapping_path = os.path.join(os.path.dirname(os.path.dirname(inpath)), "transfer_subset.npy")
+        #mapping_path = os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px_org", "transfer_subset_unfiltered.npy")
+        # Load all arrays
+        data1 = np.load(data1_path)  # Shape (D1, D2, D3)
+        data2 = np.load(data2_path)
+        mapping = np.load(mapping_path)
+        print(data1.shape)
+        print(np.sum(mapping))
+        # exclude pixels with std=0 or std<0.1
+        mapping = np.where(np.std(data1, axis=0)<0.1, 0, mapping)
+        mapping = np.where(np.std(data2, axis=0)==0.0, 0, mapping)
         
+        # Calculate statistics
+        print(data1[:, mapping==1].shape)
+        results = {
+            'data1': {
+                'mean': np.mean(data1[:, mapping==1], axis=0),
+                'std': np.std(data1[:, mapping==1], axis=0)
+            },
+            'data2': {
+                'mean': np.mean(data2[:, mapping==1], axis=0),
+                'std': np.std(data2[:, mapping==1], axis=0)
+            }
+        }
+
+        # Create plots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        # Std vs Std plot
+        ax1.scatter(results['data1']['std'], results['data2']['std'], alpha=0.5)
+        ax1.plot([0, max(results['data1']['std'].max(), results['data2']['std'].max())], 
+                [0, max(results['data1']['std'].max(), results['data2']['std'].max())], 
+                'r--')
+        ax1.set_xlabel('Observed STD')
+        ax1.set_ylabel('Simulated STD')
+        ax1.set_xscale('log')
+        ax1.set_yscale('log')
+        ax1.set_xlim(min(results['data1']['std'].min(), results['data2']['std'].min()), max(results['data1']['std'].max(), results['data2']['std'].max()))
+        ax1.set_ylim(min(results['data1']['std'].min(), results['data2']['std'].min()), max(results['data1']['std'].max(), results['data2']['std'].max()))
+        #ax1.set_title('Standard Deviation Comparison')
+        ax1.grid(True, alpha=0.3)
+        
+        # Mean vs Mean plot
+        ax2.scatter(results['data1']['mean'], results['data2']['mean'], alpha=0.5)
+        ax2.plot([results['data1']['mean'].min(), results['data1']['mean'].max()], 
+                [results['data1']['mean'].min(), results['data1']['mean'].max()], 
+                'r--')
+        ax2.set_xlabel('Observed Mean')
+        ax2.set_ylabel('Simulated Mean')
+        ax2.set_xscale('log')
+        ax2.set_yscale('log')
+        ax2.set_xlim(min(results['data1']['mean'].min(), results['data2']['mean'].min()), max(results['data1']['mean'].max(), results['data2']['mean'].max()))
+        ax2.set_ylim(min(results['data1']['mean'].min(), results['data2']['mean'].min()), max(results['data1']['mean'].max(), results['data2']['mean'].max()))
+        #ax2.set_xlim(0.000001, max(results['data1']['mean'].max(), results['data2']['mean'].max()))
+        #ax2.set_ylim(0.000001, max(results['data1']['mean'].max(), results['data2']['mean'].max()))
+        #ax2.set_title('Mean Value Comparison')
+        print(min(results['data1']['mean'].min(), results['data2']['mean'].min()), max(results['data1']['mean'].max(), results['data2']['mean'].max()))
+        print(min(results['data1']['std'].min(), results['data2']['std'].min()), max(results['data1']['std'].max(), results['data2']['std'].max()))
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        # Save plots
+        plot_path = os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", "std_mean_plots_stdobs01.png")
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Plots saved to {plot_path}")
