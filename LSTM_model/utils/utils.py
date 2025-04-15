@@ -1,6 +1,9 @@
 import os
 import numpy as np
 import netCDF4 as nc
+from typing import Dict, Union, List, Optional
+import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
 from LSTM_model.model.config import *
 
 class utilities:
@@ -277,3 +280,163 @@ class utilities:
         #plt.plot(all_inputs[timeseries,-1,2])
         #plt.savefig("sm1mcum.png")
         return all_inputs, means_stds
+
+    def plot_cdfs(self,
+        data_dict: Dict[str, Union[list, np.ndarray]],
+        colors: Optional[List[str]] = None,
+        linestyles: Optional[List[str]] = None,
+        title: str = "",
+        xlabel: str = "Values",
+        ylabel: str = "Cumulative Probability",
+        logscale: bool = False,
+        symlog: bool = False,
+        grid: bool = True,
+        figsize: tuple = (10, 6)
+    ) -> plt.Figure:
+        """
+        Plot CDFs for multiple datasets using dictionary input.
+        
+        Args:
+            data_dict: Dictionary where keys are labels and values are data lists
+            colors: Optional list of line colors (matches dictionary order)
+            linestyles: Optional list of line styles (matches dictionary order)
+            title: Plot title
+            xlabel: X-axis label
+            ylabel: Y-axis label
+            grid: Whether to show grid
+            figsize: Figure size
+        
+        Returns:
+            matplotlib Figure object
+        """
+        # Extract labels and data from dictionary
+        labels = list(data_dict.keys())
+        data_lists = list(data_dict.values())
+        n = len(data_dict)
+        
+        # Set default styles if not provided
+        if colors is None:
+            colors = plt.cm.tab10(np.linspace(0, 1, n))  # Use colormap
+        if linestyles is None:
+            linestyles = ['-'] * n  # Solid lines by default
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Plot each dataset
+        for (label, data), color, ls in zip(data_dict.items(), colors, linestyles):
+            arr = np.array(data)
+            sorted_data = np.sort(arr)
+            cdf = np.arange(1, len(sorted_data)+1) / len(sorted_data)
+            ax.plot(sorted_data, cdf, label=label, color=color, linestyle=ls, linewidth=2)
+        
+        # Add plot decorations
+        #ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        if logscale:
+            ax.set_xscale('log')
+        if symlog:
+            ax.set_xscale('symlog')
+        ax.legend()
+        if grid:
+            ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"cdf_{xlabel}_{title}.png"))
+        return print(f"plotted cdfs of {xlabel}")
+
+    def plot_pdfs(self,
+        data_dict: Dict[str, Union[list, np.ndarray]],
+        colors: Optional[List[str]] = None,
+        linestyles: Optional[List[str]] = None,
+        title: str = "",
+        xlabel: str = "Values",
+        ylabel: str = "Density",
+        logscale: bool = False,
+        symlog: bool = False,
+        grid: bool = True,
+        figsize: tuple = (10, 6),
+        bandwidth: Optional[float] = None,
+        alpha: float = 0.7,
+        show_hist: bool = False,
+        bins: Union[int, str] = 'auto'
+    ) -> plt.Figure:
+        """
+        Plot PDFs for multiple datasets using dictionary input.
+        
+        Args:
+            data_dict: Dictionary where keys are labels and values are data lists
+            colors: Optional list of line colors
+            linestyles: Optional list of line styles
+            title: Plot title
+            xlabel: X-axis label
+            ylabel: Y-axis label
+            grid: Whether to show grid
+            figsize: Figure size
+            bandwidth: Bandwidth for KDE (None for automatic)
+            alpha: Transparency for histogram (if shown)
+            show_hist: Overlay histograms
+            bins: Number of bins for histogram (if shown)
+        
+        Returns:
+            matplotlib Figure object
+        """
+        # Extract labels and data
+        labels = list(data_dict.keys())
+        data_lists = list(data_dict.values())
+        n = len(data_dict)
+        
+        # Set default styles
+        if colors is None:
+            colors = plt.cm.tab10(np.linspace(0, 1, n))
+        if linestyles is None:
+            linestyles = ['-'] * n
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Calculate global min/max for x-axis
+        all_data = np.concatenate(list(data_dict.values()))
+        x_min, x_max = np.min(all_data), np.max(all_data)
+        x_vals = np.linspace(x_min, x_max, 1000)
+        
+        # Plot each dataset
+        for (label, data), color, ls in zip(data_dict.items(), colors, linestyles):
+            arr = np.array(data)
+            
+            # Kernel Density Estimation
+            kde = gaussian_kde(arr, bw_method=bandwidth)
+            ax.plot(x_vals, kde(x_vals), label=label, color=color, 
+                linestyle=ls, linewidth=2)
+            
+            # Optional histogram
+            if show_hist:
+                ax.hist(arr, bins=bins, density=True, alpha=alpha, 
+                    color=color, histtype='stepfilled')
+        
+        # Add plot decorations
+        #ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        if logscale:
+            ax.set_xscale('log')
+        if symlog:
+            ax.set_xscale('symlog')
+        ax.legend()
+        if grid:
+            ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"pdf_{xlabel}_{title}.png"))
+        return print(f"plotted pdfs of {xlabel}")
+
+    def intersect_subsets(self, target_map, transfer_subset):
+        flat_target_map = target_map.flatten()
+        flat_transfer_subset = transfer_subset.flatten()
+        intersecting_indices = np.where((flat_transfer_subset == 1) & (flat_target_map == 1))[0]
+        target_indices = np.where(flat_target_map==1)[0]
+        # get 1D list of indices of pixels in the flattened target map=1 and at the same time included in the transfer subset
+        indices = np.where(np.isin(target_indices, intersecting_indices))[0]
+        # get tuple of x and y indices of the pixels in the target map=1 and at the same time included in the transfer subset
+        indices_2d = np.where(target_map==1)
+        indices_2d = (indices_2d[0][indices], indices_2d[1][indices])
+        return indices, indices_2d
