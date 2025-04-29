@@ -2,6 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.ticker as mticker
 from cartopy.feature import ShapelyFeature
 from cartopy.io.shapereader import Reader
 import cartopy.crs as ccrs
@@ -12,7 +13,7 @@ from matplotlib.cm import ScalarMappable
 from sklearn.metrics import r2_score
 from LSTM_model.model.config import *
 
-plt.rcParams.update({'font.size': 14})
+plt.rcParams.update({'font.size': 18})
 
 class plotting_helper:
     def __init__(self) -> None:
@@ -497,9 +498,8 @@ class plotting_helper:
         print(f"saving one pixel at {indexes}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{indexes}_{TARGET_REGION}.png"))
 
-    def selectedpixels_in_EU(self):
-        filter = "choices"
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", f"{filter}.npy"))
+    def selectedpixels_in_EU(self, mappingpath):
+        mapping = np.load(mappingpath)
         mapping[mapping == 0] = np.nan
         indices = np.where(~np.isnan(mapping))
         indices_list = list(zip(indices[0], indices[1]))
@@ -525,7 +525,9 @@ class plotting_helper:
         ax.gridlines(draw_labels=True)
         
         print(f"saving selected pixels at {TARGET_REGION}")
-        fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), f"{filter}.png"))
+        filename = os.path.basename(mappingpath)
+        filename = filename.split(".")[0]
+        fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), f"{filename}.png"))
 
     def plot_RB(self):
         data = np.zeros((30,30))
@@ -626,4 +628,81 @@ class plotting_helper:
         
         print(f"saving {title}")
         plt.tight_layout()
-        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_{title}_{MODEL_NAME}.png"))
+        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_{title}.png"))
+    
+    def plot_4d_map_logscale(self, data, cmap='viridis', vmin=None, vmax=None, output_filename="map_4d_logscale.png"):
+        """
+        Plot a 4D array (year, season, lon, lat) into 16 subplots with a log color scale and save as high-res PNG.
+
+        Args:
+            data: np.ndarray of shape (4 years, 4 seasons, lon, lat)
+            lon: optional longitude array (2D)
+            lat: optional latitude array (2D)
+            cmap: colormap
+            vmin, vmax: minimum and maximum values for the color normalization (must be >0 for log scale)
+            output_filename: filename to save the figure
+        """
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+        # get EU lon lat
+        lon = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lat = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+
+        years = [2017, 2018, 2019, 2020]
+        seasons = ["DJF", "MAM", "JJA", "SON"]
+        
+        # Check vmin and vmax
+        if vmin is None:
+            vmin = np.nanmin(data[data > 0])  # log scale needs positive values
+        if vmax is None:
+            vmax = np.nanmax(data)
+            
+        norm = mcolors.LogNorm(vmin=vmin, vmax=vmax)
+
+        fig, axs = plt.subplots(4, 4, figsize=(24, 20), constrained_layout=True, subplot_kw={'projection': projection})
+
+        for i in range(4):  # years
+            for j in range(4):  # seasons
+                ax = axs[i, j]
+                
+                if lon is not None and lat is not None:
+                    # pcolormesh with log norm
+                    # im = ax.pcolormesh(lon, lat, data[i, j, :, :], cmap=cmap, norm=norm, shading='auto')
+                    im = ax.pcolormesh(lon, lat, data[i, j, :, :], cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+                    # ax.set_xlabel('Longitude')
+                    # ax.set_ylabel('Latitude')
+                    ax.set_aspect('auto')
+                    ax.gridlines(draw_labels=False)
+        
+                else:
+                    # imshow with log norm
+                    im = ax.imshow(data[i, j, :, :], origin='lower', cmap=cmap, norm=norm, aspect='auto')
+                    ax.set_xlabel('Pixel-X')
+                    ax.set_ylabel('Pixel-Y')
+                
+                #ax.set_title(f"{years[i]} - {seasons[j]}")
+                #ax.set_aspect('auto')
+                ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
+                # Major ticks formatting
+                ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+                ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+
+                # Only add season titles to top row
+                if i == 0:
+                    ax.set_title(seasons[j], fontsize=26)
+
+                # Only add year labels to rightmost column
+                if j == 3:  # last column (rightmost)
+                    ax.annotate(f"{years[i]}", xy=(1.05, 0.5), xycoords='axes fraction', rotation=0, ha='left', va='center', fontsize=26)
+
+
+        # Add shared colorbar
+        cbar = fig.colorbar(im, ax=axs, orientation='vertical', fraction=0.02, pad=0.02)
+        cbar.set_label('CRPS', rotation=270, labelpad=15)
+
+        #fig.subplots_adjust(left=0.12)  # <-- added, to make space for left labels
+
+        # Save the figure
+        #os.makedirs(os.path.dirname(output_filename) or ".", exist_ok=True)
+        fig.savefig(output_filename, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
