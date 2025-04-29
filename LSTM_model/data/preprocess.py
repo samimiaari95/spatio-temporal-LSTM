@@ -399,3 +399,15 @@ class preprocessing_data:
         mappingfile[iceland_indx] = 0
         print(np.sum(mappingfile))
         np.save(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "transfer_subset_0stdroll6months_43226exICELAND.npy"), mappingfile)
+    
+    def map_members(self):
+        train_in_path = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months_43226.npy"))
+        mapping = np.zeros(mapping.shape)
+        mapping[mapping==0] = np.nan
+        for i in range(100):
+            print(f"member {i}")
+            choices = np.load(os.path.join(train_in_path, f"400px_member_{i}", "choices.npy"))
+            mapping = np.where(choices==1, i, mapping)
+        np.save(os.path.join(train_in_path, "mapping_memberstrainpixels.npy"), mapping)
+        print(mapping[~np.isnan(mapping)].shape)
