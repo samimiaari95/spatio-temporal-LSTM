@@ -3,7 +3,9 @@ import numpy as np
 import netCDF4 as nc
 from typing import Dict, Union, List, Optional
 import matplotlib.pyplot as plt
+import pandas as pd
 from scipy.stats import gaussian_kde
+from properscoring import crps_ensemble
 from LSTM_model.model.config import *
 
 class utilities:
@@ -68,8 +70,8 @@ class utilities:
         
         if np.isnan(observed).all() or np.isnan(predicted).all():
             return np.nan
-        if np.std(observed) < 0.1: # if the std is close to zero, exclude pixel kge
-            return np.nan
+        # if np.std(observed) < 0.1: # if the std is close to zero, exclude pixel kge
+        #     return np.nan
             
         # Compute correlation coefficient (r)
         r = np.corrcoef(observed, predicted)[0, 1]
@@ -86,6 +88,34 @@ class utilities:
         kge = 1 - np.sqrt((r - 1)**2 + (beta - 1)**2 + (gamma - 1)**2)
 
         return kge
+    
+    def kge_prime(self, obs: np.ndarray, sim: np.ndarray) -> float:
+        """
+        Calculate the modified Kling-Gupta Efficiency (KGE') between simulated and observed data.
+
+        Parameters:
+            sim (np.ndarray): Simulated values (1D)
+            obs (np.ndarray): Observed values (1D)
+
+        Returns:
+            float: KGE' value
+        """
+        # Remove NaNs
+        # Ensure both arrays have the same length
+        assert len(obs) == len(sim), "Observed and predicted arrays must have the same length."
+        
+        if np.isnan(obs).all() or np.isnan(sim).all():
+            return np.nan
+        
+        r = np.corrcoef(sim, obs)[0, 1]  # correlation
+        beta = np.mean(sim) / np.mean(obs)  # bias ratio
+        gamma = (np.std(sim) / np.mean(sim)) / (np.std(obs) / np.mean(obs))  # variability ratio
+
+        kge_p = 1 - np.sqrt((r - 1) ** 2 + (beta - 1) ** 2 + (gamma - 1) ** 2)
+        return kge_p
+    
+    
+
 
     def singleregion_inputfeatures(self, start, end, means_stds):
         all_inputs = np.array([])
@@ -328,7 +358,7 @@ class utilities:
             arr = np.array(data)
             sorted_data = np.sort(arr)
             cdf = np.arange(1, len(sorted_data)+1) / len(sorted_data)
-            ax.plot(sorted_data, cdf, label=label, color=color, linestyle=ls, linewidth=2)
+            ax.plot(sorted_data, cdf, label=label, color=color, linestyle=ls, linewidth=4)
         
         # Add plot decorations
         #ax.set_title(title)
@@ -428,6 +458,126 @@ class utilities:
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"pdf_{xlabel}_{title}.png"))
         return print(f"plotted pdfs of {xlabel}")
+
+    def compute_crps_all_pixels(self, observations: np.ndarray, simulations: np.ndarray, plot=True, title: str = "crps"):
+        """
+        Compute CRPS for multiple pixels over time using explicit loops and optionally plot CDF.
+
+        Args:
+            observations: shape (T, P) — Observations for T timesteps and P pixels
+            simulations: shape (N, T, P) — Ensemble simulations (N members, T timesteps, P pixels)
+            plot: whether to plot CRPS CDF
+
+        Returns:
+            crps_all: 1D numpy array — Flattened CRPS values for all timesteps and all pixels
+        """
+        N, T, P = simulations.shape  # Extract dimensions
+
+        # Initialize list to store CRPS values for each time-pixel pair
+        crps_all = np.zeros((int(T*P)))
+
+        # Loop over all timesteps
+        for t in range(T):
+            # Loop over all pixels
+            print(f"t: {t}")
+            for p in range(P):
+                obs = observations[t, p]  # Observation at time t, pixel p
+                sims = simulations[:, t, p]  # Ensemble simulations at time t, pixel p
+
+                # Skip if any value is NaN
+                if np.isnan(obs) or np.isnan(sims).any():
+                    continue
+
+                # Compute CRPS and append to list
+                crps_val = crps_ensemble(obs, sims)
+                crps_all[t * P + p] = crps_val  # Store CRPS value
+
+        #crps_all = np.array(crps_all)  # Convert list to array
+
+        if plot:
+            # Sort CRPS values to prepare CDF
+            crps_sorted = np.sort(crps_all)
+            cdf_y = np.linspace(0, 1, len(crps_sorted))
+
+            # Plot CDF of CRPS values
+            plt.figure(figsize=(10, 5))
+            plt.plot(crps_sorted, cdf_y, label="CRPS CDF")
+            plt.title("CDF of CRPS Values")
+            plt.xlabel("CRPS")
+            plt.ylabel("Probability")
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"cdf_crps_{title}.png"))
+
+        return crps_all
+    
+    def compute_mean_seasonal_crps(self, observations: np.ndarray, simulations: np.ndarray, plot=True, title: str = ""):
+        """
+        Compute seasonal CRPS for each season of each year per pixel.
+
+        Args:
+            observations: shape (T, P) — Observations for T timesteps and P pixels
+            simulations: shape (N, T, P) — Ensemble simulations (N members, T timesteps, P pixels)
+            plot: whether to plot CRPS CDF
+            title: title for plot output file
+
+        Returns:
+            seasonal_crps_mean: 3D numpy array (4 years, 4 seasons, P) — Mean CRPS per season and year per pixel
+        """
+        N, T, P = simulations.shape
+
+        # Construct date range for daily data from 2017 to 2020
+        dates = pd.date_range(start="2017-01-01", end="2020-12-31", freq="D")
+        dates = dates[~((dates.month == 2) & (dates.day == 29))]  # remove Feb 29
+        assert len(dates) == T, "Date range does not match time series length."
+        
+        # Assign seasons and years to each date
+        def get_season(month):
+            if month in [12, 1, 2]:
+                return "DJF"
+            elif month in [3, 4, 5]:
+                return "MAM"
+            elif month in [6, 7, 8]:
+                return "JJA"
+            else:
+                return "SON"
+
+        seasons = np.array([get_season(d.month) for d in dates])
+        years = np.array([d.year if d.month != 12 else d.year + 1 for d in dates])  # DJF handled as belonging to next year
+        season_names = ["DJF", "MAM", "JJA", "SON"]
+        year_range = range(2017, 2021)
+
+        seasonal_crps = np.full((len(year_range), len(season_names), P), np.nan)
+        for y_idx, year in enumerate(year_range):
+            for s_idx, season in enumerate(season_names):
+                # Get indices for given year and season
+                print(f"year: {year}, season: {season}")
+                indices = np.where((seasons == season) & (years == year))[0]
+                for p in range(P):
+                    crps_vals = []
+                    for t in indices:
+                        obs = observations[t, p]
+                        sims = simulations[:, t, p]
+                        if np.isnan(obs) or np.isnan(sims).any():
+                            continue
+                        crps_vals.append(crps_ensemble(obs, sims))
+
+                    if crps_vals:
+                        seasonal_crps[y_idx, s_idx, p] = np.mean(crps_vals)
+
+        if plot:
+            # Plot boxplot per season per year
+            fig, axs = plt.subplots(1, len(year_range), figsize=(20, 6), sharey=True)
+            for i, year in enumerate(year_range):
+                axs[i].boxplot(seasonal_crps[i].T, labels=season_names)
+                axs[i].set_title(f"CRPS {year}")
+                axs[i].set_ylabel("CRPS")
+                axs[i].grid(True, alpha=0.3)
+            plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"seasonal_crps{title}.png"))
+
+        return seasonal_crps
 
     def intersect_subsets(self, target_map, transfer_subset):
         flat_target_map = target_map.flatten()
