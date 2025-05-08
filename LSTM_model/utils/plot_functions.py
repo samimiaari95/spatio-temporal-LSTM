@@ -13,8 +13,6 @@ from matplotlib.cm import ScalarMappable
 from sklearn.metrics import r2_score
 from LSTM_model.model.config import *
 
-plt.rcParams.update({'font.size': 18})
-
 class plotting_helper:
     def __init__(self) -> None:
         pass
