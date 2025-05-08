@@ -4,6 +4,7 @@ import numpy as np
 import argparse
 from SLOTH.sloth.IO import readSa
 from LSTM_model.utils.utils import utilities
+from LSTM_model.utils.plot_functions import plotting_helper
 #from LSTM_model.utils.volumetric_soilmoisture import calculate_soilmoisture
 from LSTM_model.model.config import *
 
@@ -218,6 +219,20 @@ class preprocess_rawdata:
             print(data.shape)
             outfile = os.path.join(outpath, month, f"vpd_{month}.npy")
             np.save(outfile, data)
+    
+    def avgwtd_2020(self):
+        plots = plotting_helper()
+        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "ensemble_400px_org", "mapping_0stdroll6months.npy"))
+        print(np.sum(mapping))
+        print(wtd.shape)
+        wtd = wtd[-365:,:,:]
+        wtd = np.mean(wtd, axis=0)
+        print(wtd.shape)
+        wtd = np.where(mapping==1, wtd, np.nan)
+        print(wtd.shape)
+        # plot it in 2d map
+        plots.EU_2Dmap(data_map=wtd,logscale=False, minval=0, maxval=50, title="Water table depth")
 
 # NOTE the parse arguments were only used to parallel compute the soil moisture
 #parser = argparse.ArgumentParser(description='insert the preprocessing month')
