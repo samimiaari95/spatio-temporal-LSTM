@@ -499,13 +499,13 @@ class postprocess_calculations:
 
     def ensemble_statvsacc(self):
         utils = utilities()
-        EU_filtering = "validation_400_withoutcriteria_57120"
+        EU_filtering = "validation_400_withcriteria_43226"
         EU_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_filtering}/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
         EU_outpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_filtering}/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
         transfer_subset = np.load(os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px_org", "transfer_subset_unfiltered.npy"))
         
         #transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
-        df_dic = {"Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Ensemble variance":[], "IQR (75-25%)":[], "IQR (100-0%)":[], "std":[], "cv":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
+        df_dic = {"stdsim":[], "stdobs":[], "meansim":[], "meanobs":[], "Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "KGE'":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Ensemble variance":[], "IQR (75-25%)":[], "IQR (100-0%)":[], "std":[], "cv":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
         x_axis = []
         y_axis = []
         for target in range(100):
@@ -579,10 +579,16 @@ class postprocess_calculations:
 
                 ### KGE' ###
                 kgeprime = utils.kge_prime(obs[:,pixel], mean_prediction)
+                df_dic["KGE'"].append(kgeprime)
                 
                 # Compute bias ratio (β) and variability ratio (γ)
                 beta = mu_p / mu_o
                 alpha = sigma_p / sigma_o
+                gamma = (np.std(mean_prediction) / np.mean(mean_prediction)) / (np.std(obs[:,pixel]) / np.mean(obs[:,pixel]))  # variability ratio
+                df_dic["stdsim"].append(np.std(mean_prediction))
+                df_dic["stdobs"].append(np.std(obs[:,pixel]))
+                df_dic["meansim"].append(np.mean(mean_prediction))
+                df_dic["meanobs"].append(np.mean(obs[:,pixel]))
                 
                 #if np.std(obs[:,pixel]) < 0.1: # if the std is close to zero, exclude pixel kge
                 #alpha = np.nan
@@ -606,8 +612,8 @@ class postprocess_calculations:
                 bias_mean = np.mean(mean_prediction - obs[:,pixel])
                 df_dic["Absolute mean bias"].append(bias_mean)
                 
-                #x_axis.append(correlationobs)
-                #y_axis.append(kge)
+                x_axis.append(ensemble_variance)
+                y_axis.append(kgeprime)
                 #self.plot_ensemble_statsvsacc_timeseries(pixel, f'{correlationobs:.2f}', f'{math.ceil(ensemble_variance)}')
                 #if ensemble_variance>70 and correlationobs>0.85:
                 #    print(ensemble_variance)
@@ -615,29 +621,80 @@ class postprocess_calculations:
                 #print(f"pixel index is: {pixel}")
             
         ####### save to csv ########
-        #df = pd.DataFrame(df_dic)
-        #df.to_csv(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", "ensemble_statistics.csv"), index=False)
+        # df = pd.DataFrame(df_dic)
+        # df.to_csv(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", "ensemble_statistics_stdobs01.csv"), index=False)
 
         xtitle = "Ensemble variance"
         #xtitle = r"\sum\left( O-\bar{O} \right)^2"
         ytitle = "KGE'"
 
         plt.figure()
-        plt.scatter(x_axis, y_axis, marker='o', color='k')
+        #plt.scatter(x_axis, y_axis, marker='o', color='k')
+        plt.boxplot(y_axis)
         plt.xlabel(f'{xtitle}')
         plt.ylabel(f'{ytitle}')
         #plt.xlim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
         #plt.ylim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
         plt.xscale("log")
         #plt.yscale("log")
-        #plt.yscale("symlog")
+        plt.yscale("symlog")
         #plt.xlim(-1,1)
         #plt.ylim(-1, 1)
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
         print(f"plotting: {ytitle}_{xtitle}")
-        plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", f"{ytitle}_{xtitle}.png"))
+        #plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), EU_filtering, "statistics", f"{ytitle}_{xtitle}boxplot.png"))
 
+    def testingkgeprime(self):
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "statistics")
+        df = pd.read_csv(os.path.join(output_dir, "ensemble_statistics_stdobs01.csv"))
+        df = df.dropna()
+
+        x_vals = ["Alpha", "Beta", "stdsim", "stdobs", "meansim", "meanobs"]
+        x_vals = ["stdsim", "stdobs", "meansim", "meanobs"]
+        for x in x_vals:
+            plt.figure()
+            plt.scatter(df[x].values,df["NSE"].values, marker='o', color='k')
+            plt.xlabel(x)
+            
+            plt.ylabel(f"NSE")
+            #plt.xlim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
+            #plt.ylim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
+            plt.xscale("log")
+            #plt.yscale("log")
+            plt.yscale("symlog")
+            #plt.xlim(-1,1)
+            #plt.ylim(-1, 1)
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.tight_layout()
+            print(f"plotting: NSE vs {x}")
+            plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "statistics", "testkge", f"NSE01_{x}.png"))
+
+    def boxplot_acc_metrics(self):
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "statistics")
+        df = pd.read_csv(os.path.join(output_dir, "ensemble_statistics_stdobs01.csv"))
+        df = df.dropna()
+
+        for COL in ["KGE", "KGE'"]:
+            # Create one figure for all boxplots
+            plt.figure()  # Adjust size as needed
+            plt.boxplot(df[COL].values, vert=True, labels=[COL])
+            plt.axhline(0, color='gray', linestyle='--', linewidth=1)  # Align at y=0
+            #plt.ylabel(COL)
+            if COL in ["RMSE",  "Beta", "Alpha", "Ensemble variance", "IQR (75-25%)", "IQR (100-0%)", "std", "cv", "(Alpha-1)^2", "(Beta-1)^2", "(r-1)^2"]:
+                plt.yscale("log")
+            if COL in ["KGE", "KGE'", "NSE",]:
+                plt.yscale("symlog")
+            # plt.title("Boxplots of: " + ", ".join(df.columns))  # Title includes all column names
+            plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+
+            # Save the figure
+            # os.makedirs(output_dir, exist_ok=True)
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, "boxplots", f"boxplot_stdobs01_{COL}.png"), dpi=300)
+            plt.close()
+            print(f"saved boxplot for {COL}")
+        
     def ensemble_crpsvsstats(self):
         utils = utilities()
         EU_filtering = "validation_400_withcriteria_43226"
@@ -929,18 +986,15 @@ class postprocess_calculations:
             return RMSE_allcells
         
         def calc_KGE_NSE_bias(obs, sim):
-            kge = utils.calculate_kge(obs, sim)
             all_kge = []
-            nse = 1 - (np.sum((obs - sim) ** 2) / np.sum((obs - np.mean(obs)) ** 2))
             all_nse = []
-            bias_mean = np.mean(sim - obs)
             all_bias = []
             for pixel in range(obs.shape[1]):
                 time_series1 = obs[:, pixel]
                 time_series2 = sim[:, pixel]
                 if np.std(time_series1) > 0 and np.std(time_series2) > 0:
-                    kge = utils.calculate_kge(time_series1, time_series2) if np.std(time_series1)>=0.1 else np.nan
-                    nse = 1 - (np.sum((time_series1 - time_series2) ** 2) / np.sum((time_series1 - np.mean(time_series1)) ** 2)) if np.std(time_series1)>=0.1 else np.nan
+                    kge = utils.calculate_kge(time_series1, time_series2)# if np.std(time_series1)>=0.1 else np.nan
+                    nse = 1 - (np.sum((time_series1 - time_series2) ** 2) / np.sum((time_series1 - np.mean(time_series1)) ** 2))# if np.std(time_series1)>=0.1 else np.nan
                     bias_mean = np.mean(time_series2 - time_series1)
                 else:
                     kge = np.nan
@@ -995,9 +1049,9 @@ class postprocess_calculations:
             rmse["transfer_filtered"].extend(rmse_EU[transfer_indices].tolist())
             rmse["transfer_filtered"].extend(rmse_EU[training_indices].tolist())
             kge["transfer_filtered"].extend(kge_EU[transfer_indices].tolist())
-            kge["training_filtered"].extend(kge_EU[training_indices].tolist())
+            kge["transfer_filtered"].extend(kge_EU[training_indices].tolist())
             nse["transfer_filtered"].extend(nse_EU[transfer_indices].tolist())
-            nse["training_filtered"].extend(nse_EU[training_indices].tolist())
+            nse["transfer_filtered"].extend(nse_EU[training_indices].tolist())
             bias["transfer_filtered"].extend(bias_EU[transfer_indices].tolist())
             bias["transfer_filtered"].extend(bias_EU[training_indices].tolist())
 
@@ -1016,47 +1070,6 @@ class postprocess_calculations:
             nse["training_test_filtered"].extend(nse_EU[training_indices].tolist())
             bias["training_test_filtered"].extend(bias_EU[training_indices].tolist())
         
-        #### Transfer & training unfiltered subsets ####
-        # EUunfiltered_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withoutcriteria_57120/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        # subsets_dir = os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px_org")
-        # transfer_subset = np.load(os.path.join(subsets_dir, "transfer_subset_unfiltered.npy"))
-        # training_subset = np.load(os.path.join(subsets_dir, "training_subset.npy"))
-        # original_transfersubset_size = int(np.sum(transfer_subset))
-        # original_trainingsubset_size = int(np.sum(training_subset))
-        # for target in range(100):
-        #     obs_destand_test, sim_destand_test = load_obs_sim(EUunfiltered_inpath, target, f"obs_destand_{MODEL_NAME}_{target}.npy", f"sim_destand_{MODEL_NAME}_{target}.npy")
-        #     target_map = np.load(os.path.join(os.path.dirname(EUunfiltered_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-        #     transfer_indices, ind2d = utils.intersect_subsets(target_map, transfer_subset)
-        #     training_indices, ind2d = utils.intersect_subsets(target_map, training_subset)
-        #     corr_EU = calc_correlation(sim_destand_test, obs_destand_test)
-        #     rmse_EU = calc_RMSE(sim_destand_test, obs_destand_test)
-        #     kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_destand_test, sim_destand_test)
-        #     corr_EU = np.array(corr_EU)
-        #     rmse_EU = np.array(rmse_EU)
-        #     kge_EU = np.array(kge_EU)
-        #     nse_EU = np.array(nse_EU)
-        #     bias_EU = np.array(bias_EU)
-            
-        #     correlation["transfer_unfiltered"].extend(corr_EU[transfer_indices].tolist())
-        #     correlation["training_unfiltered"].extend(corr_EU[training_indices].tolist())
-        #     rmse["transfer_unfiltered"].extend(rmse_EU[transfer_indices].tolist())
-        #     rmse["training_unfiltered"].extend(rmse_EU[training_indices].tolist())
-        #     kge["transfer_unfiltered"].extend(kge_EU[transfer_indices].tolist())
-        #     kge["training_unfiltered"].extend(kge_EU[training_indices].tolist())
-        #     nse["transfer_unfiltered"].extend(nse_EU[transfer_indices].tolist())
-        #     nse["training_unfiltered"].extend(nse_EU[training_indices].tolist())
-        #     bias["transfer_unfiltered"].extend(bias_EU[transfer_indices].tolist())
-        #     bias["training_unfiltered"].extend(bias_EU[training_indices].tolist())
-
-       
-        # print(len(correlation["transfer_filtered"]))
-        # print(len(correlation["training_filtered"]))
-        # print(len(rmse["transfer_filtered"]))
-        # print(len(rmse["training_filtered"]))
-        # print(len(correlation["transfer_unfiltered"]))
-        # print(len(correlation["training_unfiltered"]))
-        # print(len(rmse["transfer_unfiltered"]))
-        # print(len(rmse["training_unfiltered"]))
         
         for key in correlation.keys():
             correlation[key] = np.array(correlation[key])
@@ -1081,10 +1094,9 @@ class postprocess_calculations:
         #### plot Pearson correlation ####
         utils.plot_cdfs(data_dict={
             f'Transfer phase': correlation["transfer_filtered"],
-            #f'Transfer to source subset': correlation["training_filtered"],
             f'Test phase': correlation["training_test_filtered"]
         }, colors=['red', 'blue'],# linestyles=['-', ':', '--'],
-        xlabel='Pearson correlation', title='f')
+        xlabel='Pearson correlation', title='testtransfer')
 
         # utils.plot_pdfs(data_dict={
         #     f'Transfer subset (pixels={len(correlation["transfer_filtered"])}, members=100)': correlation["transfer_filtered"],
@@ -1095,10 +1107,9 @@ class postprocess_calculations:
         #### plot RMSE ####
         utils.plot_cdfs(data_dict={
             f'Transfer phase': rmse["transfer_filtered"],
-            #f'Transfer to source subset': rmse["training_filtered"],
             f'Test phase': rmse["training_test_filtered"]
         }, colors=['red', 'blue'], #linestyles=['-', ':', '--'],
-        xlabel='RMSE', logscale=True, title='f')
+        xlabel='RMSE', logscale=True, title='testtransfer')
 
         # utils.plot_pdfs(data_dict={
         #     f'Transfer subset (pixels={len(rmse["transfer_filtered"])}, members=100)': rmse["transfer_filtered"],
@@ -1107,12 +1118,13 @@ class postprocess_calculations:
         # xlabel='RMSE', logscale=True, title='f')
 
         # #### plot KGE ####
-        # utils.plot_cdfs(data_dict={
-        #     f'Transfer subset (pixels={len(kge["transfer_filtered"])}, members=100)': kge["transfer_filtered"],
-        #     f'Training subset (pixels={len(kge["training_filtered"])}, members=99)': kge["training_filtered"]
-        # }, colors=['green', 'red'], linestyles=['-', ':'],
-        # xlabel='KGE', symlog=True, title='f')
-
+        utils.plot_cdfs(data_dict={
+            f'Transfer phase': kge["transfer_filtered"],
+            f'Test phase': kge["training_test_filtered"]
+        }, colors=['red', 'blue'],
+        xlabel='KGE', xlim=(min(kge["transfer_filtered"]), 1), 
+        symlog=True, title='testtransfer')
+        
         # utils.plot_pdfs(data_dict={
         #     f'Transfer subset (pixels={len(kge["transfer_filtered"])}, members=100)': kge["transfer_filtered"],
         #     f'Training subset (pixels={len(kge["training_filtered"])}, members=99)': kge["training_filtered"]
@@ -1120,12 +1132,13 @@ class postprocess_calculations:
         # xlabel='KGE', symlog=True, title='f')
 
         # #### plot NSE ####
-        # utils.plot_cdfs(data_dict={
-        #     f'Transfer subset (pixels={len(nse["transfer_filtered"])}, members=100)': nse["transfer_filtered"],
-        #     f'Training subset (pixels={len(nse["training_filtered"])}, members=99)': nse["training_filtered"]
-        # }, colors=['green', 'red'], linestyles=['-', ':'],
-        # xlabel='NSE', symlog=True, title='f')
-
+        utils.plot_cdfs(data_dict={
+            f'Transfer phase': nse["transfer_filtered"],
+            f'Test phase': nse["training_test_filtered"]
+        }, colors=['red', 'blue'],
+        xlabel='NSE', xlim=(min(nse["transfer_filtered"]), 1), 
+        symlog=True, title='testtransfer')
+        
         # utils.plot_pdfs(data_dict={
         #     f'Transfer subset (pixels={len(nse["transfer_filtered"])}, members=100)': nse["transfer_filtered"],
         #     f'Training subset (pixels={len(nse["training_filtered"])}, members=99)': nse["training_filtered"]
@@ -1135,10 +1148,9 @@ class postprocess_calculations:
         #### plot Bias ####
         utils.plot_cdfs(data_dict={
             f'Transfer phase': bias["transfer_filtered"],
-            #f'Transfer to source subset': bias["training_filtered"],
             f'Test phase': bias["training_test_filtered"]
-        }, colors=['red', 'blue'],# linestyles=['-', ':', '--'],
-        xlabel='Mean bias', title='f')
+        }, colors=['red', 'blue'],
+        xlabel='Mean bias', title='testtransfer')
 
         # utils.plot_pdfs(data_dict={
         #     f'Transfer subset (pixels={len(bias["transfer_filtered"])}, members=100)': bias["transfer_filtered"],
@@ -1172,23 +1184,15 @@ class postprocess_calculations:
         np.save(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"crps_100members_onlytransfer.npy"), crps)
 
     def cdfplot_crps(self):
+        utils = utilities()
         crpstrain = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"crps_99members_onlytraining.npy"))
         crpstransfer = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"crps_100members_onlytransfer.npy"))
         crps = np.concatenate((crpstrain, crpstransfer), axis=0)
 
-        # Sort CRPS values to prepare CDF
-        crps_sorted = np.sort(crps)
-        cdf_y = np.linspace(0, 1, len(crps_sorted))
-
-        # Plot CDF of CRPS values
-        plt.figure(figsize=(10, 5))
-        plt.plot(crps_sorted, cdf_y, label="CRPS CDF")
-        plt.xlabel("CRPS")
-        plt.ylabel("CDF")
-        plt.grid(True, alpha=0.3)
-        plt.xscale('log')
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"cdf_crps.png"))
+        utils.plot_cdfs(data_dict={
+            f'Transfer phase': crps,
+        }, colors=['red'],
+        xlabel='CRPS', logscale=True, title='CRPS')
         return
     
     def boxplot_seasonal_crps(self):
