@@ -140,7 +140,10 @@ class consecutive_validate_LSTM_model:
         return print("saved destandardized arrays")
 
 class transfer_ensemble_LSTM:
-    def transfer_ensemble(self):
+    def transfer_ensemble(self, batchind):
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Transferring for member {member} and batch index {batchind}")
+        print(f"starting eval")
         utils = utilities()
         # import training mean and std (saved during training process)
         with open(os.path.join(OUTPUTPATH, f"meanstd_{SOURCE_REGION}_{MODEL_NAME}.pkl"), 'rb') as f:
@@ -154,11 +157,8 @@ class transfer_ensemble_LSTM:
         criterion = nn.MSELoss()
 
         ################# Testing ######################
-        # TODO apply new functions to load data
-        # TODO think about how to predict for a pixel, 
-        # maybe predict for all remaining pixels and just choose from them
-        obs_stand_input, means_stds = utils.transferpx_targetvar(TRAINING_PERIOD+LOOKBACK, TRAINING_PERIOD+TEST_PERIOD, means_stds)
-        features_stand_inputs, means_stds = utils.transferpx_inputfeatures(TRAINING_PERIOD, TRAINING_PERIOD+TEST_PERIOD, means_stds)
+        obs_stand_input, means_stds = utils.transferpx_targetvar(TRAINING_PERIOD+LOOKBACK, TRAINING_PERIOD+TEST_PERIOD, means_stds, batchind)
+        features_stand_inputs, means_stds = utils.transferpx_inputfeatures(TRAINING_PERIOD, TRAINING_PERIOD+TEST_PERIOD, means_stds, batchind)
 
         print("preparing dataloader")
         print(f"inputs shape: {features_stand_inputs.shape}")
@@ -185,8 +185,8 @@ class transfer_ensemble_LSTM:
         test_loss = total_loss / len(test_dataloader)
         print(f'Test Loss: {test_loss:.4f}')
 
-        sim_stand = torch.cat(test_s).numpy().reshape(TEST_PERIOD-LOOKBACK, NB_CELLS)
-        obs_stand = torch.cat(test_o).numpy().reshape(TEST_PERIOD-LOOKBACK, NB_CELLS)
+        sim_stand = torch.cat(test_s).numpy().reshape(TEST_PERIOD-LOOKBACK, int(len(torch.cat(test_s).numpy())/(TEST_PERIOD-LOOKBACK)))
+        obs_stand = torch.cat(test_o).numpy().reshape(TEST_PERIOD-LOOKBACK, int(len(torch.cat(test_o).numpy())/(TEST_PERIOD-LOOKBACK)))
 
         # standardization
         # compare it with the original values to confirm the standardization process
@@ -194,6 +194,6 @@ class transfer_ensemble_LSTM:
 
         sim_destand = sim_stand*means_stds[f"{TARGETVAR_FILE.replace('.npy','')}std"] + means_stds[f"{TARGETVAR_FILE.replace('.npy','')}mean"]
 
-        np.save(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"), obs_destand)
-        np.save(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"), sim_destand)
+        np.save(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}_{batchind}.npy"), obs_destand)
+        np.save(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}_{batchind}.npy"), sim_destand)
         return print("saved destandardized arrays")
