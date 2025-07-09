@@ -234,33 +234,6 @@ class plotting_helper:
         print(f"saving bias")
         fig.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
 
-    def plot_blendaltman(self, obs, sim, title):
-        predictions = sim.flatten()
-        observations = obs.flatten()
-
-        # Calculate the mean and difference between predictions and observations
-        mean_values = np.mean([predictions, observations], axis=0)
-        differences = predictions - observations
-
-        # Calculate the mean difference (bias) and the limits of agreement
-        mean_diff = np.mean(differences)
-        std_diff = np.std(differences)
-        loa_upper = mean_diff + 1.96 * std_diff
-        loa_lower = mean_diff - 1.96 * std_diff
-
-        # Create the Bland-Altman plot
-        plt.figure(figsize=(10, 6))
-        plt.scatter(mean_values, differences, alpha=0.5)
-        plt.axhline(mean_diff, color='red', linestyle='--', label='Mean Difference (Bias)')
-        plt.axhline(loa_upper, color='blue', linestyle='--', label='Upper Limit of Agreement (Mean + 1.96 SD)')
-        plt.axhline(loa_lower, color='blue', linestyle='--', label='Lower Limit of Agreement (Mean - 1.96 SD)')
-        plt.xlabel('Mean of Predictions and Observations (m)')
-        plt.ylabel('Difference between Predictions and Observations (m)')
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, f"{title}.png"))
-
     def pixels_biasmap(self, obs, sim, title, X, Y):
         fig, ax = plt.subplots(figsize=(16, 9))
 
@@ -607,7 +580,8 @@ class plotting_helper:
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
-        cmap_colors = "viridis" if "MSE" in title else "coolwarm"
+        cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title or "orrelation" in title) else "coolwarm"
+        cmap_colors = "terrain"
         cmap = plt.get_cmap(cmap_colors)
 
         # define limits and normalization
@@ -626,7 +600,7 @@ class plotting_helper:
         
         print(f"saving {title}")
         plt.tight_layout()
-        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_{title}.png"))
+        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_pred{title}.png"))
     
     def plot_4d_map_logscale(self, data, cmap='viridis', vmin=None, vmax=None, output_filename="map_4d_logscale.png"):
         """
@@ -704,3 +678,27 @@ class plotting_helper:
         fig.savefig(output_filename, dpi=300, bbox_inches='tight')
         plt.close(fig)
 
+
+    def plot_scatter(self, x, y, title, ylog=False, ysymlog=False):
+        plt.figure()
+        plt.scatter(x, y, alpha=0.5)
+        plt.xlabel(r'$Topography (m)$')
+        plt.ylabel(f"{title}")
+        plt.xscale('log')
+        if ylog:
+            plt.yscale('log')
+        if ysymlog:
+            plt.yscale('symlog')
+        plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "statistics", f"topo_vs_{title}.png"), dpi=300, bbox_inches='tight')
+
+    def logscales_histogram(self, data, xlabel, ylabel, nbbins=50, title="Histogram"):
+        plt.figure(figsize=(10, 6))
+        bins = np.logspace(np.log10(data.min()), np.log10(data.max()), num=nbbins)
+        plt.hist(data, bins=bins, color='blue', edgecolor='black', alpha=0.7)
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.yscale('log')
+        plt.xscale('log')
+        plt.grid(True)
+        plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "statistics", f"{title}.png"), dpi=300, bbox_inches='tight')
+        plt.close()
