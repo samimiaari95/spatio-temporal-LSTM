@@ -40,19 +40,6 @@ class preprocessing_data:
             print(output_dic[key].shape)
             np.save(os.path.join(outpath, f"{key}.npy"), output_dic[key])
 
-    def crop_vars(self, varname):
-        var = np.load(os.path.join(os.path.dirname(INPUTPATH), varname))
-        print(varname)
-        print(var.shape)
-        # seine
-        i = 195
-        j = 164
-        grid_size = 30
-        var = var[:, i:i+grid_size, j:j+grid_size]
-
-        print(var.shape)
-        np.save(os.path.join(os.path.dirname(INPUTPATH), "SEINE_30x30", varname), var)
-
     def features_correlation(self):
         plot_functions = plotting_helper()
         lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
@@ -66,19 +53,6 @@ class preprocessing_data:
             feature = feature[:365*7,:,:]
             print(feature.shape)
             plot_functions.correlation_map(targetvar, feature, f"10yrscorrelation_wtd_{f.replace('.npy','')}", 5, 5, lons, lats)
-
-    def conc_basins(self):
-        basins = ["SEINE_30x30", "DOURO_30x30"]
-        foldername = "SEINE+DOURO_30x30"
-        vars = ["TOT_PREC.npy", "vpd.npy", "TMAX_2M.npy", "TMIN_2M.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", "soilind.npy", "topo.npy", "porosity_1mdepth.npy", "QFLX_EVAP_TOT.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
-        vars = ["wtd.npy"]
-        for var in vars:
-            var_basins = {basin: np.load(os.path.join(INPUTPATH, basin, var)) for basin in basins}
-            data = np.array([])
-            for basin in var_basins.keys():
-                print(var, basin)
-                data = np.concatenate((data, var_basins[basin]), axis=0) if len(data)>0 else var_basins[basin]
-            np.save(os.path.join(INPUTPATH, var), data)
 
     def static_timeseries_EU(self, varname):
         filepath = os.path.join(os.path.dirname(INPUTPATH), varname)
@@ -401,13 +375,13 @@ class preprocessing_data:
         np.save(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "transfer_subset_0stdroll6months_43226exICELAND.npy"), mappingfile)
     
     def map_members(self):
-        train_in_path = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
+        train_in_path = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts", "ensemble_100px")
         mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months_43226.npy"))
         mapping = np.zeros(mapping.shape)
         mapping[mapping==0] = np.nan
         for i in range(100):
             print(f"member {i}")
-            choices = np.load(os.path.join(train_in_path, f"400px_member_{i}", "choices.npy"))
+            choices = np.load(os.path.join(train_in_path, f"100px_member_{i}", "choices.npy"))
             mapping = np.where(choices==1, i, mapping)
-        np.save(os.path.join(train_in_path, "mapping_memberstrainpixels.npy"), mapping)
+        np.save(os.path.join(train_in_path, "mapping_memberstrainpixels100.npy"), mapping)
         print(mapping[~np.isnan(mapping)].shape)
