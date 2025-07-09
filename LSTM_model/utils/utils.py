@@ -106,6 +106,8 @@ class utilities:
         
         if np.isnan(obs).all() or np.isnan(sim).all():
             return np.nan
+        # if np.std(obs) < 0.1: # if the std is close to zero, exclude pixel kge
+        #     return np.nan
         
         r = np.corrcoef(sim, obs)[0, 1]  # correlation
         beta = np.mean(sim) / np.mean(obs)  # bias ratio
@@ -263,8 +265,8 @@ class utilities:
         #print(np.unique(np.equal(raw_data[start, :, :], data.reshape(end-start, X, Y)[0,:,:])))
         return data, means_stds
     
-    def transferpx_targetvar(self, start, end, means_stds):
-        raw_data = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", TARGETVAR_FILE))
+    def transferpx_targetvar(self, start, end, means_stds, batchind):
+        raw_data = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{batchind}", TARGETVAR_FILE))
         raw_data = np.nan_to_num(raw_data)
         raw_data[raw_data < 0.0] = 0
 
@@ -280,11 +282,11 @@ class utilities:
         raw_data = None
         return data, means_stds
 
-    def transferpx_inputfeatures(self, start, end, means_stds):
+    def transferpx_inputfeatures(self, start, end, means_stds, batchind):
         all_inputs = np.array([])
         for inputvar in FEATURES_FILES:
             print(inputvar)
-            raw_data = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", inputvar))
+            raw_data = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{batchind}", inputvar))
             raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS) if len(raw_data.shape)>2 else raw_data
             data = raw_data[start:end, :]
             data = np.moveaxis(data, 0, -1) # (cells, timeseries)
@@ -313,11 +315,14 @@ class utilities:
 
     def plot_cdfs(self,
         data_dict: Dict[str, Union[list, np.ndarray]],
+        xmin: Optional[float] = None,
         colors: Optional[List[str]] = None,
         linestyles: Optional[List[str]] = None,
         title: str = "",
         xlabel: str = "Values",
         ylabel: str = "Cumulative Probability",
+        xlim: Optional[tuple] = None,
+        yfloor:  bool = False,
         logscale: bool = False,
         symlog: bool = False,
         grid: bool = True,
@@ -328,11 +333,15 @@ class utilities:
         
         Args:
             data_dict: Dictionary where keys are labels and values are data lists
+            xmin: Minimum x-value to start plotting
             colors: Optional list of line colors (matches dictionary order)
             linestyles: Optional list of line styles (matches dictionary order)
             title: Plot title
             xlabel: X-axis label
             ylabel: Y-axis label
+            xlim: X-axis limits
+            logscale: Whether to use logarithmic scale for x-axis
+            symlog: Whether to use symmetric logarithmic scale for x-axis
             grid: Whether to show grid
             figsize: Figure size
         
@@ -354,16 +363,31 @@ class utilities:
         fig, ax = plt.subplots(figsize=figsize)
         
         # Plot each dataset
+        ymin = 999
         for (label, data), color, ls in zip(data_dict.items(), colors, linestyles):
             arr = np.array(data)
             sorted_data = np.sort(arr)
             cdf = np.arange(1, len(sorted_data)+1) / len(sorted_data)
-            ax.plot(sorted_data, cdf, label=label, color=color, linestyle=ls, linewidth=4)
+            if xmin:
+                # Find the index where x >= xmin
+                start_idx = np.searchsorted(sorted_data, xmin)
+                ax.plot(sorted_data[start_idx:], cdf[start_idx:], label=label, color=color, linestyle=ls, linewidth=4)
+                ymin = min(ymin, min(cdf[start_idx:]))
+            else:
+                ax.plot(sorted_data, cdf, label=label, color=color, linestyle=ls, linewidth=4)
         
         # Add plot decorations
         #ax.set_title(title)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
+        if xlim:
+            ax.set_xlim(xlim)
+        if yfloor:
+            # ymin = min(cdf[start_idx:])
+            ax.set_ylim((np.floor(ymin*10)/10, 1))
+            ticks = [*range(int(np.floor(ymin*10)), 11, 1)]
+            ticks = [i/10 for i in ticks]
+            ax.set_yticks(ticks)
         if logscale:
             ax.set_xscale('log')
         if symlog:
