@@ -201,11 +201,11 @@ class preprocess_rawdata:
             print(month)
             rh_data = utils.read_nc(filepath=os.path.join(outpath, month, rh), var=rh.replace("_ts.nc",""))
             t_data = utils.read_nc(filepath=os.path.join(outpath, month, t), var=t.replace("_ts.nc",""))
-            print(rh_data.shape)
 
             # remove the last timestep from cosmo output
             rh_data = np.array(rh_data[:-1,:,:])
             t_data = np.array(t_data[:-1,:,:])
+            t_data = t_data - 273.15 # convert temperature to degree celsius
 
             ##### calculate vapor pressure deficit #####
             # saturated vapor pressure
@@ -215,8 +215,6 @@ class preprocess_rawdata:
 
             Tagg = "mean"
             data = self.temporalAgg_matrix(vpd, timestep, Tagg)
-            print("final")
-            print(data.shape)
             outfile = os.path.join(outpath, month, f"vpd_{month}.npy")
             np.save(outfile, data)
     
