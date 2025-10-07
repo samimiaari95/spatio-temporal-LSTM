@@ -17,19 +17,18 @@ class preprocessing_data:
     def conc_vars(self):
         dirpath = "/p/scratch/cslts/miaari1/raw"
         outpath = os.path.join(get_root_dir(), "inputs", "20yrs_ts")
-        output_dic = {"soilmoisture": np.array([])}
+        # output_dic = {"soilmoisture": np.array([])}
         #output_dic = {"QFLX_EVAP_TOT": np.array([]), "soilmoisture": np.array([]), "subSurfStor": np.array([]),
         #              "TMAX_2M": np.array([]), "TMIN_2M": np.array([]), "TOT_PREC": np.array([]), "wtd": np.array([])}
-
+        output_dic = {"vpd": np.array([])}
         months = [x for x in os.listdir(dirpath)]
         months.sort()
         for month in months:
             print(month)
-            vars = [x for x in os.listdir(os.path.join(dirpath, month)) if x.endswith(".npy") and "soilmoisture" in x]
+            vars = [x for x in os.listdir(os.path.join(dirpath, month)) if x.endswith(".npy") and "vpd" in x]
             for var in vars:
                 varname = var.replace(f"_{month}.npy","")
                 data = np.load(os.path.join(dirpath, month, var))
-                #print(data.shape)
                 if len(output_dic[f"{varname}"])>=1:
                     output_dic[f"{varname}"] = np.concatenate((output_dic[f"{varname}"], data), axis=0)
                 else:
@@ -87,6 +86,21 @@ class preprocessing_data:
         include = np.where(std==0, 0, 1)
         np.save(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"), include)
         return include
+
+    def exclude_boundaries(self):
+        dirpath = os.path.dirname(os.path.dirname(INPUTPATH))
+        np_files = [x for x in os.listdir(os.path.join(dirpath, "orgsize_variables")) if x.endswith(".npy")]
+        for np_file in np_files:
+            print(np_file)
+            var = np.load(os.path.join(dirpath, "orgsize_variables", np_file))
+            print(var.shape)
+            # exclude sides
+            if len(var.shape)==2:
+                var = var[100:432-10,10:444-10]
+            else:
+                var = var[:, 100:432-10,10:444-10]
+            print(var.shape)
+            np.save(os.path.join(dirpath, np_file.replace('_org.npy','.npy')), var)
 
     def remove_shallow_wtd(self):
         mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "included_excl_waterbodies.npy"))
@@ -215,18 +229,6 @@ class preprocessing_data:
         plt.grid()
         plt.savefig(os.path.join(INPUTPATH, "timeseries", f"timeseries_{varname.replace('.npy','')}_{pixel}.png"))
 
-
-    def pixelscriteriainRB(self):
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "mapping_yearlyavg1mstd.npy"))
-        # seine
-        i = 195
-        j = 164
-        grid_size = 30
-        mapping = mapping[i:i+grid_size, j:j+grid_size]
-        print(np.sum(mapping))
-        selected = np.where(mapping==1)
-        print(selected)
-
     def ensemble_choices(self):
         utils = utilities()
         nb_samples = 100
@@ -246,17 +248,20 @@ class preprocessing_data:
         np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "unchosen_pixels.npy"), mapping)
     
     def ensemble_cropvars(self):
+        forkpath = os.path.join(os.path.dirname(get_root_dir()), "fork", "train_400_withcriteria_43226", "inputs", "20yrs_ts", "ensemble_400px")
         varnames = [x for x in FEATURES_FILES]
         varnames.append("wtd.npy")
+        varnames = ["vpd.npy"]
         for varname in varnames:
             vardata = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), varname))
             for m in range(100):
-                print(f"100px_member_{m}")
-                mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), f"100px_member_{m}", "choices.npy"))
+                m=9
+                print(f"400px_member_{m}")
+                mapping = np.load(os.path.join(forkpath, f"400px_member_{m}", "choices.npy"))
                 var = vardata
                 var = var[:,mapping==1]
-                np.save(os.path.join(os.path.dirname(INPUTPATH), f"100px_member_{m}", varname), var)
-    
+                np.save(os.path.join(forkpath, f"400px_member_{m}", varname), var)
+
     def jobs_scripts(self):
         filepath = os.path.join(get_root_dir(), "pythonjob_juwels_2nodes.sh")
         f = open(filepath, "r")

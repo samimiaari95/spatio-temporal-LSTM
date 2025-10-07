@@ -575,12 +575,12 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
-        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
+        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
-        cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title or "orrelation" in title) else "coolwarm"
+        cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title) else "coolwarm"
         cmap_colors = "terrain"
         cmap = plt.get_cmap(cmap_colors)
 
@@ -600,7 +600,7 @@ class plotting_helper:
         
         print(f"saving {title}")
         plt.tight_layout()
-        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_pred{title}.png"))
+        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_{title}.png"))
     
     def plot_4d_map_logscale(self, data, cmap='viridis', vmin=None, vmax=None, output_filename="map_4d_logscale.png"):
         """
@@ -683,13 +683,14 @@ class plotting_helper:
         plt.figure()
         plt.scatter(x, y, alpha=0.5)
         plt.xlabel(r'$Topography (m)$')
+        # plt.xlabel(r'$Mean WTD_O (m)$')
         plt.ylabel(f"{title}")
         plt.xscale('log')
         if ylog:
             plt.yscale('log')
         if ysymlog:
             plt.yscale('symlog')
-        plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "statistics", f"topo_vs_{title}.png"), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"topo_vs_{title}.png"), dpi=300, bbox_inches='tight')
 
     def logscales_histogram(self, data, xlabel, ylabel, nbbins=50, title="Histogram"):
         plt.figure(figsize=(10, 6))

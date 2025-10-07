@@ -10,15 +10,15 @@ def get_root_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 # number of cells
-X = 20 #238
-Y = 20 #240
+X = 10 #238
+Y = 10 #240
 NB_CELLS = X*Y
 
 member = int(os.environ.get("ENS_MEMBER", 0))
 
 # study region
-TARGET_REGION = f"400px_member_{member}"
-SOURCE_REGION = f"400px_member_{member}"
+TARGET_REGION = f"ensemble_mean"
+SOURCE_REGION = f"ensemble_mean"
 
 # directory and inputs
 OUTPUTPATH = os.path.join(get_root_dir(), "outputs", "20yrs_ts", "ensemble_400px", TARGET_REGION)
