@@ -337,21 +337,17 @@ class postprocess_calculations:
         plt.savefig(os.path.join(OUTPUTPATH, "transfer_timeseries", f"ensemble_timeseries_{i}_{j}.png"))
 
     def ens_mean(self):
-        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        obs_destand_test[obs_destand_test < 0.0] = 0.0
-
-        sim = np.zeros(obs_destand_test.shape)
-        for pixel in range(100):
-            ens_mean = np.zeros((obs_destand_test.shape[0], 100))
+        for target in range(100):
+            obs_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), "400px_member_0", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            ens_mean = np.zeros((obs_destand_test.shape[0], obs_destand_test.shape[1], 100))
             for m in range(100):
-                sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"100px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
-                sim_destand_test[sim_destand_test < 0.0] = 0.0
-                ens_mean[:,m] = sim_destand_test[:,pixel]
-            sim[:, pixel] = np.mean(ens_mean, axis=1)
-        print(obs_destand_test.shape)
-        print(sim.shape)
-        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean", f"obs_destand_{MODEL_NAME}.npy"), obs_destand_test)
-        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean", f"sim_destand_{MODEL_NAME}.npy"), sim)
+                sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
+                ens_mean[:,:,m] = sim_destand_test[:,:]
+            sim = np.mean(ens_mean, axis=2)
+            print(obs_destand_test.shape)
+            print(sim.shape)
+            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}.npy"), obs_destand_test)
+            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}.npy"), sim)
 
     def ens_timeseries_vs(self, i, j):
         obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
@@ -415,8 +411,8 @@ class postprocess_calculations:
         utils = utilities()
         EU_validation = "validation_400_withcriteria_43226"
         EU_trian = "validation_400_withcriteria_43226"
-        EU_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_validation}/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        EU_outpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_validation}/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
         EU_train_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_trian}/inputs/20yrs_ts/ensemble_400px", "target_pixels")
         transfer_subset = np.load(os.path.join(EU_train_inpath, "transfer_subset.npy"))
 
@@ -568,13 +564,13 @@ class postprocess_calculations:
         # NOTE we do this acc and statistics relationship only for transfer pixels for consistency with other metrics
         # and also for the same reasons as the other metrics
 
-        # crpstrain = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"crps_99members_onlytraining.npy"))
-        crpstransfer = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"crps_100members_onlytransfer.npy"))
+        # crpstrain = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"crps_99members_onlytraining.npy"))
+        crpstransfer = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"crps_100members_onlytransfer.npy"))
 
-        transfersims = [np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy")) for target in range(100)]
+        transfersims = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy")) for target in range(100)]
         transfersims = np.concatenate(transfersims, axis=2) #(100 members, timeseries, pixels)
 
-        # trainsims = [np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"sim_99members_ts_trainpixels_{target}.npy")) for target in range(100)]
+        # trainsims = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_99members_ts_trainpixels_{target}.npy")) for target in range(100)]
         # trainsims = np.concatenate(trainsims, axis=2) #(99 members, timeseries, pixels)
 
         # Calculate diversity by Pairwise correlation
@@ -921,7 +917,7 @@ class postprocess_calculations:
         bias = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
         
         #### Transfer & training filtered subsets ####
-        EU400px_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU400px_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
         EU100px_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts/ensemble_100px", "ensemble_mean")
         training_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU400px_inpath)), "training_subset.npy"))
         training_subset_100px = np.load(os.path.join(os.path.dirname(EU100px_inpath), "target_pixels", "training_subset_ensemble100px.npy"))
@@ -1076,43 +1072,43 @@ class postprocess_calculations:
     def crps_seasonal_trainEU(self):
         utils = utilities()
 
-        obs = [np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"obs_ts_trainpixels_{target}.npy")) for target in range(100)]
-        sims = [np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"sim_99members_ts_trainpixels_{target}.npy")) for target in range(100)]
+        obs = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_ts_trainpixels_{target}.npy")) for target in range(100)]
+        sims = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_99members_ts_trainpixels_{target}.npy")) for target in range(100)]
 
         obs = np.concatenate(obs, axis=1) #(timeseries, pixels)
         sims = np.concatenate(sims, axis=2) #(99 members, timeseries, pixels)
         
         crps = utils.compute_mean_seasonal_crps(observations=obs, simulations=sims, plot=True, title="train")
-        np.save(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"seasonalcrps_99members_onlytraining_4years4seasonspixel.npy"), crps)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_99members_onlytraining_4years4seasonspixel.npy"), crps)
 
     def crps_seasonal_transferEU(self):
         utils = utilities()
 
-        obs = [np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"obs_ts_transferpixels_{target}.npy")) for target in range(100)]
-        sims = [np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy")) for target in range(100)]
+        obs = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_ts_transferpixels_{target}.npy")) for target in range(100)]
+        sims = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy")) for target in range(100)]
 
         obs = np.concatenate(obs, axis=1) #(timeseries, pixels)
         sims = np.concatenate(sims, axis=2) #(99 members, timeseries, pixels)
         
         crps = utils.compute_mean_seasonal_crps(observations=obs, simulations=sims, plot=True, title="transfer")
-        np.save(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"seasonalcrps_100members_onlytransfer_4years4seasonspixel.npy"), crps)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_100members_onlytransfer_4years4seasonspixel.npy"), crps)
 
     def crps_transferEU(self):
         utils = utilities()
 
-        obs = [np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"obs_ts_transferpixels_{target}.npy")) for target in range(100)]
-        sims = [np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy")) for target in range(100)]
+        obs = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_ts_transferpixels_{target}.npy")) for target in range(100)]
+        sims = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy")) for target in range(100)]
 
         obs = np.concatenate(obs, axis=1) #(timeseries, pixels)
         sims = np.concatenate(sims, axis=2) #(99 members, timeseries, pixels)
 
         crps = utils.compute_crps_all_pixels(observations=obs, simulations=sims, plot=False)
-        np.save(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"crps_100members_onlytransfer.npy"), crps)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), f"crps_100members_onlytransfer.npy"), crps)
 
     def cdfplot_crps(self):
         utils = utilities()
-        crpstrain = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"crps_99members_onlytraining.npy"))
-        crpstransfer = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"crps_100members_onlytransfer.npy"))
+        crpstrain = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"crps_99members_onlytraining.npy"))
+        crpstransfer = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"crps_100members_onlytransfer.npy"))
         crps = np.concatenate((crpstrain, crpstransfer), axis=0)
 
         utils.plot_cdfs(data_dict={
@@ -1122,8 +1118,8 @@ class postprocess_calculations:
         return
     
     def boxplot_seasonal_crps(self):
-        crpstrain = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"seasonalcrps_99members_onlytraining_4years4seasonspixel.npy"))
-        crpstransfer = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"seasonalcrps_100members_onlytransfer_4years4seasonspixel.npy"))
+        crpstrain = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_99members_onlytraining_4years4seasonspixel.npy"))
+        crpstransfer = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_100members_onlytransfer_4years4seasonspixel.npy"))
         crps = np.concatenate((crpstrain, crpstransfer), axis=2)
         # Plot boxplot per season per year
         fig, axs = plt.subplots(1, crps.shape[0], figsize=(20, 6), sharey=True)
@@ -1140,8 +1136,8 @@ class postprocess_calculations:
     def mapplot_seasonal_crps(self):
         utils = utilities()
         plotting = plotting_helper()
-        crpstrain = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"seasonalcrps_99members_onlytraining_4years4seasonspixel.npy"))
-        crpstransfer = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", f"seasonalcrps_100members_onlytransfer_4years4seasonspixel.npy"))
+        crpstrain = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_99members_onlytraining_4years4seasonspixel.npy"))
+        crpstransfer = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_100members_onlytransfer_4years4seasonspixel.npy"))
         training_map = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px", "target_pixels", "training_subset.npy"))
         transfer_map = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px", "target_pixels", "transfer_subset.npy"))
         crps4D = np.zeros((4, 4, training_map.shape[0], training_map.shape[1]))
@@ -1149,7 +1145,7 @@ class postprocess_calculations:
         traintarget_indx = 0
         transfertarget_indx = 0
         for target in range(100):
-            target_map = np.load(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            target_map = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             trainingpixels_in_target1d, trainingpixels_in_target2d = utils.intersect_subsets(target_map, training_map)
             transferpixels_in_target1d, transferpixels_in_target2d = utils.intersect_subsets(target_map, transfer_map)
             for i, pixel in enumerate(trainingpixels_in_target1d):
@@ -1164,8 +1160,8 @@ class postprocess_calculations:
 
     def preprocess_crps_trainingEU(self):
         utils = utilities()
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
         EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
         trainmembers_mapping = np.load(os.path.join(EU_traininpath, "mapping_memberstrainpixels.npy"))
         training_mapping = np.load(os.path.join(EU_traininpath, "target_pixels", "training_subset.npy"))
@@ -1187,13 +1183,13 @@ class postprocess_calculations:
                 pixel_sim = members_sim[member_mask, :, :][..., pixel]
                 output[:, :, i] = pixel_sim
                 out_obs[:,i] = obs[:, pixel]
-            np.save(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"sim_99members_ts_trainpixels_{target}.npy"), output)
-            np.save(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"obs_ts_trainpixels_{target}.npy"), out_obs)
+            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_99members_ts_trainpixels_{target}.npy"), output)
+            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_ts_trainpixels_{target}.npy"), out_obs)
 
     def preprocess_crps_transferEU(self):
         utils = utilities()
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
         EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
         trainmembers_mapping = np.load(os.path.join(EU_traininpath, "mapping_memberstrainpixels.npy"))
         transfer_mapping = np.load(os.path.join(EU_traininpath, "target_pixels", "transfer_subset.npy"))
@@ -1211,8 +1207,8 @@ class postprocess_calculations:
             out_obs = np.zeros((members_sim.shape[1], len(transferpixels_in_target1d)))
             output[:, :, :] = members_sim[:, :, transferpixels_in_target1d]
             out_obs[:,:] = obs[:, transferpixels_in_target1d]
-            np.save(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy"), output)
-            np.save(os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", f"target_pixels_{target}", f"obs_ts_transferpixels_{target}.npy"), out_obs)
+            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy"), output)
+            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_ts_transferpixels_{target}.npy"), out_obs)
                 
     
     def confirm_choices_mapping(self):
@@ -1265,14 +1261,14 @@ class postprocess_calculations:
 
     def concat_EU_transfer_testtrain_outputs(self):
         utils = utilities()
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
+        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts/ensemble_100px", "ensemble_mean")
+        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/outputs/20yrs_ts/ensemble_100px", "ensemble_mean")
+        EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts", "ensemble_100px")
         print(EU_inpath)
         for target in range(100):
             target_mapping = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
-            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"100px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"100px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
             members_sim = np.array(members_sim)
             members_sim = np.expand_dims(members_sim, axis=0)
             members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
@@ -1287,7 +1283,7 @@ class postprocess_calculations:
                 member_mask[member] = False
                 pixel_mask = np.zeros(members_sim.shape[2], dtype=bool)
                 # get the 2d mapping file of indices of pixels used in training this member
-                member_mapping = np.load(os.path.join(EU_traininpath, f"400px_member_{member}", "choices.npy"))
+                member_mapping = np.load(os.path.join(EU_traininpath, f"100px_member_{member}", "choices.npy"))
                 # call function here to find which pixels of my target chunk were included in the training of this specific member
                 indices1d, indices2d = utils.intersect_subsets(target_mapping, member_mapping)
                 # chunk pixels included in training are set as True
@@ -1361,8 +1357,8 @@ class postprocess_calculations:
             return all_kge, all_nse, all_bias
 
         def load_obs_sim(target):
-            obs_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}_{target}.npy"))
-            sim_destand_test = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
+            obs_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}.npy"))
+            sim_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}.npy"))
             obs_destand_test = np.nan_to_num(obs_destand_test)
             sim_destand_test = np.nan_to_num(sim_destand_test)
             obs_destand_test[obs_destand_test < 0.0] = 0.0
@@ -1370,14 +1366,14 @@ class postprocess_calculations:
             return obs_destand_test, sim_destand_test
         
         utils = utilities()
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_inpath = os.path.dirname(INPUTPATH)
         print("starting calculations")
 
         #### Transfer subset ####
         
         # filtered subset
-        transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
-        training_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "training_subset.npy"))
+        transfer_subset = np.load(os.path.join(EU_inpath, "target_pixels", "transfer_subset.npy"))
+        training_subset = np.load(os.path.join(EU_inpath, "target_pixels", "training_subset.npy"))
 
         corr2d = np.zeros(transfer_subset.shape)
         corr2d[corr2d==0] = np.nan
@@ -1392,7 +1388,7 @@ class postprocess_calculations:
         for target in range(100):
             print(target)
             obs_destand_test, sim_destand_test = load_obs_sim(target)
-            target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            target_map = np.load(os.path.join(EU_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             indices, indices_2d = utils.intersect_subsets(target_map, transfer_subset)
             indices_train, indices_2d_train = utils.intersect_subsets(target_map, training_subset)
 
@@ -1446,6 +1442,7 @@ class postprocess_calculations:
         plot_functions = plotting_helper()
         topo_v1 = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))
         topo_v1 = topo_v1[0,:,:]
+        # topo_v1 = np.mean(topo_v1[-365:,:,:], axis=0)  # average wtd for year 2020
 
         topo = topo_v1
         topo[np.isnan(corr2d)] = np.nan
@@ -1476,8 +1473,8 @@ class postprocess_calculations:
         # TODO review it because it got messy
         utils = utilities()
         print("calculating 2d ensemble mean")
-        dirpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        dirpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
         subset = np.load(os.path.join(os.path.dirname(os.path.dirname(dirpath)), "transfer_subset.npy"))
         print(np.sum(subset))
         obs3d = np.zeros((TEST_PERIOD-LOOKBACK,subset.shape[0], subset.shape[1]))
@@ -1580,8 +1577,8 @@ class postprocess_calculations:
     def estimate_acc_from_stats(self):
         utils = utilities()
         plot_functions = plotting_helper()
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/validation_400_withcriteria_43226/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
         EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
         rollsubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "ensemble_400px_org", "mapping_0stdroll6months.npy"))
         iqrmap = np.zeros(rollsubset.shape)
@@ -1655,8 +1652,8 @@ class postprocess_calculations:
         utils = utilities()
         EU_validation = "validation_400_withcriteria_43226"
         EU_trian = "validation_400_withcriteria_43226"
-        EU_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_validation}/inputs/20yrs_ts/ensemble_400px", "ensemble_mean")
-        EU_outpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_validation}/outputs/20yrs_ts/ensemble_400px", "ensemble_mean")
+        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
         EU_train_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_trian}/inputs/20yrs_ts/ensemble_400px", "target_pixels")
         transfer_subset = np.load(os.path.join(EU_train_inpath, "transfer_subset.npy"))
         topo = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))
@@ -1834,3 +1831,67 @@ class postprocess_calculations:
         plt.grid(True, linestyle='--', alpha=0.4)
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "KGEcomp_EV_kgelessthan02.png"), dpi=300)
+    
+    def check_equal_files(self):
+        dir1 = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_100px"
+        dir2 = "/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts/ensemble_100px"
+        file1 = np.load(os.path.join(dir1, "target_pixels_75", "sim_testtrainpixels_75.npy"))
+        file2 = np.load(os.path.join(dir2, "target_pixels_75", "sim_testtrainpixels_75.npy"))
+        file3 = np.load(os.path.join(dir2, "target_pixels_75", "sim_testtrainpixels_75_old.npy"))
+        file1 = np.nan_to_num(file1)
+        file2 = np.nan_to_num(file2)
+        file3 = np.nan_to_num(file3)
+        print(np.unique(np.equal(file1, file2), return_counts=True))
+        print(np.unique(np.equal(file1, file3), return_counts=True))
+        print(np.unique(np.equal(file2, file3), return_counts=True))
+        print(file1)
+        print(file2)
+
+    def delete_old_files(self):
+        dirpath = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_400px"
+        for i in range(100):
+            print(i)
+            targetpath = os.path.join(dirpath, f"target_pixels_{i}")
+            if os.path.exists(os.path.join(targetpath, f"sim_destand_{MODEL_NAME}_{i}.npy")):
+                os.remove(os.path.join(targetpath, f"sim_destand_{MODEL_NAME}_{i}.npy"))
+            if os.path.exists(os.path.join(targetpath, f"obs_destand_{MODEL_NAME}_{i}.npy")):
+                os.remove(os.path.join(targetpath, f"obs_destand_{MODEL_NAME}_{i}.npy"))
+            if os.path.exists(os.path.join(targetpath, f"obs_testtrainpixels_{i}.npy")):
+                os.remove(os.path.join(targetpath, f"obs_testtrainpixels_{i}.npy"))
+    
+    def move_old_files(self):
+        import shutil
+        inpath = os.path.dirname(OUTPUTPATH)
+        outpath = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/outputs/20yrs_ts/ensemble_400px"
+        for i in range(100):
+            print(i)
+            ####### from /outputs/20yrs_ts/ensemble_400px ####
+            if os.path.exists(os.path.join(inpath, f"crps_100members_onlytransfer.npy")):
+                shutil.move(os.path.join(inpath, f"crps_100members_onlytransfer.npy"), os.path.join(outpath, f"crps_100members_onlytransfer.npy"))
+                print("moved crps_100members_onlytransfer")
+            ####### from /inputs/20yrs_ts/ensemble_400px ####
+            intargetpath = os.path.join(inpath, f"target_pixels_{i}")
+            if os.path.exists(os.path.join(intargetpath, f"obs_{i}.npy")):
+                shutil.move(os.path.join(intargetpath, f"obs_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"obs_{i}.npy"))
+                print("moved obs")
+            if os.path.exists(os.path.join(intargetpath, f"obs_ts_trainpixels_{i}.npy")):
+                shutil.move(os.path.join(intargetpath, f"obs_ts_trainpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"obs_ts_trainpixels_{i}.npy"))
+                print("moved obs_ts_trainpixels")
+            if os.path.exists(os.path.join(intargetpath, f"obs_ts_transferpixels_{i}.npy")):
+                shutil.move(os.path.join(intargetpath, f"obs_ts_transferpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"obs_ts_transferpixels_{i}.npy"))
+                print("moved obs_ts_transferpixels")
+
+            if os.path.exists(os.path.join(intargetpath, f"sim_100members_ts_transferpixels_{i}.npy")):
+                shutil.move(os.path.join(intargetpath, f"sim_100members_ts_transferpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_100members_ts_transferpixels_{i}.npy"))
+                print("moved sim_100members_ts_transferpixels")
+            if os.path.exists(os.path.join(intargetpath, f"sim_99members_ts_trainpixels_{i}.npy")):
+                shutil.move(os.path.join(intargetpath, f"sim_99members_ts_trainpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_99members_ts_trainpixels_{i}.npy"))
+                print("moved sim_99members_ts_trainpixels")
+
+            if os.path.exists(os.path.join(intargetpath, f"sim_testtrainpixels_{i}.npy")):
+                shutil.move(os.path.join(intargetpath, f"sim_testtrainpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_testtrainpixels_{i}.npy"))
+                print("moved sim_testtrainpixels")
+
+            if os.path.exists(os.path.join(intargetpath, f"sim_transferpixels_{i}.npy")):
+                shutil.move(os.path.join(intargetpath, f"sim_transferpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_transferpixels_{i}.npy"))
+                print("moved sim_transferpixels")
