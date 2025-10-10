@@ -2,7 +2,7 @@ import argparse
 import matplotlib.pyplot as plt
 from LSTM_model.model.config import *
 from LSTM_model.model.train_LSTM import train_LSTM_model
-from LSTM_model.model.validate_LSTM import validate_LSTM_model, transfer_ensemble_LSTM
+from LSTM_model.model.validate_LSTM import transfer_ensemble_LSTM
 from LSTM_model.data.postprocess import postprocess_calculations
 from LSTM_model.data.preprocess import preprocessing_data
 from LSTM_model.data.rawdataset import preprocess_rawdata
@@ -12,6 +12,7 @@ from LSTM_model.utils.utils import utilities
 
 
 parser = argparse.ArgumentParser()
+# parser.add_argument('--batchind', type=str, required=True, help='yyyymmdd00') # month of simulation
 
 parser.add_argument('-r', '--raw', action='store_true', required=False, help='Rawdata preprocessing')
 
@@ -40,8 +41,9 @@ if args.train:
 
 if args.eval:
     validate_LSTM = transfer_ensemble_LSTM()
-    validate_LSTM.transfer_ensemble()
+    # batchind = args.batchind
+    # validate_LSTM.transfer_ensemble(batchind=batchind)
 
 if args.calc:
     postprocess = postprocess_calculations()
-    # call function here
+    postprocess.ensemble_statvsacc()

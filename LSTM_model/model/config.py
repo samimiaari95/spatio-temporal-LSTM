@@ -10,26 +10,25 @@ def get_root_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 # number of cells
-X = 10 #238
-Y = 10 #240
+X = 21613
+Y = 2
 NB_CELLS = X*Y
 
 member = int(os.environ.get("ENS_MEMBER", 0))
 
 # study region
-TARGET_REGION = f"ensemble_mean"
-SOURCE_REGION = f"ensemble_mean"
+REGION = f"EU_74_-48_69_20"
 
 # directory and inputs
-OUTPUTPATH = os.path.join(get_root_dir(), "outputs", "20yrs_ts", "ensemble_400px", TARGET_REGION)
-INPUTPATH = os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px", SOURCE_REGION)
-FEATURES_FILES = ["TOT_PREC.npy", "vpd.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", "soilind.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
+OUTPUTPATH = os.path.join(get_root_dir(), "outputs", REGION)
+INPUTPATH = os.path.join(get_root_dir(), "inputs", REGION)
+FEATURES_FILES = ["total_precipitation_EU.npy", "vpd_EU.npy", "volumetric_soil_water_layer_3_EU.npy", "slopex.npy", "slopey.npy", "soilind.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
 TARGETVAR_FILE = "wtd.npy"
 
 # time period
 TRAINING_PERIOD = 365*15
 LOOKBACK = 365
-TEST_PERIOD = 365*4+LOOKBACK
+TEST_PERIOD = 31+LOOKBACK
 
 # lstm setup
 INPUT_SIZE = len(FEATURES_FILES)

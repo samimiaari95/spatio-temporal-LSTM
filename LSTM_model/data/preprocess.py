@@ -1,6 +1,7 @@
 import os
 import pickle
 import h5py
+import shutil
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -15,29 +16,31 @@ class preprocessing_data:
         pass
 
     def conc_vars(self):
-        dirpath = "/p/scratch/cslts/miaari1/raw"
-        outpath = os.path.join(get_root_dir(), "inputs", "20yrs_ts")
-        # output_dic = {"soilmoisture": np.array([])}
-        #output_dic = {"QFLX_EVAP_TOT": np.array([]), "soilmoisture": np.array([]), "subSurfStor": np.array([]),
-        #              "TMAX_2M": np.array([]), "TMIN_2M": np.array([]), "TOT_PREC": np.array([]), "wtd": np.array([])}
-        output_dic = {"vpd": np.array([])}
-        months = [x for x in os.listdir(dirpath)]
+        dirpath19 = os.path.join(INPUTPATH, "raw", "2019", "npy")
+        dirpath20 = os.path.join(INPUTPATH, "raw", "2020", "npy")
+        outpath = os.path.join(INPUTPATH)
+        output_dic = {"total_precipitation_2019": np.array([]), "volumetric_soil_water_layer_3_2019": np.array([]), "vpd_2019": np.array([])}
+        months = ["01","02","03","04","05","06","07","08","09","10","11","12"]
         months.sort()
-        for month in months:
-            print(month)
-            vars = [x for x in os.listdir(os.path.join(dirpath, month)) if x.endswith(".npy") and "vpd" in x]
-            for var in vars:
-                varname = var.replace(f"_{month}.npy","")
-                data = np.load(os.path.join(dirpath, month, var))
-                if len(output_dic[f"{varname}"])>=1:
-                    output_dic[f"{varname}"] = np.concatenate((output_dic[f"{varname}"], data), axis=0)
+        for var in output_dic.keys():
+            print(var)
+            for month in months:
+                print(month)
+                data = np.load(os.path.join(dirpath19, f"{var}{month}_EU.npy"))
+                if len(output_dic[f"{var}"])>=1:
+                    output_dic[f"{var}"] = np.concatenate((output_dic[f"{var}"], data), axis=0)
                 else:
-                    output_dic[f"{varname}"] = data
+                    output_dic[f"{var}"] = data
 
         for key in output_dic.keys():
             print(key)
             print(output_dic[key].shape)
-            np.save(os.path.join(outpath, f"{key}.npy"), output_dic[key])
+            output_dic[key] = np.concatenate((output_dic[key], np.load(os.path.join(dirpath20, f"{key.replace('2019','202001')}_EU.npy"))), axis=0)
+        print("added january 2020")
+        for key in output_dic.keys():
+            print(key)
+            print(output_dic[key].shape)
+            np.save(os.path.join(outpath, f"{key.replace('_2019','')}_EU.npy"), output_dic[key])
 
     def features_correlation(self):
         plot_functions = plotting_helper()
@@ -248,77 +251,18 @@ class preprocessing_data:
         np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "unchosen_pixels.npy"), mapping)
     
     def ensemble_cropvars(self):
-        forkpath = os.path.join(os.path.dirname(get_root_dir()), "fork", "train_400_withcriteria_43226", "inputs", "20yrs_ts", "ensemble_400px")
-        varnames = [x for x in FEATURES_FILES]
+        varnames = ["total_precipitation_EU.npy", "vpd_EU.npy", "volumetric_soil_water_layer_3_EU.npy", "slopex.npy", "slopey.npy", "soilind.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
         varnames.append("wtd.npy")
-        varnames = ["vpd.npy"]
         for varname in varnames:
-            vardata = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), varname))
+            vardata = np.load(os.path.join(INPUTPATH, varname))
+            print(varname)
+            print(vardata.shape)
             for m in range(100):
-                m=9
-                print(f"400px_member_{m}")
-                mapping = np.load(os.path.join(forkpath, f"400px_member_{m}", "choices.npy"))
+                print(f"target_pixels_{m}")
+                mapping = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{m}", f"mappingindices_{m}.npy"))
                 var = vardata
                 var = var[:,mapping==1]
-                np.save(os.path.join(forkpath, f"400px_member_{m}", varname), var)
-
-    def jobs_scripts(self):
-        filepath = os.path.join(get_root_dir(), "pythonjob_juwels_2nodes.sh")
-        f = open(filepath, "r")
-        sbatch = f.readlines()
-        f.close()
-        sbatch = sbatch[:19]
-        #jobname = f"100x100_256dr0x1lr1x50_365x1000_prvpdsmxyindlonlat_member{i}"
-        run_command_2 = "tclsh exfiltration.tcl"    
-        for i in range(0, 100):
-            case_path = f"cd /p/scratch/cslts/miaari1/infexfcases/test_case{i}"
-            sbatch.append(case_path)
-            #sbatch.append(jobname)
-            sbatch.append(run_command_2)
-        
-        with open("/p/project/cslts/miaari1/parflow_simulations.sh", 'w') as sbatchfile:
-            sbatchfile.write('\n'.join(sbatch))
-        sbatchfile.close()
-
-    def stand_npy_hdf5(self):
-        utils = utilities()
-
-        if os.path.exists(os.path.join(OUTPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl")):
-            with open(os.path.join(OUTPUTPATH, f"meanstd_{SOURCE_REGION}_{MODEL_NAME}.pkl"), 'rb') as f:
-                means_stds = pickle.load(f)
-            f.close()
-        else:
-            means_stds = {}
-        # prepare input data, standardization, lookback and train time series
-        train_inputs, means_stds = utils.singleregion_inputfeatures(0, TRAINING_PERIOD, means_stds)
-
-        # prepare input data of target variable and standardize
-        obs_stand_train, means_stds = utils.singleregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
-
-        filename = "target1d_inputs3d_pointsxlookbackxfeatures.h5"
-        # Save the array in HDF5 format
-        with h5py.File(os.path.join(INPUTPATH, filename), "w") as h5_file:
-            # Create a dataset and store the 3D array
-            h5_file.create_dataset("input_data", data=train_inputs)
-            h5_file.create_dataset("target_data", data=obs_stand_train)
-        
-        print("successfully saved")
-
-        train_inputs = None
-        obs_stand_train = None
-        with h5py.File(os.path.join(INPUTPATH, filename), "r") as h5_file:
-            loaded_array = h5_file["input_data"][:]
-            print(loaded_array.shape)  # Should match the original array shape
-            loaded_array = h5_file["target_data"][:]
-            print(loaded_array.shape)  # Should match the original array shape
-
-
-        print(means_stds)
-        # save training data mean and std
-        with open(os.path.join(INPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"), 'wb') as f:
-            pickle.dump(means_stds, f)
-        f.close()
-        print("saved pickle")
+                np.save(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{m}", varname), var)
     
     def ensemble_pixels(self):
         choices = np.load(os.path.join(INPUTPATH, "choices.npy"))
@@ -342,7 +286,7 @@ class preprocessing_data:
 
     def split_mapping(self):
         utils = utilities()
-        mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "included_excl_waterbodies.npy"))
+        mapping = np.load(os.path.join(INPUTPATH, "mapping_0stdroll6months.npy"))
         indices = np.where(mapping==1)
         print(len(indices[0]))
         indlength = len(indices[0])
@@ -358,8 +302,8 @@ class preprocessing_data:
 
         for i in range(num_splits):
             print(np.sum(split_arrays[i]))
-            utils.make_dir(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{i}"))
-            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{i}", f"mappingindices_{i}.npy"), split_arrays[i])
+            utils.make_dir(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{i}"))
+            np.save(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{i}", f"mappingindices_{i}.npy"), split_arrays[i])
             testsummapping = np.where(testsummapping==1, 1, split_arrays[i])
         
         print("total sum")
@@ -390,3 +334,41 @@ class preprocessing_data:
             mapping = np.where(choices==1, i, mapping)
         np.save(os.path.join(train_in_path, "mapping_memberstrainpixels100.npy"), mapping)
         print(mapping[~np.isnan(mapping)].shape)
+    
+    def deleteoldmodels(self):
+        rootdir = os.path.join(INPUTPATH, "validation_ERA5")
+        for i in range(100):
+            print(f"member {i}")
+            targetdir = os.path.join(rootdir, f"target_pixels_{i}")
+            files = [x for x in os.listdir(targetdir)]
+            for file in files:
+                os.remove(os.path.join(targetdir, file))
+    
+    def get_preselected_targetpixels(self):
+        utils = utilities()
+        indir = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_400px"
+        outdir = os.path.join(INPUTPATH, "validation_ERA5")
+        for i in range(100):
+            print(f"member {i}")
+            utils.make_dir(os.path.join(outdir, f"400px_member_{i}"))
+            # shutil.copy2(os.path.join(indir, f"target_pixels_{i}", f"mappingindices_{i}.npy"), os.path.join(outdir, f"target_pixels_{i}", f"mappingindices_{i}.npy"))
+            shutil.copy2(os.path.join(indir, f"400px_member_{i}", f"choices.npy"), os.path.join(outdir, f"400px_member_{i}", f"choices.npy"))
+        
+
+    def get_pretrained400pxmodels(self):
+        utils = utilities()
+        indir = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/outputs/20yrs_ts/ensemble_400px"
+        outdir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px")
+        for i in range(100):
+            print(f"member {i}")
+            utils.make_dir(os.path.join(outdir, f"400px_member_{i}"))
+            shutil.copy2(os.path.join(indir, f"400px_member_{i}", f"400px_member_{i}_100_256dr0x1lr01x50_365x1000_prvpdsmxyind.png"), os.path.join(outdir, f"400px_member_{i}", f"400px_member_{i}_100_256dr0x1lr01x50_365x1000_prvpdsmxyind.png"))
+            shutil.copy2(os.path.join(indir, f"400px_member_{i}", f"400px_member_{i}_100_256dr0x1lr01x50_365x1000_prvpdsmxyind.pt"), os.path.join(outdir, f"400px_member_{i}", f"400px_member_{i}_100_256dr0x1lr01x50_365x1000_prvpdsmxyind.pt"))
+            shutil.copy2(os.path.join(indir, f"400px_member_{i}", f"meanstd_400px_member_{i}_100_256dr0x1lr01x50_365x1000_prvpdsmxyind.pkl"), os.path.join(outdir, f"400px_member_{i}", f"meanstd_400px_member_{i}_100_256dr0x1lr01x50_365x1000_prvpdsmxyind.pkl"))
+    
+    def check_inputvars(self):
+        dirpath = os.path.join(INPUTPATH, "raw", "2020", "npy")
+        for var in os.listdir(dirpath):
+            print(var)
+            data = np.load(os.path.join(dirpath, var))
+            print(data.shape)
