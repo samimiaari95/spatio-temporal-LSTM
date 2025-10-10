@@ -218,6 +218,41 @@ class preprocess_rawdata:
             outfile = os.path.join(outpath, month, f"vpd_{month}.npy")
             np.save(outfile, data)
     
+    def calculate_vpd_fromTandTd(self, month):
+        utils = utilities()
+        dirpath = os.path.join(get_root_dir(), 'inputs', 'EU_74_-48_69_20', "raw", "2019")
+        t2m = utils.read_nc(os.path.join(dirpath, f'BonA_2m_temperature_2019{month}.nc'), 't2m') - 273.15
+        d2m = utils.read_nc(os.path.join(dirpath, f'BonA_2m_dewpoint_temperature_2019{month}.nc'), 'd2m') - 273.15
+        print(t2m.shape)
+        print(d2m.shape)
+        es = 0.611 * np.exp((17.27 * t2m) / (t2m + 237.3))
+        ea = 0.611 * np.exp((17.27 * d2m) / (d2m + 237.3))
+        vpd = es - ea
+        print(vpd)
+        print(vpd.shape)
+        vpd_daily = self.temporalAgg_matrix(vpd, timestep=60, agg='mean')
+        np.save(os.path.join(dirpath, "npy", f'vpd_2019{month}_EU.npy'), vpd_daily)
+        return
+    
+    def rawdata_temporal_agg(self, infile, outfile, varname, method='mean'):
+        """
+        Perform temporal aggregation on a netCDF file and save the result to a new file.
+
+        Parameters:
+        infile (str): Path to the input netCDF file.
+        outfile (str): Path to the output netCDF file.
+        varname (str): Name of the variable to aggregate.
+        method (str): Aggregation method ('mean', 'sum', etc.). Default is 'mean'.
+        """
+        utils = utilities()
+        # Open the input dataset
+        var_data = utils.read_nc(filepath=infile, var=varname)
+        print(var_data.shape)
+        dailydata = self.temporalAgg_matrix(var_data, timestep=60, agg=method)
+        print(dailydata.shape)
+        np.save(outfile, dailydata)
+        return
+
     def avgwtd_2020(self):
         plots = plotting_helper()
         wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))

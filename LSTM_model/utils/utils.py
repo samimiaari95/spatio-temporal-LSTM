@@ -266,7 +266,7 @@ class utilities:
         return data, means_stds
     
     def transferpx_targetvar(self, start, end, means_stds, batchind):
-        raw_data = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{batchind}", TARGETVAR_FILE))
+        raw_data = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{batchind}", TARGETVAR_FILE))
         raw_data = np.nan_to_num(raw_data)
         raw_data[raw_data < 0.0] = 0
 
@@ -286,7 +286,7 @@ class utilities:
         all_inputs = np.array([])
         for inputvar in FEATURES_FILES:
             print(inputvar)
-            raw_data = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{batchind}", inputvar))
+            raw_data = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{batchind}", inputvar))
             raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS) if len(raw_data.shape)>2 else raw_data
             data = raw_data[start:end, :]
             data = np.moveaxis(data, 0, -1) # (cells, timeseries)
@@ -396,7 +396,7 @@ class utilities:
         if grid:
             ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"cdf_{xlabel}_{title}.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "statistics", f"cdf_{xlabel}_{title}.png"))
         return print(f"plotted cdfs of {xlabel}")
 
     def plot_pdfs(self,

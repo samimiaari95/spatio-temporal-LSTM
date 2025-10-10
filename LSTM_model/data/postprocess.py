@@ -338,16 +338,17 @@ class postprocess_calculations:
 
     def ens_mean(self):
         for target in range(100):
-            obs_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), "400px_member_0", f"obs_destand_{MODEL_NAME}_{target}.npy"))
-            ens_mean = np.zeros((obs_destand_test.shape[0], obs_destand_test.shape[1], 100))
+            print(f"processing target {target}")
+            obs = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "400px_member_0", f"obs_{target}.npy"))
+            ens_mean = np.zeros((obs.shape[0], obs.shape[1], 100))
             for m in range(100):
-                sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
+                sim_destand_test = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{m}", f"sim_{target}.npy"))
                 ens_mean[:,:,m] = sim_destand_test[:,:]
             sim = np.mean(ens_mean, axis=2)
-            print(obs_destand_test.shape)
+            print(obs.shape)
             print(sim.shape)
-            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}.npy"), obs_destand_test)
-            np.save(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}.npy"), sim)
+            np.save(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"obs_ensmean.npy"), obs)
+            np.save(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"sim_ensmean.npy"), sim)
 
     def ens_timeseries_vs(self, i, j):
         obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
@@ -381,51 +382,49 @@ class postprocess_calculations:
         plt.grid()
         plt.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "timeseries_meanvsweightedRMSE", f"ensemble_timeseries_{i}_{j}.png"))
 
-    def plot_ensemble_statsvsacc_timeseries(self, target, i, members_sim, mean_prediction, obs, kge, stat):
+    def plot_ensemble_statsvsacc_timeseries(self, target, i, members_sim, mean_prediction, obs, kge, stat, r):
         nb_members = 100
 
-        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
-        dates = dates[(dates.month != 2) | (dates.day != 29)]
+        dates = pd.date_range(start='2020-01-01', end='2020-01-31', freq='D')
+        # dates = dates[(dates.month != 2) | (dates.day != 29)]
         fig, ax = plt.subplots(figsize=(16, 10))
-        
-        print(f"plotting timeseries {i} with KGE: {kge} and EV: {stat}")
+
+        print(f"plotting timeseries {i} with KGE: {kge} , r: {r} and EV: {stat}")
         for m in range(nb_members):
             sim = members_sim[m,:,i]
-            ax.plot(dates, sim, color="gray")
+            ax.plot(dates, sim, color="gray", alpha=0.5)
 
         ax.plot(dates, obs, "k-", label="Observations", linewidth=4.0)
         ax.plot(dates, mean_prediction, "k--", label="Ensemble mean", linewidth=4.0)
-        ax.scatter([], [], color="k", label=f"KGE: {kge}, EV: {stat}")
+        ax.scatter([], [], color="k", label=f"KGE: {kge}, r: {r}, EV: {stat}")
 
-        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+        # ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
+        # ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%b'))
 
         plt.xticks(rotation=45)
         plt.ylabel('Water table depth (m)')
         plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.11), ncol=3)
         plt.grid()
-        plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "timeseries_EV_KGElessthan02", f"ensemble_timeseries_{target}_{i}.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "timeseries_EV_KGEr_lessthan02", f"timeseries_{target}_{i}.png"))
 
 
     def ensemble_statvsacc(self):
         utils = utilities()
-        EU_validation = "validation_400_withcriteria_43226"
-        EU_trian = "validation_400_withcriteria_43226"
-        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
-        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
-        EU_train_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_trian}/inputs/20yrs_ts/ensemble_400px", "target_pixels")
-        transfer_subset = np.load(os.path.join(EU_train_inpath, "transfer_subset.npy"))
+        EU_inpath = os.path.join(INPUTPATH, "validation_ERA5")
+        EU_outpath = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px")
+        transfer_subset = np.load(os.path.join(INPUTPATH, "transfer_subset.npy"))
 
-        #transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
         df_dic = {"stdsim":[], "stdobs":[], "meansim":[], "meanobs":[], "Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "KGE'":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Ensemble variance":[], "IQR (75-25%)":[], "std":[], "cv":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
         x_axis = []
         y_axis = []
         for target in range(100):
-            target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            target_map = np.load(os.path.join(EU_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             transfer_indices, ind2d = utils.intersect_subsets(target_map, transfer_subset)
-            obs = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            obs = np.load(os.path.join(EU_outpath, f"400px_member_1", f"obs_{target}.npy"))
             obs = obs[:, transfer_indices] # keep only transfer pixels
-            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            members_sim = [np.load(os.path.join(EU_outpath, f"400px_member_{m}", f"sim_{target}.npy")) for m in range(100)]
             members_sim = np.array(members_sim)
             members_sim = np.expand_dims(members_sim, axis=0)
             members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
@@ -521,12 +520,12 @@ class postprocess_calculations:
                 
                 # x_axis.append(ensemble_variance)
                 # y_axis.append(kgeprime)
-                # if kge<0.2 and ensemble_variance<1:
-                #     self.plot_ensemble_statsvsacc_timeseries(target, pixel, members_sim, mean_prediction, obs[:,pixel], f'{kge:.2f}', f'{math.ceil(ensemble_variance)}')
+                if kge<0.2:
+                    self.plot_ensemble_statsvsacc_timeseries(target, pixel, members_sim, mean_prediction, obs[:,pixel], f'{kge:.2f}', f'{math.ceil(ensemble_variance)}', f'{correlationobs:.2f}')
 
         ####### save to csv ########
-        df = pd.DataFrame(df_dic)
-        df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
+        # df = pd.DataFrame(df_dic)
+        # df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
 
     def kge_investigation(self):
         df = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
@@ -900,8 +899,8 @@ class postprocess_calculations:
             return all_kge, all_nse, all_bias
 
         def load_obs_sim(dirpath, target, obsname, simname):
-            obs = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", obsname))
-            sims = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", simname))
+            obs = np.load(os.path.join(dirpath, f"target_pixels_{target}", obsname))
+            sims = np.load(os.path.join(dirpath, f"target_pixels_{target}", simname))
             obs = np.nan_to_num(obs)
             sims = np.nan_to_num(sims)
             obs[obs < 0.0] = 0.0
@@ -910,26 +909,72 @@ class postprocess_calculations:
 
         utils = utilities()
         print("starting the cdf calculation")
-        correlation = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
-        rmse = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
-        kge = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
-        nse = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
-        bias = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
+        correlation = {"transfer_400px":[], "test_400px":[], "transfer_ERA5":[], "test_ERA5":[]}
+        rmse = {"transfer_400px":[], "test_400px":[], "transfer_ERA5":[], "test_ERA5":[]}
+        kge = {"transfer_400px":[], "test_400px":[], "transfer_ERA5":[], "test_ERA5":[]}
+        nse = {"transfer_400px":[], "test_400px":[], "transfer_ERA5":[], "test_ERA5":[]}
+        bias = {"transfer_400px":[], "test_400px":[], "transfer_ERA5":[], "test_ERA5":[]}
         
+        # TODO plot cdf of ERA5 test and transfer evaluation compared with observations
+        # TODO plot with it the TSMP test and transfer evaluation compared with observations
+
+        # TODO select timeseries only for january 2020
+
         #### Transfer & training filtered subsets ####
-        EU400px_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
-        EU100px_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts/ensemble_100px", "ensemble_mean")
-        training_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU400px_inpath)), "training_subset.npy"))
-        training_subset_100px = np.load(os.path.join(os.path.dirname(EU100px_inpath), "target_pixels", "training_subset_ensemble100px.npy"))
+        ERA5_inpath = os.path.join(INPUTPATH, "validation_ERA5")
+        EU400px_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts", "ensemble_400px")
+        training_subset = np.load(os.path.join(INPUTPATH, "training_subset.npy"))
         print("Progress: [" + "." * 100 + "]", flush=True)
         print("          [", end="", flush=True)  # Start progress bar            
         for target in range(100):
             print(".", end="", flush=True)  # Dots without newlines
+            ######## ERA5 ensemble ########
+            # calculate transfer metrics for 400px ensemble
+            obs_transferERA5, sim_transferERA5 = load_obs_sim(ERA5_inpath, target, f"obs_{target}.npy", f"sim_transferpixels_{target}.npy")
+            obs_testERA5, sim_testERA5 = load_obs_sim(ERA5_inpath, target, f"obs_{target}.npy", f"sim_testtrainpixels_{target}.npy")
+            target_map = np.load(os.path.join(ERA5_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            trainingERA5_indices, ind2d = utils.intersect_subsets(target_map, training_subset)
+            corr_EU = calc_correlation(obs_transferERA5, sim_transferERA5)
+            rmse_EU = calc_RMSE(obs_transferERA5, sim_transferERA5)
+            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_transferERA5, sim_transferERA5)
+            corr_EU = np.array(corr_EU)
+            rmse_EU = np.array(rmse_EU)
+            kge_EU = np.array(kge_EU)
+            nse_EU = np.array(nse_EU)
+            bias_EU = np.array(bias_EU)
+            # append values from 99 transfer members (training subset) + 100 transfer members (transfer subset)
+            correlation["transfer_ERA5"].extend(corr_EU.tolist())
+            rmse["transfer_ERA5"].extend(rmse_EU.tolist())
+            kge["transfer_ERA5"].extend(kge_EU.tolist())
+            nse["transfer_ERA5"].extend(nse_EU.tolist())
+            bias["transfer_ERA5"].extend(bias_EU.tolist())
+
+            # calculate test metrics for ERA5 ensemble
+            corr_EU = calc_correlation(obs_testERA5, sim_testERA5)
+            rmse_EU = calc_RMSE(obs_testERA5, sim_testERA5)
+            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_testERA5, sim_testERA5)
+            corr_EU = np.array(corr_EU)
+            rmse_EU = np.array(rmse_EU)
+            kge_EU = np.array(kge_EU)
+            nse_EU = np.array(nse_EU)
+            bias_EU = np.array(bias_EU)
+            # append values from only 1 training member (training subset)
+            correlation["test_ERA5"].extend(corr_EU[trainingERA5_indices].tolist())
+            rmse["test_ERA5"].extend(rmse_EU[trainingERA5_indices].tolist())
+            kge["test_ERA5"].extend(kge_EU[trainingERA5_indices].tolist())
+            nse["test_ERA5"].extend(nse_EU[trainingERA5_indices].tolist())
+            bias["test_ERA5"].extend(bias_EU[trainingERA5_indices].tolist())
+
             ######## 400px ensemble ########
             # calculate transfer metrics for 400px ensemble
             obs_transfer400, sim_transfer400 = load_obs_sim(EU400px_inpath, target, f"obs_{target}.npy", f"sim_transferpixels_{target}.npy")
             obs_test400, sim_test400 = load_obs_sim(EU400px_inpath, target, f"obs_{target}.npy", f"sim_testtrainpixels_{target}.npy")
-            target_map = np.load(os.path.join(os.path.dirname(EU400px_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            obs_transfer400 = obs_transfer400[-365:-334,:]
+            sim_transfer400 = sim_transfer400[-365:-334,:]
+            obs_test400 = obs_test400[-365:-334,:]
+            sim_test400 = sim_test400[-365:-334,:]
+
+            target_map = np.load(os.path.join(EU400px_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             training400px_indices, ind2d = utils.intersect_subsets(target_map, training_subset)
             corr_EU = calc_correlation(obs_transfer400, sim_transfer400)
             rmse_EU = calc_RMSE(obs_transfer400, sim_transfer400)
@@ -962,43 +1007,6 @@ class postprocess_calculations:
             nse["test_400px"].extend(nse_EU[training400px_indices].tolist())
             bias["test_400px"].extend(bias_EU[training400px_indices].tolist())
 
-            ######## 100px ensemble ########
-            # calculate transfer metrics for 100px ensemble
-            obs_transfer100, sim_transfer100 = load_obs_sim(EU100px_inpath, target, f"obs_{target}.npy", f"sim_transferpixels_{target}.npy")
-            obs_test100, sim_test100 = load_obs_sim(EU100px_inpath, target, f"obs_{target}.npy", f"sim_testtrainpixels_{target}.npy")
-            target_map = np.load(os.path.join(os.path.dirname(EU100px_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            training100px_indices, ind2d = utils.intersect_subsets(target_map, training_subset_100px)
-            corr_EU = calc_correlation(obs_transfer100, sim_transfer100)
-            rmse_EU = calc_RMSE(obs_transfer100, sim_transfer100)
-            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_transfer100, sim_transfer100)
-            corr_EU = np.array(corr_EU)
-            rmse_EU = np.array(rmse_EU)
-            kge_EU = np.array(kge_EU)
-            nse_EU = np.array(nse_EU)
-            bias_EU = np.array(bias_EU)
-            # append values from 99 transfer members (training subset) + 100 transfer members (transfer subset)
-            correlation["transfer_100px"].extend(corr_EU.tolist())
-            rmse["transfer_100px"].extend(rmse_EU.tolist())
-            kge["transfer_100px"].extend(kge_EU.tolist())
-            nse["transfer_100px"].extend(nse_EU.tolist())
-            bias["transfer_100px"].extend(bias_EU.tolist())
-
-            # calculate test metrics for 100px ensemble
-            corr_EU = calc_correlation(obs_test100, sim_test100)
-            rmse_EU = calc_RMSE(obs_test100, sim_test100)
-            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_test100, sim_test100)
-            corr_EU = np.array(corr_EU)
-            rmse_EU = np.array(rmse_EU)
-            kge_EU = np.array(kge_EU)
-            nse_EU = np.array(nse_EU)
-            bias_EU = np.array(bias_EU)
-            # append values from only 1 training member (training subset)
-            correlation["test_100px"].extend(corr_EU[training100px_indices].tolist())
-            rmse["test_100px"].extend(rmse_EU[training100px_indices].tolist())
-            kge["test_100px"].extend(kge_EU[training100px_indices].tolist())
-            nse["test_100px"].extend(nse_EU[training100px_indices].tolist())
-            bias["test_100px"].extend(bias_EU[training100px_indices].tolist())
-        
         print("] Done!", flush=True)
         # cleanup
         for key in correlation.keys():
@@ -1024,46 +1032,46 @@ class postprocess_calculations:
         print("plotting")
         #### plot Pearson correlation ####
         utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': correlation["transfer_400px"],
-            f'Test (n=400)': correlation["test_400px"],
-            f'Transfer (n=100)': correlation["transfer_100px"],
-            f'Test (n=100)': correlation["test_100px"]
+            f'Transfer TSMP': correlation["transfer_400px"],
+            f'Test TSMP': correlation["test_400px"],
+            f'Transfer ERA5': correlation["transfer_ERA5"],
+            f'Test ERA5': correlation["test_ERA5"]
         }, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
         xlabel='Pearson correlation', title='testtransfersets')
 
         #### plot RMSE ####
         utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': rmse["transfer_400px"],
-            f'Test (n=400)': rmse["test_400px"],
-            f'Transfer (n=100)': rmse["transfer_100px"],
-            f'Test (n=100)': rmse["test_100px"]
+            f'Transfer TSMP': rmse["transfer_400px"],
+            f'Test TSMP': rmse["test_400px"],
+            f'Transfer ERA5': rmse["transfer_ERA5"],
+            f'Test ERA5': rmse["test_ERA5"]
         }, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
         xlabel='RMSE (m)', logscale=True, title='testtransfersets')
 
         # #### plot KGE ####
         utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': kge["transfer_400px"],
-            f'Test (n=400)': kge["test_400px"],
-            f'Transfer (n=100)': kge["transfer_100px"],
-            f'Test (n=100)': kge["test_100px"]
+            f'Transfer TSMP': kge["transfer_400px"],
+            f'Test TSMP': kge["test_400px"],
+            f'Transfer ERA5': kge["transfer_ERA5"],
+            f'Test ERA5': kge["test_ERA5"]
         }, xmin=0.2, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
         xlabel='KGE', xlim=(0.2, 1), yfloor=True, title='testtransfersets')
 
         # #### plot NSE ####
         utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': nse["transfer_400px"],
-            f'Test (n=400)': nse["test_400px"],
-            f'Transfer (n=100)': nse["transfer_100px"],
-            f'Test (n=100)': nse["test_100px"]
+            f'Transfer TSMP': nse["transfer_400px"],
+            f'Test TSMP': nse["test_400px"],
+            f'Transfer ERA5': nse["transfer_ERA5"],
+            f'Test ERA5': nse["test_ERA5"]
         }, xmin=0.2, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
         xlabel='NSE', xlim=(0.2, 1), yfloor=True, title='testtransfersets')
 
         #### plot Bias ####
         utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': bias["transfer_400px"],
-            f'Test (n=400)': bias["test_400px"],
-            f'Transfer (n=100)': bias["transfer_100px"],
-            f'Test (n=100)': bias["test_100px"]
+            f'Transfer TSMP': bias["transfer_400px"],
+            f'Test TSMP': bias["test_400px"],
+            f'Transfer ERA5': bias["transfer_ERA5"],
+            f'Test ERA5': bias["test_ERA5"]
         }, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
         xlabel='Mean bias (m)', title='testtransfersets')
 
@@ -1261,14 +1269,14 @@ class postprocess_calculations:
 
     def concat_EU_transfer_testtrain_outputs(self):
         utils = utilities()
-        EU_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts/ensemble_100px", "ensemble_mean")
-        EU_outpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/outputs/20yrs_ts/ensemble_100px", "ensemble_mean")
-        EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts", "ensemble_100px")
+        EU_inpath = os.path.join(INPUTPATH, "validation_ERA5")
+        EU_outpath = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px")
+        EU_traininpath = os.path.join(INPUTPATH, "validation_ERA5")
         print(EU_inpath)
         for target in range(100):
-            target_mapping = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"100px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
-            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"100px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            target_mapping = np.load(os.path.join(EU_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            obs_destand_EU = np.load(os.path.join(EU_outpath, f"400px_member_1", f"obs_{target}.npy"))
+            members_sim = [np.load(os.path.join(EU_outpath, f"400px_member_{m}", f"sim_{target}.npy")) for m in range(100)]
             members_sim = np.array(members_sim)
             members_sim = np.expand_dims(members_sim, axis=0)
             members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
@@ -1283,7 +1291,7 @@ class postprocess_calculations:
                 member_mask[member] = False
                 pixel_mask = np.zeros(members_sim.shape[2], dtype=bool)
                 # get the 2d mapping file of indices of pixels used in training this member
-                member_mapping = np.load(os.path.join(EU_traininpath, f"100px_member_{member}", "choices.npy"))
+                member_mapping = np.load(os.path.join(EU_traininpath, f"400px_member_{member}", "choices.npy"))
                 # call function here to find which pixels of my target chunk were included in the training of this specific member
                 indices1d, indices2d = utils.intersect_subsets(target_mapping, member_mapping)
                 # chunk pixels included in training are set as True
@@ -1302,9 +1310,9 @@ class postprocess_calculations:
             mean_prediction_transfer[:, untrained_pixel_mask] = np.mean(members_sim[:, :, untrained_pixel_mask], axis=0)
             print(obs_destand_EU.shape)
             print(mean_prediction_transfer.shape)
-            np.save(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_testtrainpixels_{target}.npy"), mean_prediction_testtrain)
-            np.save(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"obs_{target}.npy"), obs_destand_EU)
-            np.save(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"sim_transferpixels_{target}.npy"), mean_prediction_transfer)
+            np.save(os.path.join(EU_inpath, f"target_pixels_{target}", f"sim_testtrainpixels_{target}.npy"), mean_prediction_testtrain)
+            np.save(os.path.join(EU_inpath, f"target_pixels_{target}", f"obs_{target}.npy"), obs_destand_EU)
+            np.save(os.path.join(EU_inpath, f"target_pixels_{target}", f"sim_transferpixels_{target}.npy"), mean_prediction_transfer)
             print(f"saved {target} target pixels")
 
     def map_1Dto2D_EU(self):
@@ -1357,8 +1365,8 @@ class postprocess_calculations:
             return all_kge, all_nse, all_bias
 
         def load_obs_sim(target):
-            obs_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}.npy"))
-            sim_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}.npy"))
+            obs_destand_test = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"obs_ensmean.npy"))
+            sim_destand_test = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"sim_ensmean.npy"))
             obs_destand_test = np.nan_to_num(obs_destand_test)
             sim_destand_test = np.nan_to_num(sim_destand_test)
             obs_destand_test[obs_destand_test < 0.0] = 0.0
@@ -1366,14 +1374,13 @@ class postprocess_calculations:
             return obs_destand_test, sim_destand_test
         
         utils = utilities()
-        EU_inpath = os.path.dirname(INPUTPATH)
         print("starting calculations")
 
         #### Transfer subset ####
         
         # filtered subset
-        transfer_subset = np.load(os.path.join(EU_inpath, "target_pixels", "transfer_subset.npy"))
-        training_subset = np.load(os.path.join(EU_inpath, "target_pixels", "training_subset.npy"))
+        transfer_subset = np.load(os.path.join(INPUTPATH, "transfer_subset.npy"))
+        training_subset = np.load(os.path.join(INPUTPATH, "training_subset.npy"))
 
         corr2d = np.zeros(transfer_subset.shape)
         corr2d[corr2d==0] = np.nan
@@ -1388,7 +1395,7 @@ class postprocess_calculations:
         for target in range(100):
             print(target)
             obs_destand_test, sim_destand_test = load_obs_sim(target)
-            target_map = np.load(os.path.join(EU_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            target_map = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             indices, indices_2d = utils.intersect_subsets(target_map, transfer_subset)
             indices_train, indices_2d_train = utils.intersect_subsets(target_map, training_subset)
 

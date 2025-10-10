@@ -575,13 +575,13 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
         cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title) else "coolwarm"
-        cmap_colors = "terrain"
+        # cmap_colors = "terrain"
         cmap = plt.get_cmap(cmap_colors)
 
         # define limits and normalization
@@ -600,7 +600,7 @@ class plotting_helper:
         
         print(f"saving {title}")
         plt.tight_layout()
-        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_{title}.png"))
+        fig.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", f"2Dmap_{title}.png"))
     
     def plot_4d_map_logscale(self, data, cmap='viridis', vmin=None, vmax=None, output_filename="map_4d_logscale.png"):
         """
