@@ -635,10 +635,13 @@ class postprocess_calculations:
             if stat=="Pairwise correlation":
                 filename = "pairwisecorr_crps_transfer.npy"
                 yval = np.load(os.path.join(dirpath, "crps_meants_px.npy"))
+                xlabel = "Pairwise correlation"
             elif stat=="IQR (75-25%)":
                 filename = "iqr_crps_transfer.npy"
+                xlabel = r"$\overline{IQR}$"
             elif stat=="Ensemble variance":
                 filename = "ensemblevariance_crps_transfer.npy"
+                xlabel = r"$\overline{EV}$"
 
             xval = np.load(os.path.join(dirpath, filename))
             if stat=="Pairwise correlation":
@@ -669,7 +672,7 @@ class postprocess_calculations:
             plt.figure()
             plt.plot(x_fit, y_fit, color="r", label=textstr, linestyle='--')
             plt.scatter(xval, yval, marker='.', color='k')
-            plt.xlabel(stat)
+            plt.xlabel(xlabel)
             plt.ylabel("CRPS")
             plt.xscale("log")
             plt.yscale("log")
@@ -1125,10 +1128,12 @@ class postprocess_calculations:
         fig, axs = plt.subplots(1, crps.shape[0], figsize=(20, 6), sharey=True)
         for i, year in enumerate(range(2017, 2021)):
             axs[i].boxplot(crps[i].T, labels=["DJF", "MAM", "JJA", "SON"])
-            axs[i].set_title(f"CRPS {year}")
-            #axs[i].set_ylabel("CRPS")
+            axs[i].set_title(f"{year}")
             axs[i].set_yscale('log')
             axs[i].grid(True, alpha=0.3)
+            if i==0:
+                axs[i].set_ylabel("CRPS (m)")
+            
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"seasonal_crps.png"))
         return
@@ -1357,8 +1362,8 @@ class postprocess_calculations:
             return all_kge, all_nse, all_bias
 
         def load_obs_sim(target):
-            obs_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_destand_{MODEL_NAME}.npy"))
-            sim_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_destand_{MODEL_NAME}.npy"))
+            obs_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_{target}.npy"))
+            sim_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_ensmean.npy"))
             obs_destand_test = np.nan_to_num(obs_destand_test)
             sim_destand_test = np.nan_to_num(sim_destand_test)
             obs_destand_test[obs_destand_test < 0.0] = 0.0
@@ -1580,7 +1585,7 @@ class postprocess_calculations:
         EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
         EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
-        rollsubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "ensemble_400px_org", "mapping_0stdroll6months.npy"))
+        rollsubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months.npy"))
         iqrmap = np.zeros(rollsubset.shape)
         iqrmap[iqrmap==0] = np.nan
         varmap = np.zeros(rollsubset.shape)
@@ -1774,6 +1779,34 @@ class postprocess_calculations:
         print(maxwtd)
         wtd[wtd==0] = np.nan
         plot_functions.EU_2Dmap(wtd, logscale=False, minval=0.01, maxval=maxwtd, title="Topography")
+
+    def plot_wtd_variance(self):
+        plot_functions = plotting_helper()
+        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months.npy"))
+        print(wtd.shape)
+        print(np.mean(wtd))
+        print(np.sum(mapping))
+        # exclude sides
+        wtd[:, :100,:] = 0
+        wtd[:, 432-10:,:] = 0
+        wtd[:, :,444-10:] = 0
+        wtd[:, :,:10] = 0
+
+        # set negative wtd to 0
+        wtd[wtd<0] = 0
+
+        # calculate variance over time
+        var = np.std(wtd, axis=0)
+        # set pixels not in mapping to nan
+        var[mapping==0] = np.nan
+        # wtd = wtd[0,:,:]
+        print(var.shape)
+        maxvar = np.nanmax(var)
+        print(maxvar)
+        print(np.nanmin(var))
+        # var[var==0] = np.nan
+        plot_functions.EU_2Dmap(var, logscale=True, minval=0.1, maxval=maxvar, title=r"$\sigma_{WTD}$")
 
     def histogram_kgense(self):
         plot_functions = plotting_helper()
