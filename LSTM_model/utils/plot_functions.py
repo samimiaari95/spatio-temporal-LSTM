@@ -580,8 +580,8 @@ class plotting_helper:
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
-        cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title) else "coolwarm"
-        cmap_colors = "terrain"
+        cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title or "water" in title) else "coolwarm"
+        # cmap_colors = "terrain"
         cmap = plt.get_cmap(cmap_colors)
 
         # define limits and normalization
@@ -592,11 +592,11 @@ class plotting_helper:
 
         # Add a colorbar
         colorbar_label = f"{title}" if title=="Pearson correlation" or title=="NSE" or title=="KGE" else f"{title} (m)"
-        plt.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax, orientation='vertical', label=colorbar_label, pad=0.08)
+        plt.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax, orientation='vertical', label=colorbar_label, pad=0.02)
 
         # Add coastlines, gridlines, etc.
         ax.coastlines()
-        ax.gridlines(draw_labels=True)
+        ax.gridlines(draw_labels=False)
         
         print(f"saving {title}")
         plt.tight_layout()

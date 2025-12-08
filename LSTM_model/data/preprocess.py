@@ -390,3 +390,15 @@ class preprocessing_data:
             mapping = np.where(choices==1, i, mapping)
         np.save(os.path.join(train_in_path, "mapping_memberstrainpixels100.npy"), mapping)
         print(mapping[~np.isnan(mapping)].shape)
+    
+    def plot_1yravg_wtd(self):
+        plot = plotting_helper()
+        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        print(wtd.shape)
+        wtd_1yravg = np.mean(wtd[-365:,:,:], axis=0)
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months.npy"))
+        print(mapping.shape)
+        print(np.sum(mapping))
+        wtd_1yravg = np.where(mapping==1, wtd_1yravg, np.nan)
+        print(wtd_1yravg.shape)
+        plot.EU_2Dmap(data_map=wtd_1yravg, logscale=True, minval=0.1, maxval=60, title="Mean water table depth")
