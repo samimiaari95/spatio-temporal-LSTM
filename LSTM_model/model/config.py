@@ -22,13 +22,13 @@ REGION = f"EU_74_-48_69_20"
 # directory and inputs
 OUTPUTPATH = os.path.join(get_root_dir(), "outputs", REGION)
 INPUTPATH = os.path.join(get_root_dir(), "inputs", REGION)
-FEATURES_FILES = ["total_precipitation_EU.npy", "vpd_EU.npy", "volumetric_soil_water_layer_3_EU.npy", "slopex.npy", "slopey.npy", "soilind.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
+FEATURES_FILES = ["tp_EU.npy", "vpd_EU.npy", "swvl3_EU.npy", "slopex.npy", "slopey.npy", "soilind.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
 TARGETVAR_FILE = "wtd.npy"
 
 # time period
 TRAINING_PERIOD = 365*15
 LOOKBACK = 365
-TEST_PERIOD = 31+LOOKBACK
+TEST_PERIOD = 365*3+LOOKBACK
 
 # lstm setup
 INPUT_SIZE = len(FEATURES_FILES)

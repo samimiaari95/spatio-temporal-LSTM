@@ -116,63 +116,6 @@ class preprocess_rawdata:
         outfile = os.path.join(outpath, month, f"sm_1mcum_{month}.npy")
         np.save(outfile, monthly_data)
 
-
-    def preprocess_matrix(self, month):
-        utils = utilities()
-        outpath = "/p/scratch/cslts/miaari1/raw"
-        # define variables filenames
-        subsurfstor = "subSurfStor.nc"
-        tasmax = "TMAX_2M_ts.nc"
-        tasmin = "TMIN_2M_ts.nc"
-        precip = "TOT_PREC_ts.nc"
-        wtd = "wtd.nc"
-        evap = "QFLX_EVAP_TOT.nc"
-        # variables to consider from dataset
-        vars = ["subSurfStor.nc", "TMAX_2M_ts.nc", "TMIN_2M_ts.nc", "TOT_PREC_ts.nc", "QFLX_EVAP_TOT.nc", "wtd.nc"]
-        # define timesteps of the models
-        timesteps = {"parflow": 15, "clm": 60, "cosmo": 60}
-        # iterate through the variables in one month
-        for var in vars:
-            #print(var)
-            varname = var.replace("_ts.nc", ".nc").split(".nc")[0]
-            var_data = utils.read_nc(filepath=os.path.join(outpath, month, var), var=varname)
-            lat2D = utils.read_nc(filepath=os.path.join(outpath, month, var), var="lat")
-            lon2D = utils.read_nc(filepath=os.path.join(outpath, month, var), var="lon")
-            # set the timestep based on the model produced output
-            if var == subsurfstor:
-                # remove the first and last timestep from parflow output
-                var_data = var_data[1:-1,:,:]
-                timestep = timesteps["parflow"]
-                Tagg = "mean"
-            elif var == wtd:
-                # remove the first and last timestep from parflow output
-                var_data = var_data[1:-1,:,:]
-                timestep = timesteps["parflow"]
-                Tagg = "mean"
-            elif var == evap:
-                timestep = timesteps["clm"]
-                Tagg = "sum"
-            elif var == precip:
-                # remove the last timestep from cosmo output
-                var_data = var_data[:-1,:,:]
-                timestep = timesteps["cosmo"]
-                Tagg = "sum"
-            elif var == tasmax:
-                # remove the last timestep from cosmo output
-                var_data = var_data[:-1,:,:]
-                timestep = timesteps["cosmo"]
-                Tagg = "max"
-            elif var == tasmin:
-                # remove the last timestep from cosmo output
-                var_data = var_data[:-1,:,:]
-                timestep = timesteps["cosmo"]
-                Tagg = "min"
-            
-            data = self.temporalAgg_matrix(var_data, timestep, Tagg)
-            #print(data.shape)
-            outfile = os.path.join(outpath, month, f"{varname}_{month}.npy")
-            np.save(outfile, data)
-
     def savelonlat(self):
         utils = utilities()
         outdir = os.path.join(get_root_dir(), "inputs")
@@ -218,20 +161,60 @@ class preprocess_rawdata:
             outfile = os.path.join(outpath, month, f"vpd_{month}.npy")
             np.save(outfile, data)
     
-    def calculate_vpd_fromTandTd(self, month):
+    def calculate_vpd_fromTandTd(self, month, year):
         utils = utilities()
-        dirpath = os.path.join(get_root_dir(), 'inputs', 'EU_74_-48_69_20', "raw", "2019")
-        t2m = utils.read_nc(os.path.join(dirpath, f'BonA_2m_temperature_2019{month}.nc'), 't2m') - 273.15
-        d2m = utils.read_nc(os.path.join(dirpath, f'BonA_2m_dewpoint_temperature_2019{month}.nc'), 'd2m') - 273.15
-        print(t2m.shape)
-        print(d2m.shape)
+        dirpath = os.path.join(get_root_dir(), 'inputs', 'EU_74_-48_69_20', "raw", "ERA5-Land")
+        t2m = utils.read_nc(os.path.join(dirpath, "regridded_to_EUR11", f'BonA_bilinear_ERA5land_t2m_{year}{month}.nc'), 't2m') - 273.15
+        d2m = utils.read_nc(os.path.join(dirpath, "regridded_to_EUR11", f'BonA_bilinear_ERA5land_d2m_{year}{month}.nc'), 'd2m') - 273.15
         es = 0.611 * np.exp((17.27 * t2m) / (t2m + 237.3))
         ea = 0.611 * np.exp((17.27 * d2m) / (d2m + 237.3))
         vpd = es - ea
-        print(vpd)
+        vpd = vpd.filled(0)
+        if month == "02" and vpd.shape[0]==29:
+            vpd = vpd[:-1,:,:]  # remove last day for february in leap years
+
         print(vpd.shape)
-        vpd_daily = self.temporalAgg_matrix(vpd, timestep=60, agg='mean')
-        np.save(os.path.join(dirpath, "npy", f'vpd_2019{month}_EU.npy'), vpd_daily)
+        np.save(os.path.join(dirpath, "npy_regridded_to_EUR11", f'vpd_{year}{month}_EU.npy'), vpd)
+        return
+
+    def extract_nc_to_npy(self, infile, outfile, varname, month):
+        """
+        Extract a variable from a netCDF file and save it as a numpy array.
+
+        Parameters:
+        infile (str): Path to the input netCDF file.
+        outfile (str): Path to the output numpy file.
+        varname (str): Name of the variable to extract.
+        """
+        utils = utilities()
+        var_data = utils.read_nc(filepath=infile, var=varname)
+        var_data = var_data.filled(0)
+        if month == "02" and var_data.shape[0]==29:
+            var_data = var_data[:-1,:,:]  # remove last day for february in leap years
+        # convert total precipitation from m to mm for ERA5 data
+        if varname == "tp":
+            var_data = var_data * 1000
+        print(var_data.shape)
+        np.save(outfile, var_data)
+        return
+    
+    def extract_vars(self):
+        dirpath = os.path.join(INPUTPATH, "raw", "ERA5-Land")
+        months = [f"{i:02d}" for i in range(1,13)]
+        years = ["2016", "2017", "2018", "2019", "2020"]
+        varnames = ["swvl3", "tp"]
+        for year in years:
+            for month in months:
+                print(f"Processing year: {year}, month: {month}")
+                self.calculate_vpd_fromTandTd(month=month, year=year)
+                for varname in varnames:
+                    if varname == "tp":
+                        infile = os.path.join(dirpath, "regridded_to_EUR11", f'BonA_conservative_at23h_ERA5land_{varname}_{year}{month}.nc')
+                        outfile = os.path.join(dirpath, "npy_regridded_to_EUR11", f'{varname}_{year}{month}_EU.npy')
+                    elif varname == "swvl3":
+                        infile = os.path.join(dirpath, "regridded_to_EUR11", f'BonA_bilinear_ERA5land_{varname}_{year}{month}.nc')
+                        outfile = os.path.join(dirpath, "npy_regridded_to_EUR11", f'{varname}_{year}{month}_EU.npy')
+                    self.extract_nc_to_npy(infile, outfile, varname, month)
         return
     
     def rawdata_temporal_agg(self, infile, outfile, varname, method='mean'):
@@ -267,13 +250,161 @@ class preprocess_rawdata:
         # plot it in 2d map
         plots.EU_2Dmap(data_map=wtd,logscale=False, minval=0, maxval=50, title="Water table depth")
 
-# NOTE the parse arguments were only used to parallel compute the soil moisture
-#parser = argparse.ArgumentParser(description='insert the preprocessing month')
-#parser.add_argument('--month', type=str, required=True,
-#                    help='yyyymmdd00') # month of simulation
-#args = parser.parse_args()
-#month = args.month
-#extract_calc_soilmoisture(month=month)
-#extract_file_from_tar(filename,month)
-#preprocess_matrix(f"{month}")
-#preprocess_matrix_sm(month=month)
+    def check_ERA5_vs_TSMP_units(self):
+        utils = utilities()
+        dirpath = os.path.join(INPUTPATH, "raw", "2019")
+        tsmpdirpath = "/p/scratch/cslts/miaari1/soilmoisture"
+        print("#################### ERA5 ####################")
+        era5_org = utils.read_nc(os.path.join(dirpath, f'volumetric_soil_water_layer_3_201901.nc'), "swvl3")
+        print("#################### regridded ERA5 ####################")
+        era5_regrid = utils.read_nc(os.path.join(dirpath, f'BonA_volumetric_soil_water_layer_3_201901.nc'), "swvl3")
+        print("#################### TSMP ####################")
+        tsmp = utils.read_nc(os.path.join(tsmpdirpath, f'2019010100.out.00000_volsm.nc'), "volsm")
+        tsmp = tsmp[0,6:,:,:] # soil moisture only at layer 6
+        print(tsmp.shape)
+        print(tsmp)
+        print(f"ERA5 original mean: {np.mean(era5_org)}, max: {np.max(era5_org)}, min: {np.min(era5_org)}")
+        print(f"ERA5 regridded mean: {np.mean(era5_regrid)}, max: {np.max(era5_regrid)}, min: {np.min(era5_regrid)}")
+        print(f"TSMP mean: {np.nanmean(tsmp)}, max: {np.nanmax(tsmp)}, min: {np.nanmin(tsmp)}")
+        return
+    
+    def test_precipnc(self):
+        utils = utilities()
+        lvar = utils.read_nc(os.path.join(INPUTPATH, "raw", "grib", "ERA5_precip_201501.nc"), "var228")
+        lvar = lvar*1000 # convert to mm
+        print("###########################################")
+        eravar = utils.read_nc(os.path.join(INPUTPATH, "raw", "grib", "era5orgnc_precip_201501.nc"), "tp")
+        eravarhourly = eravar*1000 # convert to mm
+        eravardaily = eravarhourly.reshape(31, 24, *eravarhourly.shape[1:]).sum(axis=1)
+
+        # list of 23:00 of each day for January 2015 (31 days)
+        hours_23 = [23 + i*24 for i in range(31)]
+        eralhour = eravarhourly[hours_23,:,:]
+        print("###########################################")
+        print(eralhour.shape)
+        print(f"eralhour mean: {np.mean(eralhour)}, max: {np.max(eralhour)}, min: {np.min(eralhour)}")
+        print(lvar.shape)
+        print(f"lvar mean: {np.mean(lvar)}, max: {np.max(lvar)}, min: {np.min(lvar)}")
+        print(eravardaily.shape)
+        print(f"eravar mean: {np.mean(eravardaily)}, max: {np.max(eravardaily)}, min: {np.min(eravardaily)}")
+
+        tsmpdirpath = "/p/scratch/cslts/miaari1/2001010100/cosmo"
+        tsmp = utils.read_nc(os.path.join(tsmpdirpath, f'TOT_PREC_ts.nc'), "TOT_PREC")
+        # get daily precip by summing every 24 hours at 23:00
+        # remove last timestep
+        tsmp = tsmp[:-1,:,:]
+        tsmp_daily = tsmp.reshape(31, 24, *tsmp.shape[1:]).sum(axis=1)
+        print(tsmp_daily.shape)
+        print(f"tsmp_daily_201501 mean: {np.mean(tsmp_daily)}, max: {np.max(tsmp_daily)}, min: {np.min(tsmp_daily)}")
+        tsmp_23hour = tsmp[hours_23,:,:]
+        print(tsmp_23hour.shape)
+        print(f"tsmp_23hour mean: {np.mean(tsmp_23hour)}, max: {np.max(tsmp_23hour)}, min: {np.min(tsmp_23hour)}")
+
+        utils.open_nc(os.path.join(INPUTPATH, "raw", "regrid_2015.nc"))
+
+    def test_tp_TSMPvsERA5(self):
+        # NOTE keep this function as a proof of why only the timestep at 23:00 is used for ERA5 while the daily sum is used for TSMP
+        import matplotlib.pyplot as plt
+        utils = utilities()
+        tsmppath = "/p/scratch/cslts/miaari1/2020120100"
+        tsmp = utils.read_nc(os.path.join(tsmppath, f'TOT_PREC_ts.nc'), 'TOT_PREC')
+        # remove last timestep
+        tsmp = tsmp[:-1,:,:]
+        print(tsmp.shape)
+
+        # load ERA5 regridded
+        erapath = os.path.join(INPUTPATH, "raw", "testingERA5")
+        era5 = utils.read_nc(os.path.join(erapath, f'BonAERA5land_tp_202012.nc'), 'tp')
+        # convert from m to mm
+        era5 = era5 * 1000
+        print(era5.shape)
+        print(f"tsmp mean: {np.mean(tsmp)}, max: {np.max(tsmp)}, min: {np.min(tsmp)}")
+        print(f"era5 mean: {np.mean(era5)}, max: {np.max(era5)}, min: {np.min(era5)}")
+
+        # choose a pixel to plot cumulative time series
+        lat_idx = 200
+        lon_idx = 150
+        tsmp_pixel = tsmp[:, lat_idx, lon_idx]
+        era5_pixel = era5[:, lat_idx, lon_idx]
+
+        # calculate daily sum for both datasets
+        tsmp_daily = tsmp_pixel.reshape(31, 24).sum(axis=1)
+        era5_daily = era5_pixel.reshape(31, 24).sum(axis=1)
+        # get timestep at 23:00 for era5
+        era5_23 = era5_pixel[23::24]
+
+        print(tsmp_daily.shape)
+        print(era5_daily.shape)
+        print(era5_23.shape)
+        print(f"tsmp_daily mean: {np.mean(tsmp_daily)}, max: {np.max(tsmp_daily)}, min: {np.min(tsmp_daily)}")
+        print(f"era5_daily mean: {np.mean(era5_daily)}, max: {np.max(era5_daily)}, min: {np.min(era5_daily)}")
+        print(f"era5_23 mean: {np.mean(era5_23)}, max: {np.max(era5_23)}, min: {np.min(era5_23)}")
+
+        plt.figure(figsize=(10,5))
+        plt.plot(tsmp_daily.cumsum(), label='TSMP')
+        plt.plot(era5_23.cumsum(), label='ERA5')
+        plt.plot(era5_daily.cumsum(), label='ERA5_dailysum')
+        plt.title(f'Cumulative Time Series of Total Precipitation at pixel ({lat_idx}, {lon_idx}) - December 2020')
+        plt.xlabel('Time (hours)')
+        plt.ylabel('Total Precipitation (mm)')
+        plt.legend()
+        plt.grid()
+        plt.savefig(os.path.join(INPUTPATH, "raw", "testingERA5", f"tsmp_vs_era5_pixel_{lat_idx}_{lon_idx}.png"))
+        plt.close()
+
+    def test_selected_23h_timestep_precipnc(self):
+        utils = utilities()
+        # fresh from era5-land download
+        era5 = utils.read_nc(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_tp_201603.nc"), "tp")
+        # convert to mm
+        era5 = era5*1000
+        # select only the 23:00 timestep of each day
+        hours_23 = [23 + i*24 for i in range(31)]
+        era5_23 = era5[hours_23,:,:]
+
+        # from cdo selected 23h timestep
+        era5_cdo = utils.read_nc(os.path.join(INPUTPATH, "raw", "ERA5-Land", "daily_23h", "at23h_ERA5land_tp_201603.nc"), "tp")
+        era5_cdo = era5_cdo*1000
+        print(era5_23.shape)
+        print(f"era5_23 mean: {np.mean(era5_23)}, max: {np.max(era5_23)}, min: {np.min(era5_23)}")
+        print(era5_cdo.shape)
+        print(f"era5_cdo mean: {np.mean(era5_cdo)}, max: {np.max(era5_cdo)}, min: {np.min(era5_cdo)}")
+
+    def test(self):
+        utils = utilities()
+        utils.open_nc(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_t2m_201501.nc"))
+        utils.open_nc(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_d2m_201501.nc"))
+        utils.open_nc(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_swvl3_201501.nc"))
+        t2m = utils.read_nc(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_t2m_201501.nc"), "t2m")
+        d2m = utils.read_nc(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_d2m_201501.nc"), "d2m")
+        swvl3 = utils.read_nc(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_swvl3_201501.nc"), "swvl3")
+        print(t2m.shape)
+        print(d2m.shape)
+        print(swvl3.shape)
+        print(f"t2m mean: {np.mean(t2m)}, max: {np.max(t2m)}, min: {np.min(t2m)}")
+        print(f"d2m mean: {np.mean(d2m)}, max: {np.max(d2m)}, min: {np.min(d2m)}")
+        print(f"swvl3 mean: {np.mean(swvl3)}, max: {np.max(swvl3)}, min: {np.min(swvl3)}")
+
+    def check_cdo_remapping(self):
+        utils = utilities()
+        regridpath = os.path.join(INPUTPATH, "raw", "regridchecks_ERA5", "dataoutput")
+        data1 = utils.read_nc(os.path.join(regridpath, f'BonA_conservative_at23h_ERA5land_tp_202012.nc'), 'tp')
+        data2 = utils.read_nc(os.path.join(regridpath, f'at23h_ERA5land_tp_202012_EUR11_con.nc'), 'tp')
+        data1 = np.array(data1)
+        data2 = np.array(data2)
+        print(data1.shape)
+        print(data2.shape)
+        print(data1[0, :5, :5])
+        print(data2[0, :5, :5])
+        print(np.unique(np.equal(data1, data2), return_counts=True))
+        # print only the differences
+        diff = data1 - data2
+        print("Differences between data1 and data2 except nan:")
+        diff = diff[~np.isnan(diff)]
+        print("difference without 0")
+        diff_nozero = diff[diff != 0]
+        print(diff_nozero)
+        print("difference more than 1")
+        diff_small = diff_nozero[np.abs(diff_nozero) > 0.001] #mm for precip
+        print(diff_small)
+        print(f"Number of different values: {len(diff_small)}")
