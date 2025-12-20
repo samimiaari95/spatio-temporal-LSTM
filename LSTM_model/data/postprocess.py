@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
+from scipy import stats
 import torch
 import torch.nn as nn
 from sklearn.metrics import r2_score
@@ -17,397 +18,30 @@ class postprocess_calculations:
     def __init__(self) -> None:
         pass
 
-    def calc_2Dheatmap_MSE(self, obs, sim):
-        criterion = nn.MSELoss()
-        cell_mse = [criterion(torch.tensor(obs[:,i]).float(), torch.tensor(sim[:,i]).float()).item() for i in range(obs.shape[1])]
-        cell_mse = np.array(cell_mse)
-        cell_mse = cell_mse.reshape(X,Y)
-        return cell_mse
-
-    def timeseries_plot(self, i,j):
-        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
-
-        obs_destand_test = obs_destand_test.reshape(obs_destand_test.shape[0],X,Y)
-        sim_destand_test = sim_destand_test.reshape(sim_destand_test.shape[0],X,Y)
-        
-        obs_destand_test[obs_destand_test < 0.01] = 0.0
-        sim_destand_test[sim_destand_test < 0.01] = 0.0
-
-        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
-        dates = dates[(dates.month != 2) | (dates.day != 29)]
-        fig, ax = plt.subplots(figsize=(16, 10))
-        
-        print(f"plotting timeseries {i}, {j}")
-        ax.plot(dates, obs_destand_test[:,i,j], "k-", label="Original simulations")
-        ax.plot(dates, sim_destand_test[:,i,j], "k--", label="Predicted")
-        
-        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
-
-        plt.xticks(rotation=45)
-        plt.ylabel('Water table depth (m)')
-        plt.legend()
-        plt.grid()
-        plt.savefig(os.path.join(OUTPUTPATH, f"timeseries_{i}_{j}.png"))
-
-    def compare_timeseries_plots(self, pixel):
-        outputs = {"100_256dr0x1lr01x50_365x1000_prvpdsmxyindlonlat":[], "100_256dr0x1lr01x50_365x1000_prvpdsmxyind":[]}
-        labels = {"100_256dr0x1lr01x50_365x1000_prvpdsmxyindlonlat":"with Lon & Lat", "100_256dr0x1lr01x50_365x1000_prvpdsmxyind":"without Lon & Lat"}
-        
-        for output in outputs.keys():
-            outputs[output] = np.load(os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{output}", f"sim_destand_{output}.npy"))
-            outputs[output] = outputs[output].reshape(outputs[output].shape[0],X,Y)
-
-
-        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{output}", f"obs_destand_{output}.npy"))
-
-        obs_destand_test = obs_destand_test.reshape(obs_destand_test.shape[0],X,Y)
-
-
-        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
-        dates = dates[(dates.month != 2) | (dates.day != 29)]
-        fig, ax = plt.subplots(figsize=(16, 10))
-
-        print(f"plotting timeseries {pixel[0]}, {pixel[1]}")
-        ax.plot(dates, obs_destand_test[:,pixel[0],pixel[1]], "k-", label="Original simulations")
-        for output in outputs.keys():
-            ax.plot(dates, outputs[output][:,pixel[0],pixel[1]], "--", label=labels[output])
-        
-        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
-
-        plt.xticks(rotation=45)
-        plt.ylabel('Water table depth (m)')
-        plt.legend()
-        plt.grid()
-        plt.savefig(os.path.join(OUTPUTPATH, f"timeseries_{pixel[0]}_{pixel[1]}.png"))
-
-    def calc_2Dheatmap_correlation(self, obs, sim):
-        correlation_map = np.zeros(NB_CELLS)
-        # Iterate over each grid cell
-        for i in range(obs.shape[1]):
-            # Extract the time series for the current grid cell
-            time_series1 = obs[:, i]
-            time_series2 = sim[:, i]
-            # Calculate the Pearson correlation coefficient
-            if np.std(time_series1) > 0 and np.std(time_series2) > 0:  # Avoid division by zero
-                correlation_matrix = np.corrcoef(time_series1, time_series2)
-                r = correlation_matrix[0, 1]
-            else:
-                r = np.nan  # If there's no variation, set correlation to NaN
-            
-            # Store the correlation coefficient in the map
-            correlation_map[i] = r
-        return correlation_map.reshape(X,Y)
-
-    def calc_mean_2D_bias(self, obs, sim):
-        # calculate bias
-        bias_map = np.mean(sim - obs, axis=0)
-        return bias_map
-
-    def calc_2D_correlation(self, obs, sim):
-        correlation_map = np.zeros((obs.shape[1],obs.shape[2]))
-        # Iterate over each grid cell
-        for i in range(obs.shape[1]):
-            for j in range(obs.shape[2]):
-                # Extract the time series for the current grid cell
-                time_series1 = obs[:, i, j]
-                time_series2 = sim[:, i, j]
-                # Calculate the Pearson correlation coefficient
-                if np.std(time_series1) > 0 and np.std(time_series2) > 0:  # Avoid division by zero
-                    correlation_matrix = np.corrcoef(time_series1, time_series2)
-                    r = correlation_matrix[0, 1]
-                else:
-                    r = np.nan  # If there's no variation, set correlation to NaN
-                
-                # Store the correlation coefficient in the map
-                correlation_map[i, j] = r
-        return correlation_map
-
-    def calc_2D_MSE(self, obs, sim, mapping):
-        criterion = nn.MSELoss()
-        mse1D = [criterion(torch.tensor(obs[:,i]).float(), torch.tensor(sim[:,i]).float()).item() for i in range(obs.shape[1])]
-        mse1D = np.array(mse1D)
-        # reshape into 2D
-        mse_choicesmap = np.zeros(mapping.shape)
-        mse_choicesmap[mse_choicesmap==0] = np.nan
-        choices = np.where(mapping==1)
-        for i in range(len(choices[0])):
-            mse_choicesmap[choices[0][i],choices[1][i]] = mse1D[i]
-        return mse_choicesmap
-
-    def calc_rmse(self, y_true, y_pred, mapping):
-        rmse = [np.sqrt(np.mean((y_true[:,i] - y_pred[:,i]) ** 2)) for i in range(y_true.shape[1])]
-        rmse = np.array(rmse)
-        # reshape into 2D
-        rmse_choicesmap = np.zeros(mapping.shape)
-        rmse_choicesmap[rmse_choicesmap==0] = np.nan
-        choices = np.where(mapping==1)
-        for i in range(len(choices[0])):
-            rmse_choicesmap[choices[0][i],choices[1][i]] = rmse[i]
-
-        rmse = rmse.reshape(X,Y)
-        return rmse, rmse_choicesmap
-    
-    def calc_nse(self, y_true, y_pred, mapping):
-        nse = [1 - (np.sum((y_true[:,i] - y_pred[:,i]) ** 2) / np.sum((y_true[:,i] - np.mean(y_true[:,i])) ** 2)) for i in range(y_true.shape[1])]
-        nse = np.array(nse)
-        # reshape into 2D
-        nse_choicesmap = np.zeros(mapping.shape)
-        nse_choicesmap[nse_choicesmap==0] = np.nan
-        choices = np.where(mapping==1)
-        for i in range(len(choices[0])):
-            nse_choicesmap[choices[0][i],choices[1][i]] = nse[i]
-
-        nse = nse.reshape(X,Y)
-        return nse, nse_choicesmap
-    
-    def EUpx_results(self):
-        plot_functions = plotting_helper()
-        util = utilities()
-        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
-        
-        obs_destand_test = np.nan_to_num(obs_destand_test)
-        sim_destand_test = np.nan_to_num(sim_destand_test)
-
-        #obs_destand_test[obs_destand_test < 0.01] = 0.0
-        #sim_destand_test[sim_destand_test < 0.01] = 0.0
-
-        mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
-        
-        obs = np.zeros((obs_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
-        obs[obs==0] = np.nan
-        sim = np.zeros((sim_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
-        sim[sim==0] = np.nan
-
-        ############### for choices in 2D #################
-        mapping_indexes = np.where(mapping==1)
-        for i in range(len(mapping_indexes[0])):
-            obs[:,mapping_indexes[0][i],mapping_indexes[1][i]] = obs_destand_test[:,i]
-            sim[:,mapping_indexes[0][i],mapping_indexes[1][i]] = sim_destand_test[:,i]
-
-        # calculate and plot mean bias
-        mean_bias_2D_map = self.calc_mean_2D_bias(obs, sim)
-        mean_bias_2D_heatmap = self.calc_mean_2D_bias(obs_destand_test, sim_destand_test)
-        plot_functions.chosenpixels_in_EU(mean_bias_2D_map, False, -10, 10, f"Mean bias")
-        plot_functions.chosenpixels_heatmap(mean_bias_2D_heatmap.reshape(X,Y), False, -10, 10, f"Mean bias")
-
-        # calculate and plot correlation
-        correlation_2D_map = self.calc_2D_correlation(obs, sim)
-        correlation_2D_heatmap = self.calc_2Dheatmap_correlation(obs_destand_test, sim_destand_test)
-        plot_functions.chosenpixels_in_EU(correlation_2D_map, False, 0, 1, f"Correlation")
-        plot_functions.chosenpixels_heatmap(correlation_2D_heatmap, False, 0, 1, f"Correlation")
-
-        # calculate and plot MSE
-        mse_2D_heatmap = self.calc_2Dheatmap_MSE(obs_destand_test, sim_destand_test)
-        mse_2D_map = self.calc_2D_MSE(obs_destand_test, sim_destand_test, mapping)
-        plot_functions.chosenpixels_in_EU(mse_2D_map, True, 0.01, 10, f"MSE")
-        plot_functions.chosenpixels_heatmap(mse_2D_heatmap, True, 0.01, 10, f"MSE")
-
-        # calculate and plot RMSE
-        rmse_2D_heatmap, rmse_2D_map = self.calc_rmse(obs_destand_test, sim_destand_test, mapping)
-        plot_functions.chosenpixels_in_EU(rmse_2D_map, True, 0.01, 10, f"RMSE")
-        plot_functions.chosenpixels_heatmap(rmse_2D_heatmap, True, 0.01, 10, f"RMSE")
-
-        # calculate and plot NSE
-        nse_2D_heatmap, nse_2D_map = self.calc_nse(obs_destand_test, sim_destand_test, mapping)
-        stds = np.std(obs_destand_test, axis=0).reshape(X,Y)
-        nse_2D_heatmap[stds<0.1] = np.nan
-        plot_functions.chosenpixels_in_EU(nse_2D_map, False, -1, 1, f"NSE")
-        plot_functions.chosenpixels_heatmap(nse_2D_heatmap, False, -1, 1, f"NSE")
-
-        # calculate and plot KGE
-        kge_2D_heatmap = [util.calculate_kge(obs_destand_test[:,i], sim_destand_test[:,i]) for i in range(obs_destand_test.shape[1])]
-        kge_2D_heatmap = np.array(kge_2D_heatmap)
-        kge_2D_heatmap = kge_2D_heatmap.reshape(X,Y)
-        kge_2D_map = np.zeros(mapping.shape)
-        for i in range(obs.shape[1]):
-            for j in range(obs.shape[2]):
-                kge_2D_map[i,j] = util.calculate_kge(obs[:,i,j], sim[:,i,j])
-
-        plot_functions.chosenpixels_in_EU(kge_2D_map, False, -1, 1, f"KGE")
-        plot_functions.chosenpixels_heatmap(kge_2D_heatmap, False, -1, 1, f"KGE")
-
-        #for i in range(X):
-        #    for j in range(Y):
-        #        pass
-        #        self.plot_ensemble_timeseries(i, j, f'{correlation_2D_heatmap[i,j]:.2f}', f'{rmse_2D_heatmap[i,j]:.2f}', f'{kge_2D_heatmap[i,j]:.2f}')
-
-    def calculate_accuracy_parameters(self):
-        dirpath = os.path.join(OUTPUTPATH, f"{TARGET_REGION}_{MODEL_NAME}")
-        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        sim_destand_test = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
-        
-        obs_destand_test = np.nan_to_num(obs_destand_test)
-        sim_destand_test = np.nan_to_num(sim_destand_test)
-
-        obs_destand_test[obs_destand_test < 0.01] = 0.0
-        sim_destand_test[sim_destand_test < 0.01] = 0.0
-
-        mapping = np.load(os.path.join(INPUTPATH, "choices.npy"))
-        
-        obs = np.zeros((obs_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
-        obs[obs==0] = np.nan
-        sim = np.zeros((sim_destand_test.shape[0], mapping.shape[0], mapping.shape[1]))
-        sim[sim==0] = np.nan
-
-        ############### for choices in 2D #################
-        mapping_indexes = np.where(mapping==1)
-        for i in range(len(mapping_indexes[0])):
-            obs[:,mapping_indexes[0][i],mapping_indexes[1][i]] = obs_destand_test[:,i]
-            sim[:,mapping_indexes[0][i],mapping_indexes[1][i]] = sim_destand_test[:,i]
-
-        mean_bias_2D_heatmap = self.calc_mean_2D_bias(obs_destand_test, sim_destand_test)
-        mean_bias_2D_heatmap = mean_bias_2D_heatmap.reshape(X,Y)
-        correlation_2D_heatmap = self.calc_2Dheatmap_correlation(obs_destand_test, sim_destand_test)
-        mse_2D_heatmap = self.calc_2Dheatmap_MSE(obs_destand_test, sim_destand_test)
-
-        print(f"avg MSE: {np.mean(mse_2D_heatmap)}")
-        print(f"avg corr: {np.mean(correlation_2D_heatmap)}")
-        print(f"avg bias: {np.mean(mean_bias_2D_heatmap)}")
-        print(f"median MSE: {np.median(mse_2D_heatmap)}")
-        print(f"median corr: {np.median(correlation_2D_heatmap)}")
-        print(f"90th% MSE: {np.percentile(mse_2D_heatmap, 90)}")
-        print(f"10th% corr: {np.percentile(correlation_2D_heatmap, 10)}")
-
-    def plot_ensemble_results(self):
-        rmse = np.load(os.path.join(OUTPUTPATH, "rmse.npy"))
-        corr = np.load(os.path.join(OUTPUTPATH, "corr.npy"))
-        r2 = np.load(os.path.join(OUTPUTPATH, "r2.npy"))
-
-        print("plotting dist")
-        plt.figure(figsize=(8, 6))
-        plt.hist(rmse, bins=100, color='blue', alpha=0.7, edgecolor='black')  # 50 bins for better resolution
-        plt.xlabel('RMSE (m)', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.grid(axis='y', linestyle='--', alpha=0.7)
-        plt.savefig(os.path.join(OUTPUTPATH, f"rmse_dist.png"))
-
-        plt.figure(figsize=(8, 6))
-        plt.hist(corr, bins=100, color='blue', alpha=0.7, edgecolor='black')  # 50 bins for better resolution
-        plt.xlim(-1,1)
-        plt.xlabel('Correlation', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.grid(axis='y', linestyle='--', alpha=0.7)
-        plt.savefig(os.path.join(OUTPUTPATH, f"corr_dist.png"))
-
-        plt.figure(figsize=(8, 6))
-        plt.hist(r2, bins=100, color='blue', alpha=0.7, edgecolor='black')  # 50 bins for better resolution
-        #plt.title('Histogram of Data Distribution', fontsize=14)
-        plt.xlim(-1,1)
-        plt.xlabel('R2', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.grid(axis='y', linestyle='--', alpha=0.7)
-        plt.savefig(os.path.join(OUTPUTPATH, f"r2_dist.png"))
-
-    def plot_ensemble_timeseries(self, i, j, r, rmse, kge):
-        obs_destand_test = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        nb_members = 100
-        print(obs_destand_test.shape)
-        obs_destand_test[obs_destand_test < 0.0] = 0.0
-
-        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
-        dates = dates[(dates.month != 2) | (dates.day != 29)]
-        fig, ax = plt.subplots(figsize=(16, 10))
-        
-        print(f"plotting timeseries {i},{j}")
-        timeserieslength = obs_destand_test.shape[0]
-        obs_destand_test = obs_destand_test.reshape(timeserieslength,X,Y)
-        ens_mean = np.zeros((timeserieslength, nb_members))
-        for m in range(nb_members):
-            sim_destand_test = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"100px_member_{m}", f"sim_destand_{MODEL_NAME}.npy"))
-            sim_destand_test[sim_destand_test < 0.0] = 0.0
-            sim_destand_test = sim_destand_test.reshape(timeserieslength,X,Y)
-            ens_mean[:,m] = sim_destand_test[:,i,j]
-            ax.plot(dates, sim_destand_test[:,i,j], color="gray")
-
-        ax.plot(dates, obs_destand_test[:,i,j], "k-", label="Original simulations", linewidth=4.0)
-        ax.plot(dates, np.mean(ens_mean, axis=1), "k--", label="Ensemble mean", linewidth=4.0)
-        ax.scatter([], [], color="k", label=f"Correlation: {r}, RMSE: {rmse}, KGE: {kge}")
-
-        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
-
-        plt.xticks(rotation=45)
-        plt.ylabel('Water table depth (m)')
-        plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.11), ncol=3)
-        plt.grid()
-        plt.savefig(os.path.join(OUTPUTPATH, "transfer_timeseries", f"ensemble_timeseries_{i}_{j}.png"))
-
-    def ens_mean(self):
-        for target in range(100):
-            print(f"processing target {target}")
-            obs = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "400px_member_0", f"obs_{target}.npy"))
-            ens_mean = np.zeros((obs.shape[0], obs.shape[1], 100))
-            for m in range(100):
-                sim_destand_test = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{m}", f"sim_{target}.npy"))
-                ens_mean[:,:,m] = sim_destand_test[:,:]
-            sim = np.mean(ens_mean, axis=2)
-            print(obs.shape)
-            print(sim.shape)
-            np.save(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"obs_ensmean.npy"), obs)
-            np.save(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"sim_ensmean.npy"), sim)
-
-    def ens_timeseries_vs(self, i, j):
-        obs = np.load(os.path.join(OUTPUTPATH, f"obs_destand_{MODEL_NAME}.npy"))
-        obs[obs < 0.01] = 0.0
-
-        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
-        dates = dates[(dates.month != 2) | (dates.day != 29)]
-        fig, ax = plt.subplots(figsize=(16, 10))
-
-        timeserieslength = obs.shape[0]
-        obs = obs.reshape(timeserieslength,X,Y)
-        sim100 = np.load(os.path.join(OUTPUTPATH, f"sim_destand_{MODEL_NAME}.npy"))
-        sim400 = np.load(os.path.join(OUTPUTPATH.replace("ensemble_weightedRMSE", "ensemble_mean"), f"sim_destand_{MODEL_NAME}.npy"))
-
-        sim100[sim100 < 0.01] = 0.0
-        sim400[sim400 < 0.01] = 0.0
-        sim100 = sim100.reshape(timeserieslength,X,Y)
-        sim400 = sim400.reshape(timeserieslength,X,Y)
-        
-        
-        ax.plot(dates, obs[:,i,j], "k-", label="Original simulations")
-        ax.plot(dates, sim100[:,i,j], "g--", label="Weighted mean")
-        ax.plot(dates, sim400[:,i,j], "b--", label="Mean")
-
-        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
-
-        plt.xticks(rotation=45)
-        plt.ylabel('Water table depth (m)')
-        plt.legend()
-        plt.grid()
-        plt.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "timeseries_meanvsweightedRMSE", f"ensemble_timeseries_{i}_{j}.png"))
-
-    def plot_ensemble_statsvsacc_timeseries(self, target, i, members_sim, mean_prediction, obs, kge, stat, r):
+    def plot_ensemble_statsvsacc_timeseries(self, target, i, members_sim, mean_prediction, obs, kge, rmse, r):
         nb_members = 100
 
-        dates = pd.date_range(start='2020-01-01', end='2020-01-31', freq='D')
-        # dates = dates[(dates.month != 2) | (dates.day != 29)]
+        dates = pd.date_range(start='2017-01-01', end='2020-12-31', freq='D')
+        dates = dates[(dates.month != 2) | (dates.day != 29)]
         fig, ax = plt.subplots(figsize=(16, 10))
 
-        print(f"plotting timeseries {i} with KGE: {kge} , r: {r} and EV: {stat}")
+        print(f"plotting timeseries {i} with KGE: {kge} , r: {r} and RMSE: {rmse}")
         for m in range(nb_members):
             sim = members_sim[m,:,i]
             ax.plot(dates, sim, color="gray", alpha=0.5)
 
         ax.plot(dates, obs, "k-", label="Observations", linewidth=4.0)
         ax.plot(dates, mean_prediction, "k--", label="Ensemble mean", linewidth=4.0)
-        ax.scatter([], [], color="k", label=f"KGE: {kge}, r: {r}, EV: {stat}")
+        ax.scatter([], [], color="k", label=f"KGE: {kge}, r: {r}, RMSE: {rmse}")
 
-        # ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
-        # ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%b'))
+        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
 
         plt.xticks(rotation=45)
         plt.ylabel('Water table depth (m)')
         plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.11), ncol=3)
         plt.grid()
-        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "timeseries_EV_KGEr_lessthan02", f"timeseries_{target}_{i}.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "timeseries_rmseKGEr_lessthan02", f"timeseries_{target}_{i}.png"))
 
 
     def ensemble_statvsacc(self):
@@ -520,45 +154,13 @@ class postprocess_calculations:
                 
                 # x_axis.append(ensemble_variance)
                 # y_axis.append(kgeprime)
-                if kge<0.2:
-                    self.plot_ensemble_statsvsacc_timeseries(target, pixel, members_sim, mean_prediction, obs[:,pixel], f'{kge:.2f}', f'{math.ceil(ensemble_variance)}', f'{correlationobs:.2f}')
+                if kge < 0.2:
+                    self.plot_ensemble_statsvsacc_timeseries(target, pixel, members_sim, mean_prediction, obs[:,pixel], f'{kge:.2f}', f'{rmse:.2f}', f'{correlationobs:.2f}')
 
         ####### save to csv ########
         # df = pd.DataFrame(df_dic)
         # df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
 
-    def kge_investigation(self):
-        df = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
-        df = df.dropna()
-
-        x_vals = ["Pearson correlation", "Alpha", "Beta", "stdsim", "stdobs", "meansim", "meanobs"]
-        xlabels = {
-            "Pearson correlation": "Pearson correlation",
-            "Alpha": r"$\alpha=\frac{\sigma_{S}}{\sigma_{O}}$",
-            "Beta": r"$\beta=\frac{\bar{S}}{\bar{O}}$",
-            "stdsim": r"$\sigma_{S}$",
-            "stdobs": r"$\sigma_{O}$",
-            "meansim": r"$\bar{S}$",
-            "meanobs": r"$\bar{O}$"
-        }
-        for x in x_vals:
-            plt.figure()
-            plt.scatter(df[x].values,df["KGE"].values, marker='.', color='k')
-            plt.xlabel(xlabels[x])
-            
-            plt.ylabel(f"KGE")
-            #plt.xlim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
-            #plt.ylim(min(min(y_axis), min(x_axis)), max(max(y_axis), max(x_axis)))
-            plt.xscale("log")
-            #plt.yscale("log")
-            plt.yscale("symlog")
-            #plt.xlim(-1,1)
-            #plt.ylim(-1, 1)
-            plt.grid(True, linestyle='--', alpha=0.7)
-            plt.tight_layout()
-            print(f"plotting: KGE vs {x}")
-            plt.savefig(os.path.join(OUTPUTPATH, "statistics", "kgeinv", f"KGE_{x}.png"))
-        
     def ensemble_crpsvsstats(self):
         # NOTE we do this acc and statistics relationship only for transfer pixels for consistency with other metrics
         # and also for the same reasons as the other metrics
@@ -969,11 +571,6 @@ class postprocess_calculations:
             # calculate transfer metrics for 400px ensemble
             obs_transfer400, sim_transfer400 = load_obs_sim(EU400px_inpath, target, f"obs_{target}.npy", f"sim_transferpixels_{target}.npy")
             obs_test400, sim_test400 = load_obs_sim(EU400px_inpath, target, f"obs_{target}.npy", f"sim_testtrainpixels_{target}.npy")
-            obs_transfer400 = obs_transfer400[-365:-334,:]
-            sim_transfer400 = sim_transfer400[-365:-334,:]
-            obs_test400 = obs_test400[-365:-334,:]
-            sim_test400 = sim_test400[-365:-334,:]
-
             target_map = np.load(os.path.join(EU400px_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             training400px_indices, ind2d = utils.intersect_subsets(target_map, training_subset)
             corr_EU = calc_correlation(obs_transfer400, sim_transfer400)
@@ -1006,6 +603,9 @@ class postprocess_calculations:
             kge["test_400px"].extend(kge_EU[training400px_indices].tolist())
             nse["test_400px"].extend(nse_EU[training400px_indices].tolist())
             bias["test_400px"].extend(bias_EU[training400px_indices].tolist())
+        
+        if not sim_transferERA5.shape[0]==TEST_PERIOD-LOOKBACK or not sim_testERA5.shape[0]==TEST_PERIOD-LOOKBACK or not sim_transfer400.shape[0]==TEST_PERIOD-LOOKBACK or not sim_test400.shape[0]==TEST_PERIOD-LOOKBACK:
+            print(f"WARNING: unexpected timeseries length for target {target}")
 
         print("] Done!", flush=True)
         # cleanup
@@ -1315,7 +915,7 @@ class postprocess_calculations:
             np.save(os.path.join(EU_inpath, f"target_pixels_{target}", f"sim_transferpixels_{target}.npy"), mean_prediction_transfer)
             print(f"saved {target} target pixels")
 
-    def map_1Dto2D_EU(self):
+    def map_1Dto2D_EU(self, dirpath):
         def calc_correlation(obs, sim):
             correlation_map = []
             for i in range(obs.shape[1]):
@@ -1365,8 +965,8 @@ class postprocess_calculations:
             return all_kge, all_nse, all_bias
 
         def load_obs_sim(target):
-            obs_destand_test = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"obs_ensmean.npy"))
-            sim_destand_test = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"sim_ensmean.npy"))
+            obs_destand_test = np.load(os.path.join(dirpath, f"target_pixels_{target}", f"obs_ensmean.npy"))
+            sim_destand_test = np.load(os.path.join(dirpath, f"target_pixels_{target}", f"sim_ensmean.npy"))
             obs_destand_test = np.nan_to_num(obs_destand_test)
             sim_destand_test = np.nan_to_num(sim_destand_test)
             obs_destand_test[obs_destand_test < 0.0] = 0.0
@@ -1374,7 +974,6 @@ class postprocess_calculations:
             return obs_destand_test, sim_destand_test
         
         utils = utilities()
-        print("starting calculations")
 
         #### Transfer subset ####
         
@@ -1393,9 +992,8 @@ class postprocess_calculations:
         nse2d = np.zeros(transfer_subset.shape)
         nse2d[nse2d==0] = np.nan
         for target in range(100):
-            print(target)
             obs_destand_test, sim_destand_test = load_obs_sim(target)
-            target_map = np.load(os.path.join(INPUTPATH, "validation_ERA5", f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            target_map = np.load(os.path.join(dirpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             indices, indices_2d = utils.intersect_subsets(target_map, transfer_subset)
             indices_train, indices_2d_train = utils.intersect_subsets(target_map, training_subset)
 
@@ -1425,21 +1023,27 @@ class postprocess_calculations:
     
     def metrics_2D_EU(self):
         plot_functions = plotting_helper()
-        corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU()
+        print("mapping 1D metrics to 2D EU map")
+        era5dirpath = os.path.join(INPUTPATH, "validation_ERA5")
+        tsmpdirpath = os.path.join(os.path.dirname(os.path.dirname(get_root_dir())), "spatio-temporal-LSTM", "inputs", "20yrs_ts", "ensemble_400px")
+        era5corr2d, era5rmse2d, era5bias2d, era5kge2d, era5nse2d = self.map_1Dto2D_EU(era5dirpath)
+        tsmpcorr2d, tsmprmse2d, tsmpbias2d, tsmpkge2d, tsmpnse2d = self.map_1Dto2D_EU(tsmpdirpath)
 
+        # TODO plot for KGE<0.2 from the tsmp not era5
         # get indices where kge<0.2
-        kge2d = np.where(kge2d<0.2, np.nan, kge2d)
-        nse2d = np.where(np.isnan(kge2d), np.nan, nse2d)
-        corr2d = np.where(np.isnan(kge2d), np.nan, corr2d)
-        rmse2d = np.where(np.isnan(kge2d), np.nan, rmse2d)
-        bias2d = np.where(np.isnan(kge2d), np.nan, bias2d)
-        bias2d = np.where(kge2d<0.2, np.nan, bias2d)
+        era5kge2d = np.where(tsmpkge2d<0.2, np.nan, era5kge2d)
+        print(f"number of pixels with KGE>=0.2: {np.sum(~np.isnan(era5kge2d))}")
+        era5nse2d = np.where(np.isnan(era5kge2d), np.nan, era5nse2d)
+        era5corr2d = np.where(np.isnan(era5kge2d), np.nan, era5corr2d)
+        era5rmse2d = np.where(np.isnan(era5kge2d), np.nan, era5rmse2d)
+        era5bias2d = np.where(np.isnan(era5kge2d), np.nan, era5bias2d)
+        # bias2d = np.where(kge2d<0.2, np.nan, bias2d)
 
-        plot_functions.EU_2Dmap(data_map=corr2d, logscale=False, minval=0, maxval=1, title="Pearson correlation")
-        plot_functions.EU_2Dmap(data_map=rmse2d, logscale=True, minval=0.01, maxval=10, title="RMSE")
-        plot_functions.EU_2Dmap(data_map=bias2d, logscale=False, minval=-10, maxval=10, title="Mean bias")
-        plot_functions.EU_2Dmap(data_map=kge2d, logscale=False, minval=0.2, maxval=1, title="KGE")
-        plot_functions.EU_2Dmap(data_map=nse2d, logscale=False, minval=-1, maxval=1, title="NSE")
+        plot_functions.EU_2Dmap(data_map=era5corr2d, logscale=False, minval=0, maxval=1, title="Pearson correlation")
+        plot_functions.EU_2Dmap(data_map=era5rmse2d, logscale=True, minval=0.01, maxval=10, title="RMSE")
+        plot_functions.EU_2Dmap(data_map=era5bias2d, logscale=False, minval=-10, maxval=10, title="Mean bias")
+        plot_functions.EU_2Dmap(data_map=era5kge2d, logscale=False, minval=0.2, maxval=1, title="KGE")
+        plot_functions.EU_2Dmap(data_map=era5nse2d, logscale=False, minval=-1, maxval=1, title="NSE")
 
     def metrics_vs_topo(self):
         ###### comment out the training pixels from self.map_1Dto2D_EU() ######
@@ -1584,10 +1188,10 @@ class postprocess_calculations:
     def estimate_acc_from_stats(self):
         utils = utilities()
         plot_functions = plotting_helper()
-        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
-        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
+        EU_inpath = os.path.join(INPUTPATH, "validation_ERA5")
+        EU_outpath = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean")
         EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
-        rollsubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "ensemble_400px_org", "mapping_0stdroll6months.npy"))
+        rollsubset = np.load(os.path.join(INPUTPATH, "mapping_0stdroll6months.npy"))
         iqrmap = np.zeros(rollsubset.shape)
         iqrmap[iqrmap==0] = np.nan
         varmap = np.zeros(rollsubset.shape)
@@ -1596,9 +1200,8 @@ class postprocess_calculations:
         print("          [", end="", flush=True)
         for target in range(100):
             print(".", end="", flush=True)  # Dots without newlines
-            target_mapping = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            #obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
-            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            target_mapping = np.load(os.path.join(EU_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_{target}.npy")) for m in range(100)]
             members_sim = np.array(members_sim)
             members_sim = np.expand_dims(members_sim, axis=0)
             members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
@@ -1644,10 +1247,23 @@ class postprocess_calculations:
             #print(f"saved target {target}")
 
         print("] Done!", flush=True)
+        # keep only pixels that we have observations for
+        obsmask = np.zeros(rollsubset.shape)
+
+        proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_localobs_TSMPproj.csv"))
+        proj_mapping = proj_mapping.dropna(subset=["sim_1darrayindex"])
+        proj_mapping.reset_index(drop=True, inplace=True)
+        tsmpx = proj_mapping["tsmp_xindex"].values
+        tsmpy = proj_mapping["tsmp_yindex"].values
+        obsmask[tsmpy, tsmpx] = 1.0
+
+        iqrmap = np.where(obsmask==0.0, np.nan, iqrmap)
+        varmap = np.where(obsmask==0.0, np.nan, varmap)
+
         bias2d_statspred = 0.45*(iqrmap**1.03)
         rmse2d_statspred = 0.67*(varmap**0.45)
-        plot_functions.EU_2Dmap(data_map=bias2d_statspred, logscale=True, minval=0.01, maxval=10, title="Absolute mean bias")
-        plot_functions.EU_2Dmap(data_map=rmse2d_statspred, logscale=True, minval=0.01, maxval=10, title="RMSE")
+        plot_functions.doublefig_EU_2Dmap(data_map=bias2d_statspred, logscale=True, minval=0.01, maxval=10, title="Absolute mean bias")
+        plot_functions.doublefig_EU_2Dmap(data_map=rmse2d_statspred, logscale=True, minval=0.01, maxval=10, title="RMSE")
     
     def plot_map_selectedpixels(self):
         plot_functions = plotting_helper()
@@ -1839,66 +1455,276 @@ class postprocess_calculations:
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "KGEcomp_EV_kgelessthan02.png"), dpi=300)
     
-    def check_equal_files(self):
-        dir1 = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_100px"
-        dir2 = "/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts/ensemble_100px"
-        file1 = np.load(os.path.join(dir1, "target_pixels_75", "sim_testtrainpixels_75.npy"))
-        file2 = np.load(os.path.join(dir2, "target_pixels_75", "sim_testtrainpixels_75.npy"))
-        file3 = np.load(os.path.join(dir2, "target_pixels_75", "sim_testtrainpixels_75_old.npy"))
-        file1 = np.nan_to_num(file1)
-        file2 = np.nan_to_num(file2)
-        file3 = np.nan_to_num(file3)
-        print(np.unique(np.equal(file1, file2), return_counts=True))
-        print(np.unique(np.equal(file1, file3), return_counts=True))
-        print(np.unique(np.equal(file2, file3), return_counts=True))
-        print(file1)
-        print(file2)
+    def era5wtdensemble_localobs_timeseries(self, obslocation, sim_era5wtd, mean_prediction, tsmpobs, localobs, kge, rmse, r, bias, nse):
+        dates = pd.date_range(start='2017-01-01', end='2019-12-31', freq='D')
+        dates = dates[(dates.month != 2) | (dates.day != 29)]
+        fig, ax = plt.subplots(figsize=(16, 10))
 
-    def delete_old_files(self):
-        dirpath = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_400px"
-        for i in range(100):
-            print(i)
-            targetpath = os.path.join(dirpath, f"target_pixels_{i}")
-            if os.path.exists(os.path.join(targetpath, f"sim_destand_{MODEL_NAME}_{i}.npy")):
-                os.remove(os.path.join(targetpath, f"sim_destand_{MODEL_NAME}_{i}.npy"))
-            if os.path.exists(os.path.join(targetpath, f"obs_destand_{MODEL_NAME}_{i}.npy")):
-                os.remove(os.path.join(targetpath, f"obs_destand_{MODEL_NAME}_{i}.npy"))
-            if os.path.exists(os.path.join(targetpath, f"obs_testtrainpixels_{i}.npy")):
-                os.remove(os.path.join(targetpath, f"obs_testtrainpixels_{i}.npy"))
+        kge = round(kge, 2)
+        r = round(r, 2)
+        rmse = round(rmse, 2)
+        bias = round(bias, 2)
+        nse = round(nse, 2)
+
+        print(f"plotting timeseries {obslocation} with KGE: {kge} , r: {r}, RMSE: {rmse}, Bias: {bias}, NSE: {nse}")
+        for m in range(100):
+            sim = sim_era5wtd[m,:]
+            ax.plot(dates, sim, color="gray", alpha=0.5)
+
+        ax.plot(dates, localobs, "r-", label="Observations", linewidth=3.0)
+        ax.plot(dates, mean_prediction, "k-", label="ERA5 ensemble mean", linewidth=3.0)
+        ax.plot(dates, tsmpobs, "b-", label="TSMP observations", linewidth=3.0)
+        ax.scatter([], [], color="k", label=f"KGE:{kge} ,r:{r}, RMSE:{rmse},\nBias:{bias}, NSE: {nse}")
+
+        ax.xaxis.set_major_locator(mdates.MonthLocator([1,7]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+
+        plt.xticks(rotation=45)
+        plt.ylabel('Water table depth (m)')
+        plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.17), ncol=3)
+        plt.grid()
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "timeseries", f"timeseries_{obslocation.replace('.', 'p')}.png"))
+
+    def get_era5wtd(self, target, sim_1darrayindex):
+        sim_allmembers = np.array([np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{m}", f"sim_{target}.npy")) for m in range(100)])
+        sim_allmembers = sim_allmembers[:,:,sim_1darrayindex]  # (members, timeseries)
+        return sim_allmembers
+
+    def get_tsmpwtd(self, target, sim_1darrayindex):
+        tsmpobs = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_0", f"obs_{target}.npy"))
+        tsmpobs = tsmpobs[:, sim_1darrayindex]
+        return tsmpobs
+
+    def eval_era5wtd_obswtd_tsmpwtd(self):
+        utils = utilities()
+        plot_functions = plotting_helper()
+        map2d = np.load(os.path.join(INPUTPATH, "mapping_0stdroll6months.npy"))
+        map2d_metrics = {"KGE": np.zeros(map2d.shape), "r": np.zeros(map2d.shape), "RMSE": np.zeros(map2d.shape), "Bias": np.zeros(map2d.shape), "NSE": np.zeros(map2d.shape)}
+        map2d_metrics["KGE"][map2d_metrics["KGE"]==0] = np.nan
+        map2d_metrics["r"][map2d_metrics["r"]==0] = np.nan
+        map2d_metrics["RMSE"][map2d_metrics["RMSE"]==0] = np.nan
+        map2d_metrics["Bias"][map2d_metrics["Bias"]==0] = np.nan
+        map2d_metrics["NSE"][map2d_metrics["NSE"]==0] = np.nan
+        obswtd = pd.read_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "obs_EUwtd_DPSF.parquet"))
+        obswtd = obswtd.dropna(axis=1)  # drop columns with all NaN values
+        print(len(obswtd.columns))
+        proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_DPSFobs_TSMPproj.csv"))
+        proj_mapping = proj_mapping.dropna(subset=["sim_1darrayindex"])
+        proj_mapping.reset_index(drop=True, inplace=True)
+        cdf_data = {
+            'KGE': [],
+            'Pearson correlation': [],
+            'RMSE': [],
+            'Bias': [],
+            'NSE': []
+        }
+        ev = []
+        iqr = []
+        rmse_list = []
+        ambias_list = []
+        for pixel in range(len(proj_mapping)):
+            print(f"Processing pixel {pixel+1} of {len(proj_mapping)}", end='\r')
+            countrylocation = proj_mapping.iloc[pixel]["countylocation"]
+            if not countrylocation in obswtd.columns:
+                continue
+            tsmplat = proj_mapping.iloc[pixel]["tsmp_lat"]
+            tsmplon = proj_mapping.iloc[pixel]["tsmp_lon"]
+            tsmp_xindex = proj_mapping.iloc[pixel]["tsmp_xindex"]
+            tsmp_yindex = proj_mapping.iloc[pixel]["tsmp_yindex"]
+            target = int(proj_mapping.iloc[pixel]["target_chunk"])
+            sim_1darrayindex = int(proj_mapping.iloc[pixel]["sim_1darrayindex"])
+            sim_era5wtd = self.get_era5wtd(target, sim_1darrayindex)
+            sim_era5wtd = sim_era5wtd[:, :-365]  # remove year 2020 to match localobs
+            ens_mean_era5wtd = np.mean(sim_era5wtd, axis=0)
+            tsmpobs = self.get_tsmpwtd(target, sim_1darrayindex)
+            tsmpobs = tsmpobs[:-365]  # remove year 2020 to match localobs
+            localobs = np.array(obswtd[f"{countrylocation}"].to_list())
+            # localobs = localobs[730:]  # remove year 2016 to match sim_era5wtd and tsmpobs
+            # check lengths
+            if len(localobs) != sim_era5wtd.shape[1] or len(localobs) != tsmpobs.shape[0]:
+                print(f"lengths do not match for pixel {countrylocation}, skipping...")
+                return
+            kge = utils.calculate_kge(localobs, ens_mean_era5wtd)
+            rmse = np.sqrt(np.mean((localobs - ens_mean_era5wtd) ** 2))
+            r = np.corrcoef(localobs, ens_mean_era5wtd)[0, 1]
+            bias = np.mean(ens_mean_era5wtd - localobs)
+            nse = 1 - (np.sum((localobs - ens_mean_era5wtd) ** 2) / np.sum((localobs - np.mean(localobs)) ** 2))
+            cdf_data['KGE'].append(kge)
+            cdf_data['Pearson correlation'].append(r)
+            cdf_data['RMSE'].append(rmse)
+            cdf_data['Bias'].append(bias)
+            cdf_data['NSE'].append(nse)
+            ############## plot timeseries ##############
+            self.era5wtdensemble_localobs_timeseries(countrylocation, sim_era5wtd, ens_mean_era5wtd, tsmpobs, localobs,
+                                               kge=kge,
+                                               rmse=rmse,
+                                               r=r,
+                                               bias=bias,
+                                               nse=nse
+                                               )
+            
+            ############## collect data for EV vs metrics ##############
+            ensemble_variance = np.var(sim_era5wtd, axis=0)
+            ensemble_variance = np.mean(ensemble_variance)
+            ev.append(ensemble_variance)
+            ensemble_iqr = np.percentile(sim_era5wtd, 75, axis=0) - np.percentile(sim_era5wtd, 25, axis=0)
+            ensemble_iqr = np.mean(ensemble_iqr)
+            iqr.append(ensemble_iqr)
+            rmse_list.append(rmse)
+            ambias_list.append(np.abs(bias))
+
+            ############## plot 2D map of pixels with colored accuracy ##############
+            map2d_metrics["r"][int(tsmp_yindex), int(tsmp_xindex)] = r
+            map2d_metrics["KGE"][int(tsmp_yindex), int(tsmp_xindex)] = kge
+            map2d_metrics["RMSE"][int(tsmp_yindex), int(tsmp_xindex)] = rmse
+            map2d_metrics["Bias"][int(tsmp_yindex), int(tsmp_xindex)] = bias
+            map2d_metrics["NSE"][int(tsmp_yindex), int(tsmp_xindex)] = nse
+        
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map.npy"), map2d_metrics["r"])
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map.npy"), map2d_metrics["KGE"])
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map.npy"), map2d_metrics["RMSE"])
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map.npy"), map2d_metrics["Bias"])
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map.npy"), map2d_metrics["NSE"])
+        
+        
+        ############## plot CDF ##############
+        # absolute mean bias instead of mean bias
+        # cdf_data["Bias"] = np.abs(cdf_data["Bias"])
+        # utils.plot_cdfs(data_dict={ "KGE": cdf_data["KGE"] }, colors=['k'], linestyles=['-'], xlabel='KGE', title='ERA5ensemblevsobs', logscale=False, xlim=(0.2,1))
+        # utils.plot_cdfs(data_dict={ "Pearson correlation": cdf_data["Pearson correlation"] }, colors=['k'], linestyles=['-'], xlabel='Pearson correlation', title='ERA5ensemblevsobs')
+        # utils.plot_cdfs(data_dict={ "RMSE": cdf_data["RMSE"] }, colors=['k'], linestyles=['-'], xlabel='RMSE (m)', title='ERA5ensemblevsobs', logscale=True)
+        # utils.plot_cdfs(data_dict={ "Bias": cdf_data["Bias"] }, colors=['k'], linestyles=['-'], xlabel='Absolute Mean Bias (m)', title='ERA5ensemblevsobs', logscale=True)
+        # utils.plot_cdfs(data_dict={ "NSE": cdf_data["NSE"] }, colors=['k'], linestyles=['-'], xlabel='NSE', title='ERA5ensemblevsobs', logscale=False, xlim=(0,1))
+
+        ############### plot EV vs metrics ##############
+        # plot also the fitting line from before, plot it as a line not scatter
+        # for EV vs RMSE: rmse2d_statspred = 0.67*(varmap**0.45)
+        # for IQR vs Bias: bias2d_statspred = 0.45*(iqrmap**1.03)
+        line = np.array([np.min(iqr), np.max(iqr)])
+        fitted_bias = 0.45 * (line ** 1.03)
+        # calculate R2
+        ev = np.array(iqr)
+        # rmse_list = np.array(rmse_list)
+        # log_ev = np.log(ev)
+        # log_rmse = np.log(rmse_list)
+        # slope, intercept, r_value, p_value, std_err = stats.linregress(log_ev, log_rmse)
+        # r_squared = r_value**2
+        # print(f"EV vs RMSE fitting line R2: {r_squared}")
+        ambias_list = np.array(ambias_list)
+        log_iqr = np.log(iqr)
+        log_ambias = np.log(ambias_list)
+        slope, intercept, r_value, p_value, std_err = stats.linregress(log_iqr, log_ambias)
+        r_squared = r_value**2
+        print(f"IQR vs Mean Absolute Bias fitting line R2: {r_squared}")
+
+        plt.figure()
+        plt.scatter(iqr, ambias_list, alpha=0.5)
+        # plot fitting line
+        plt.plot(line, fitted_bias, 'r-', label=f'R2={r_squared:.2f}\nMAB=0.45*(IQR^1.03)')
+        plt.legend(loc='lower right')
+        plt.xlabel(r'$\overline{IQR}$')
+        plt.ylabel(r'Mean Absolute Bias (m)')
+        plt.xscale('log')
+        plt.yscale('log')
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics", "IQR_vs_MAB.png"), dpi=300, bbox_inches='tight')
     
-    def move_old_files(self):
-        import shutil
-        inpath = os.path.dirname(OUTPUTPATH)
-        outpath = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/outputs/20yrs_ts/ensemble_400px"
-        for i in range(100):
-            print(i)
-            ####### from /outputs/20yrs_ts/ensemble_400px ####
-            if os.path.exists(os.path.join(inpath, f"crps_100members_onlytransfer.npy")):
-                shutil.move(os.path.join(inpath, f"crps_100members_onlytransfer.npy"), os.path.join(outpath, f"crps_100members_onlytransfer.npy"))
-                print("moved crps_100members_onlytransfer")
-            ####### from /inputs/20yrs_ts/ensemble_400px ####
-            intargetpath = os.path.join(inpath, f"target_pixels_{i}")
-            if os.path.exists(os.path.join(intargetpath, f"obs_{i}.npy")):
-                shutil.move(os.path.join(intargetpath, f"obs_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"obs_{i}.npy"))
-                print("moved obs")
-            if os.path.exists(os.path.join(intargetpath, f"obs_ts_trainpixels_{i}.npy")):
-                shutil.move(os.path.join(intargetpath, f"obs_ts_trainpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"obs_ts_trainpixels_{i}.npy"))
-                print("moved obs_ts_trainpixels")
-            if os.path.exists(os.path.join(intargetpath, f"obs_ts_transferpixels_{i}.npy")):
-                shutil.move(os.path.join(intargetpath, f"obs_ts_transferpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"obs_ts_transferpixels_{i}.npy"))
-                print("moved obs_ts_transferpixels")
+    def plot2Dmaps(self):
+        plot_functions = plotting_helper()
+        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map.npy")),
+                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map.npy")),
+                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map.npy")),
+                         "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map.npy")),
+                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map.npy"))}
+        # plot absolute mean bias instead of mean bias
+        map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["r"], logscale=False, minval=0, maxval=1, title="Pearson correlation")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["RMSE"], logscale=True, minval=0.01, maxval=10, title="RMSE")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE")
+    
+    def get_country_mask(self, country):
+        mappingfile = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_DPSFobs_TSMPproj.csv"))
+        mappingfile = mappingfile.dropna(subset=["sim_1darrayindex"])
+        mappingfile.reset_index(drop=True, inplace=True)
+        country_mask = np.zeros((432, 444), dtype=bool)
+        # TODO do the same without a for loop
+        for pixel in range(len(mappingfile)):
+            countrylocation = mappingfile.iloc[pixel]["countylocation"]
+            if countrylocation.startswith(country):
+                tsmpxindex = int(mappingfile.iloc[pixel]["tsmp_xindex"])
+                tsmpyindex = int(mappingfile.iloc[pixel]["tsmp_yindex"])
+                country_mask[tsmpyindex, tsmpxindex] = True
+        return country_mask
 
-            if os.path.exists(os.path.join(intargetpath, f"sim_100members_ts_transferpixels_{i}.npy")):
-                shutil.move(os.path.join(intargetpath, f"sim_100members_ts_transferpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_100members_ts_transferpixels_{i}.npy"))
-                print("moved sim_100members_ts_transferpixels")
-            if os.path.exists(os.path.join(intargetpath, f"sim_99members_ts_trainpixels_{i}.npy")):
-                shutil.move(os.path.join(intargetpath, f"sim_99members_ts_trainpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_99members_ts_trainpixels_{i}.npy"))
-                print("moved sim_99members_ts_trainpixels")
+    def plot2Dmaps_byregion(self, country):
+        plot_functions = plotting_helper()
+        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map.npy")),
+                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map.npy")),
+                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map.npy")),
+                         "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map.npy")),
+                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map.npy"))}
+        # plot absolute mean bias instead of mean bias
+        map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
 
-            if os.path.exists(os.path.join(intargetpath, f"sim_testtrainpixels_{i}.npy")):
-                shutil.move(os.path.join(intargetpath, f"sim_testtrainpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_testtrainpixels_{i}.npy"))
-                print("moved sim_testtrainpixels")
+        # apply region mask
+        country_mask = self.get_country_mask(country)
+        for key in map2d_metrics.keys():
+            map2d_metrics[key] = np.where(country_mask, map2d_metrics[key], np.nan)
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE", country=country)
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["r"], logscale=False, minval=0, maxval=1, title="Pearson correlation", country=country)
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["RMSE"], logscale=True, minval=0.01, maxval=10, title="RMSE", country=country)
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias", country=country)
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE", country=country)
+    
+    def plot2Dmaps_multiregion(self):
+        regions = ["France", "Sweden"]
+        for country in regions:
+            self.plot2Dmaps_byregion(country)
 
-            if os.path.exists(os.path.join(intargetpath, f"sim_transferpixels_{i}.npy")):
-                shutil.move(os.path.join(intargetpath, f"sim_transferpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_transferpixels_{i}.npy"))
-                print("moved sim_transferpixels")
+        
+    def plot_cdfs(self):
+        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map.npy")),
+                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map.npy")),
+                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map.npy")),
+                         "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map.npy")),
+                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map.npy"))}
+        utils = utilities()
+        map2d_metrics["KGE"] = map2d_metrics["KGE"][~np.isnan(map2d_metrics["KGE"])]
+        print(map2d_metrics["KGE"].shape)
+        map2d_metrics["r"] = map2d_metrics["r"][~np.isnan(map2d_metrics["r"])]
+        print(map2d_metrics["r"].shape)
+        map2d_metrics["RMSE"] = map2d_metrics["RMSE"][~np.isnan(map2d_metrics["RMSE"])]
+        print(map2d_metrics["RMSE"].shape)
+        map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
+        map2d_metrics["Bias"] = map2d_metrics["Bias"][~np.isnan(map2d_metrics["Bias"])]
+        print(map2d_metrics["Bias"].shape)
+        map2d_metrics["NSE"] = map2d_metrics["NSE"][~np.isnan(map2d_metrics["NSE"])]
+        print(map2d_metrics["NSE"].shape)
+
+        utils.plot_cdfs(data_dict={"KGE": map2d_metrics["KGE"]}, colors=['k'], linestyles=['-'], xlabel='KGE', xmin=0.2, xlim=(0.2, 1), yfloor=True, title='ERA5ensemblevsobs')
+        utils.plot_cdfs(data_dict={"Pearson correlation": map2d_metrics["r"]}, colors=['k'], linestyles=['-'], xlabel='Pearson correlation', title='ERA5ensemblevsobs')
+        utils.plot_cdfs(data_dict={"RMSE": map2d_metrics["RMSE"]}, colors=['k'], linestyles=['-'], logscale=True, xlabel='RMSE (m)', title='ERA5ensemblevsobs')
+        utils.plot_cdfs(data_dict={"Bias": map2d_metrics["Bias"]}, colors=['k'], linestyles=['-'], xlabel='Mean Absolute Bias (m)', logscale=True, title='ERA5ensemblevsobs')
+        utils.plot_cdfs(data_dict={"NSE": map2d_metrics["NSE"]}, colors=['k'], linestyles=['-'], xlabel='NSE', xmin=0.2, xlim=(0.2, 1), yfloor=True, title='ERA5ensemblevsobs')
+
+    def location_of_localobs(self):
+        plot_functions = plotting_helper()
+        proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_DPSFobs_TSMPproj.csv"))
+        topo = np.load(os.path.join(INPUTPATH, "topo.npy"))
+        topo = topo[0,:,:]  # remove time dimension if present
+        # topo[topo==0] = np.nan  # set ocean to nan for better visualization
+        for i in range(len(proj_mapping)):
+            obslocation = proj_mapping.iloc[i]["countylocation"]
+            tsmp_xindex = proj_mapping.iloc[i]["tsmp_xindex"]
+            tsmp_yindex = proj_mapping.iloc[i]["tsmp_yindex"]
+            df = proj_mapping
+            # select all rows with the same country in the column "countylocation" that has a format "country_lonlat"
+            # create a column with only the country name
+            df["country"] = df["countylocation"].apply(lambda x: x.split("_")[0])
+            country = obslocation.split("_")[0]
+            df = df[df["country"] == country]
+            tsmplat = df["tsmp_lat"].to_list()
+            tsmplon = df["tsmp_lon"].to_list()
+
+            plot_functions.onepixel_in_doublefig_EU_2Dmap(x=tsmp_xindex, y=tsmp_yindex, location=obslocation, tsmp_lon=tsmplon, tsmp_lat=tsmplat, topo=topo)

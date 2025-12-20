@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.ticker as mticker
@@ -703,3 +704,162 @@ class plotting_helper:
         plt.grid(True)
         plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "statistics", f"{title}.png"), dpi=300, bbox_inches='tight')
         plt.close()
+
+    def doublefig_EU_2Dmap(self, data_map, logscale, minval, maxval, title, country):
+        """
+        Create a two-panel figure:
+        - Left: full-domain small-scale map with the region that contains actual data highlighted.
+        - Right: zoomed-in large-scale map showing only the region that contains actual data.
+
+        data_map is a 2D array aligned with lon2D/lat2D; pixels outside the region are np.nan.
+        """
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        # get EU lon lat
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+
+        # determine region that actually contains data
+        valid_idx = np.where(~np.isnan(data_map))
+        if len(valid_idx[0]) == 0:
+            # nothing to plot, fallback to original behavior: full map with no data
+            lon_min, lon_max = np.nanmin(lons), np.nanmax(lons)
+            lat_min, lat_max = np.nanmin(lats), np.nanmax(lats)
+        else:
+            lon_min = float(np.min(lons[valid_idx]))
+            lon_max = float(np.max(lons[valid_idx]))
+            lat_min = float(np.min(lats[valid_idx]))
+            lat_max = float(np.max(lats[valid_idx]))
+
+        # small buffer for zoomed inset
+        lon_buffer = 0.05 * (lon_max - lon_min) if (lon_max - lon_min) != 0 else 0.1
+        lat_buffer = 0.05 * (lat_max - lat_min) if (lat_max - lat_min) != 0 else 0.1
+        zoom_extent = [lon_min - lon_buffer, lon_max + lon_buffer, lat_min - lat_buffer, lat_max + lat_buffer]
+
+        # figure with 2 panels side-by-side
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 9), subplot_kw={'projection': projection}, constrained_layout=True)
+
+        cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title) else "coolwarm"
+        cmap = plt.get_cmap(cmap_colors)
+        norm = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
+
+        # Left: full domain (small scale)
+        im1 = ax1.pcolormesh(lons, lats, data_map, cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+        ax1.coastlines()
+        ax1.gridlines(draw_labels=True)
+        ax1.set_title(f"{title} — EURO-CORDEX domain")
+        # import shapefile
+        shapefile_path = os.path.join(os.path.dirname(get_root_dir()), "ne_10m_admin_0_countries", "ne_10m_admin_0_countries.shp")
+        shape_feature = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='black')
+        ax1.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        # highlight the data region with a rectangular polygon
+        if len(valid_idx[0]) != 0:
+            region_polygon = Polygon([
+                (lon_min, lat_min),
+                (lon_min, lat_max),
+                (lon_max, lat_max),
+                (lon_max, lat_min)
+            ])
+            # add as geometry border
+            ax1.add_geometries([region_polygon], ccrs.PlateCarree(), facecolor='none', edgecolor='red', linewidth=2, zorder=5)
+
+        # Right: zoomed to region containing data (large scale)
+        im2 = ax2.pcolormesh(lons, lats, data_map, cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+        # ax2.coastlines(resolution='10m')
+        # ax2.add_feature(cfeature.BORDERS, linestyle=':') # Add country borders
+        ax2.gridlines(draw_labels=True)
+        ax2.set_title(f"{title} — {country}")
+        if len(valid_idx[0]) != 0:
+            ax2.set_extent(zoom_extent, crs=ccrs.PlateCarree())
+        ax2.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        # Shared colorbar for both panels
+        # prefer to use one of the mappable objects (im2) and attach to both axes
+        cbar = fig.colorbar(im2, ax=[ax1, ax2], orientation='vertical', fraction=0.03, pad=0.02)
+        colorbar_label = f"{title}" if title in ("Pearson correlation", "NSE", "KGE") else f"{title} (m)"
+        cbar.set_label(colorbar_label)
+
+        # save figure (ensure directory exists)
+        out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"double_{country}_2Dmap_{title}.png")
+        print(f"saving {os.path.basename(out_path)}")
+        fig.savefig(out_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+    
+    def onepixel_in_doublefig_EU_2Dmap(self, x, y, location, tsmp_lon, tsmp_lat, topo):
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        # get EU lon lat
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+
+        # proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_localobs_TSMPproj.csv"))
+        # determine region that actually contains data
+        lon_min = float(np.min(tsmp_lon))
+        lon_max = float(np.max(tsmp_lon))
+        lat_min = float(np.min(tsmp_lat))
+        lat_max = float(np.max(tsmp_lat))
+
+        # small buffer for zoomed inset
+        lon_buffer = 0.05 * (lon_max - lon_min) if (lon_max - lon_min) != 0 else 0.1
+        lat_buffer = 0.05 * (lat_max - lat_min) if (lat_max - lat_min) != 0 else 0.1
+        # lon_buffer = 0.1
+        # lat_buffer = 0.1
+        zoom_extent = [lon_min - lon_buffer, lon_max + lon_buffer, lat_min - lat_buffer, lat_max + lat_buffer]
+
+        # figure with 2 panels side-by-side
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 9), subplot_kw={'projection': projection}, constrained_layout=True)
+
+        cmap = plt.get_cmap("terrain")
+        norm = mcolors.LogNorm(vmin=1, vmax=np.max(topo))
+        # norm = Normalize(vmin=np.min(topo), vmax=np.max(topo))
+        # Left: full domain (small scale)
+        im1 = ax1.pcolormesh(lons, lats, topo, cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+        ax1.coastlines()
+        ax1.gridlines(draw_labels=True)
+        ax1.set_title(f"EURO-CORDEX domain")
+
+        # highlight the data region with a rectangular polygon
+        region_polygon = Polygon([
+                (lon_min - lon_buffer, lat_min - lat_buffer),
+                (lon_min - lon_buffer, lat_max + lat_buffer),
+                (lon_max + lon_buffer, lat_max + lat_buffer),
+                (lon_max + lon_buffer, lat_min - lat_buffer)
+            ])
+        # add as geometry border
+        ax1.add_geometries([region_polygon], ccrs.PlateCarree(), facecolor='none', edgecolor='red', linewidth=2, zorder=5)
+        ax1.plot(lons[y,x], lats[y,x], marker='*', color="r", markersize=15, transform=ccrs.PlateCarree(), label='Special Point')
+        # import shapefile
+        shapefile_path = os.path.join(os.path.dirname(get_root_dir()), "ne_10m_admin_0_countries", "ne_10m_admin_0_countries.shp")
+        shape_feature = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='black')
+        ax1.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        # Right: zoomed to region containing data (large scale)
+        im2 = ax2.pcolormesh(lons, lats, topo, cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+        # ax2.coastlines(resolution='10m')
+        # ax2.add_feature(cfeature.BORDERS, linestyle=':') # Add country borders
+        # ax2.gridlines(draw_labels=True)
+        country = "France"
+        country = "Sweden" if location.startswith("Sweden") else country
+        country = "Portugal" if location.startswith("Portugal") else country
+
+        ax2.set_title(f"{country}")
+        ax2.set_extent(zoom_extent, crs=ccrs.PlateCarree())
+        ax2.plot(lons[y,x], lats[y,x], marker='*', color="r", markersize=25, transform=ccrs.PlateCarree(), label='Special Point')
+        ax2.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        # Shared colorbar for both panels
+        # prefer to use one of the mappable objects (im2) and attach to both axes
+        cbar = fig.colorbar(im2, ax=[ax1, ax2], orientation='vertical', fraction=0.03, pad=0.02)
+        colorbar_label = f"Elevation (m)"
+        cbar.set_label(colorbar_label)
+
+        # save figure (ensure directory exists)
+        out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "location2Dmap")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"{location.replace('.', 'p')}.png")
+        print(f"saving {os.path.basename(out_path)}")
+        fig.savefig(out_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
