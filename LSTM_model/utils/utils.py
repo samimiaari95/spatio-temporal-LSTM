@@ -396,7 +396,7 @@ class utilities:
         if grid:
             ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "statistics", f"cdf_{xlabel}_{title}.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", f"cdf_{xlabel}_{title}.png"))
         return print(f"plotted cdfs of {xlabel}")
 
     def plot_pdfs(self,
