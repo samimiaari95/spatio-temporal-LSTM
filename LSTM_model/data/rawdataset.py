@@ -164,8 +164,8 @@ class preprocess_rawdata:
     def calculate_vpd_fromTandTd(self, month, year):
         utils = utilities()
         dirpath = os.path.join(get_root_dir(), 'inputs', 'EU_74_-48_69_20', "raw", "ERA5-Land")
-        t2m = utils.read_nc(os.path.join(dirpath, "regridded_to_EUR11", f'BonA_bilinear_ERA5land_t2m_{year}{month}.nc'), 't2m') - 273.15
-        d2m = utils.read_nc(os.path.join(dirpath, "regridded_to_EUR11", f'BonA_bilinear_ERA5land_d2m_{year}{month}.nc'), 'd2m') - 273.15
+        t2m = utils.read_nc(os.path.join(dirpath, "regridded_to_EUR11", f'BonA_nn_ERA5land_t2m_{year}{month}.nc'), 't2m') - 273.15
+        d2m = utils.read_nc(os.path.join(dirpath, "regridded_to_EUR11", f'BonA_nn_ERA5land_d2m_{year}{month}.nc'), 'd2m') - 273.15
         es = 0.611 * np.exp((17.27 * t2m) / (t2m + 237.3))
         ea = 0.611 * np.exp((17.27 * d2m) / (d2m + 237.3))
         vpd = es - ea
@@ -201,7 +201,7 @@ class preprocess_rawdata:
     def extract_vars(self):
         dirpath = os.path.join(INPUTPATH, "raw", "ERA5-Land")
         months = [f"{i:02d}" for i in range(1,13)]
-        years = ["2016", "2017", "2018", "2019", "2020"]
+        years = [f"{x}" for x in range (1999, 2021)]
         varnames = ["swvl3", "tp"]
         for year in years:
             for month in months:
@@ -212,7 +212,7 @@ class preprocess_rawdata:
                         infile = os.path.join(dirpath, "regridded_to_EUR11", f'BonA_conservative_at23h_ERA5land_{varname}_{year}{month}.nc')
                         outfile = os.path.join(dirpath, "npy_regridded_to_EUR11", f'{varname}_{year}{month}_EU.npy')
                     elif varname == "swvl3":
-                        infile = os.path.join(dirpath, "regridded_to_EUR11", f'BonA_bilinear_ERA5land_{varname}_{year}{month}.nc')
+                        infile = os.path.join(dirpath, "regridded_to_EUR11", f'BonA_nn_ERA5land_{varname}_{year}{month}.nc')
                         outfile = os.path.join(dirpath, "npy_regridded_to_EUR11", f'{varname}_{year}{month}_EU.npy')
                     self.extract_nc_to_npy(infile, outfile, varname, month)
         return
@@ -235,20 +235,6 @@ class preprocess_rawdata:
         print(dailydata.shape)
         np.save(outfile, dailydata)
         return
-
-    def avgwtd_2020(self):
-        plots = plotting_helper()
-        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
-        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "ensemble_400px_org", "mapping_0stdroll6months.npy"))
-        print(np.sum(mapping))
-        print(wtd.shape)
-        wtd = wtd[-365:,:,:]
-        wtd = np.mean(wtd, axis=0)
-        print(wtd.shape)
-        wtd = np.where(mapping==1, wtd, np.nan)
-        print(wtd.shape)
-        # plot it in 2d map
-        plots.EU_2Dmap(data_map=wtd,logscale=False, minval=0, maxval=50, title="Water table depth")
 
     def check_ERA5_vs_TSMP_units(self):
         utils = utilities()
