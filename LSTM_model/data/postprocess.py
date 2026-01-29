@@ -871,8 +871,6 @@ class postprocess_calculations:
         utils = utilities()
         EU_inpath = os.path.join(INPUTPATH, "validation_ERA5")
         EU_outpath = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px")
-        EU_traininpath = os.path.join(INPUTPATH, "validation_ERA5")
-        print(EU_inpath)
         for target in range(100):
             target_mapping = np.load(os.path.join(EU_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             obs_destand_EU = np.load(os.path.join(EU_outpath, f"400px_member_1", f"obs_{target}.npy"))
@@ -891,7 +889,7 @@ class postprocess_calculations:
                 member_mask[member] = False
                 pixel_mask = np.zeros(members_sim.shape[2], dtype=bool)
                 # get the 2d mapping file of indices of pixels used in training this member
-                member_mapping = np.load(os.path.join(EU_traininpath, f"400px_member_{member}", "choices.npy"))
+                member_mapping = np.load(os.path.join(EU_inpath, f"400px_member_{member}", "choices.npy"))
                 # call function here to find which pixels of my target chunk were included in the training of this specific member
                 indices1d, indices2d = utils.intersect_subsets(target_mapping, member_mapping)
                 # chunk pixels included in training are set as True
@@ -1397,6 +1395,20 @@ class postprocess_calculations:
         print(maxwtd)
         wtd[wtd==0] = np.nan
         plot_functions.EU_2Dmap(wtd, logscale=False, minval=0.01, maxval=maxwtd, title="Topography")
+    
+    def avgwtd_2020(self):
+        plots = plotting_helper()
+        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "ensemble_400px_org", "mapping_0stdroll6months.npy"))
+        print(np.sum(mapping))
+        print(wtd.shape)
+        wtd = wtd[-365:,:,:]
+        wtd = np.mean(wtd, axis=0)
+        print(wtd.shape)
+        wtd = np.where(mapping==1, wtd, np.nan)
+        print(wtd.shape)
+        # plot it in 2d map
+        plots.EU_2Dmap(data_map=wtd,logscale=False, minval=0, maxval=50, title="Water table depth")
 
     def histogram_kgense(self):
         plot_functions = plotting_helper()
@@ -1454,7 +1466,9 @@ class postprocess_calculations:
         plt.grid(True, linestyle='--', alpha=0.4)
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "KGEcomp_EV_kgelessthan02.png"), dpi=300)
-    
+
+    ###################### obs processing #########################
+
     def era5wtdensemble_localobs_timeseries(self, obslocation, sim_era5wtd, mean_prediction, tsmpobs, localobs, kge, rmse, r, bias, nse):
         dates = pd.date_range(start='2017-01-01', end='2019-12-31', freq='D')
         dates = dates[(dates.month != 2) | (dates.day != 29)]
@@ -1466,7 +1480,7 @@ class postprocess_calculations:
         bias = round(bias, 2)
         nse = round(nse, 2)
 
-        print(f"plotting timeseries {obslocation} with KGE: {kge} , r: {r}, RMSE: {rmse}, Bias: {bias}, NSE: {nse}")
+        # print(f"plotting timeseries {obslocation} with KGE: {kge} , r: {r}, RMSE: {rmse}, Bias: {bias}, NSE: {nse}")
         for m in range(100):
             sim = sim_era5wtd[m,:]
             ax.plot(dates, sim, color="gray", alpha=0.5)
@@ -1497,7 +1511,6 @@ class postprocess_calculations:
 
     def eval_era5wtd_obswtd_tsmpwtd(self):
         utils = utilities()
-        plot_functions = plotting_helper()
         map2d = np.load(os.path.join(INPUTPATH, "mapping_0stdroll6months.npy"))
         map2d_metrics = {"KGE": np.zeros(map2d.shape), "r": np.zeros(map2d.shape), "RMSE": np.zeros(map2d.shape), "Bias": np.zeros(map2d.shape), "NSE": np.zeros(map2d.shape)}
         map2d_metrics["KGE"][map2d_metrics["KGE"]==0] = np.nan
@@ -1505,10 +1518,9 @@ class postprocess_calculations:
         map2d_metrics["RMSE"][map2d_metrics["RMSE"]==0] = np.nan
         map2d_metrics["Bias"][map2d_metrics["Bias"]==0] = np.nan
         map2d_metrics["NSE"][map2d_metrics["NSE"]==0] = np.nan
-        obswtd = pd.read_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "obs_EUwtd_DPSF.parquet"))
+        obswtd = pd.read_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU.parquet"))
         obswtd = obswtd.dropna(axis=1)  # drop columns with all NaN values
-        print(len(obswtd.columns))
-        proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_DPSFobs_TSMPproj.csv"))
+        proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_obs_TSMP_noduplicates.csv"))
         proj_mapping = proj_mapping.dropna(subset=["sim_1darrayindex"])
         proj_mapping.reset_index(drop=True, inplace=True)
         cdf_data = {
@@ -1518,32 +1530,39 @@ class postprocess_calculations:
             'Bias': [],
             'NSE': []
         }
-        ev = []
-        iqr = []
-        rmse_list = []
-        ambias_list = []
         for pixel in range(len(proj_mapping)):
             print(f"Processing pixel {pixel+1} of {len(proj_mapping)}", end='\r')
-            countrylocation = proj_mapping.iloc[pixel]["countylocation"]
-            if not countrylocation in obswtd.columns:
+            # countrylocation = proj_mapping.iloc[pixel]["countrylocation"]
+            country = proj_mapping.iloc[pixel]["country"]
+            if "Denmark" in country or "Sweden" in country: # skip Denmark since values are NaN, can be fixed but skipping scandanavian countries for now
                 continue
-            tsmplat = proj_mapping.iloc[pixel]["tsmp_lat"]
-            tsmplon = proj_mapping.iloc[pixel]["tsmp_lon"]
+            lon = proj_mapping.iloc[pixel]["lon"].replace("_","")
+            lat = proj_mapping.iloc[pixel]["lat"].replace("_","")
+            countrylocation = f"{country}_LON{lon}LAT{lat}"
+            if not countrylocation in obswtd.columns:
+                # print(f"countrylocation {countrylocation} not in obswtd columns, skipping...")
+                # cols = [x for x in obswtd.columns.tolist() if country in x]
+                # print("available columns with this country:", cols)
+                # print(country)
+                # print(countrylocation)
+                continue
             tsmp_xindex = proj_mapping.iloc[pixel]["tsmp_xindex"]
             tsmp_yindex = proj_mapping.iloc[pixel]["tsmp_yindex"]
             target = int(proj_mapping.iloc[pixel]["target_chunk"])
             sim_1darrayindex = int(proj_mapping.iloc[pixel]["sim_1darrayindex"])
             sim_era5wtd = self.get_era5wtd(target, sim_1darrayindex)
-            sim_era5wtd = sim_era5wtd[:, :-365]  # remove year 2020 to match localobs
+            sim_era5wtd[sim_era5wtd < 0.0] = 0.0
+            # sim_era5wtd = sim_era5wtd[:, :-365]  # remove year 2020 to match localobs
             ens_mean_era5wtd = np.mean(sim_era5wtd, axis=0)
             tsmpobs = self.get_tsmpwtd(target, sim_1darrayindex)
-            tsmpobs = tsmpobs[:-365]  # remove year 2020 to match localobs
+            # tsmpobs = tsmpobs[:-365]  # remove year 2020 to match localobs
             localobs = np.array(obswtd[f"{countrylocation}"].to_list())
             # localobs = localobs[730:]  # remove year 2016 to match sim_era5wtd and tsmpobs
             # check lengths
             if len(localobs) != sim_era5wtd.shape[1] or len(localobs) != tsmpobs.shape[0]:
                 print(f"lengths do not match for pixel {countrylocation}, skipping...")
-                return
+                print(f"len localobs: {len(localobs)}, len sim_era5wtd: {sim_era5wtd.shape[1]}, len tsmpobs: {tsmpobs.shape[0]}")
+                raise ValueError("Lengths do not match")
             kge = utils.calculate_kge(localobs, ens_mean_era5wtd)
             rmse = np.sqrt(np.mean((localobs - ens_mean_era5wtd) ** 2))
             r = np.corrcoef(localobs, ens_mean_era5wtd)[0, 1]
@@ -1563,16 +1582,6 @@ class postprocess_calculations:
                                                nse=nse
                                                )
             
-            ############## collect data for EV vs metrics ##############
-            ensemble_variance = np.var(sim_era5wtd, axis=0)
-            ensemble_variance = np.mean(ensemble_variance)
-            ev.append(ensemble_variance)
-            ensemble_iqr = np.percentile(sim_era5wtd, 75, axis=0) - np.percentile(sim_era5wtd, 25, axis=0)
-            ensemble_iqr = np.mean(ensemble_iqr)
-            iqr.append(ensemble_iqr)
-            rmse_list.append(rmse)
-            ambias_list.append(np.abs(bias))
-
             ############## plot 2D map of pixels with colored accuracy ##############
             map2d_metrics["r"][int(tsmp_yindex), int(tsmp_xindex)] = r
             map2d_metrics["KGE"][int(tsmp_yindex), int(tsmp_xindex)] = kge
@@ -1596,38 +1605,6 @@ class postprocess_calculations:
         # utils.plot_cdfs(data_dict={ "Bias": cdf_data["Bias"] }, colors=['k'], linestyles=['-'], xlabel='Absolute Mean Bias (m)', title='ERA5ensemblevsobs', logscale=True)
         # utils.plot_cdfs(data_dict={ "NSE": cdf_data["NSE"] }, colors=['k'], linestyles=['-'], xlabel='NSE', title='ERA5ensemblevsobs', logscale=False, xlim=(0,1))
 
-        ############### plot EV vs metrics ##############
-        # plot also the fitting line from before, plot it as a line not scatter
-        # for EV vs RMSE: rmse2d_statspred = 0.67*(varmap**0.45)
-        # for IQR vs Bias: bias2d_statspred = 0.45*(iqrmap**1.03)
-        line = np.array([np.min(iqr), np.max(iqr)])
-        fitted_bias = 0.45 * (line ** 1.03)
-        # calculate R2
-        ev = np.array(iqr)
-        # rmse_list = np.array(rmse_list)
-        # log_ev = np.log(ev)
-        # log_rmse = np.log(rmse_list)
-        # slope, intercept, r_value, p_value, std_err = stats.linregress(log_ev, log_rmse)
-        # r_squared = r_value**2
-        # print(f"EV vs RMSE fitting line R2: {r_squared}")
-        ambias_list = np.array(ambias_list)
-        log_iqr = np.log(iqr)
-        log_ambias = np.log(ambias_list)
-        slope, intercept, r_value, p_value, std_err = stats.linregress(log_iqr, log_ambias)
-        r_squared = r_value**2
-        print(f"IQR vs Mean Absolute Bias fitting line R2: {r_squared}")
-
-        plt.figure()
-        plt.scatter(iqr, ambias_list, alpha=0.5)
-        # plot fitting line
-        plt.plot(line, fitted_bias, 'r-', label=f'R2={r_squared:.2f}\nMAB=0.45*(IQR^1.03)')
-        plt.legend(loc='lower right')
-        plt.xlabel(r'$\overline{IQR}$')
-        plt.ylabel(r'Mean Absolute Bias (m)')
-        plt.xscale('log')
-        plt.yscale('log')
-        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics", "IQR_vs_MAB.png"), dpi=300, bbox_inches='tight')
-    
     def plot2Dmaps(self):
         plot_functions = plotting_helper()
         map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map.npy")),
@@ -1637,20 +1614,20 @@ class postprocess_calculations:
                          "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map.npy"))}
         # plot absolute mean bias instead of mean bias
         map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
-        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE")
-        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["r"], logscale=False, minval=0, maxval=1, title="Pearson correlation")
-        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["RMSE"], logscale=True, minval=0.01, maxval=10, title="RMSE")
-        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias")
-        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE", country="EU")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["r"], logscale=False, minval=0, maxval=1, title="Pearson correlation", country="EU")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["RMSE"], logscale=True, minval=0.01, maxval=10, title="RMSE", country="EU")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias", country="EU")
+        plot_functions.doublefig_EU_2Dmap(data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE", country="EU")
     
     def get_country_mask(self, country):
-        mappingfile = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_DPSFobs_TSMPproj.csv"))
+        mappingfile = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_obs_TSMP_noduplicates.csv"))
         mappingfile = mappingfile.dropna(subset=["sim_1darrayindex"])
         mappingfile.reset_index(drop=True, inplace=True)
         country_mask = np.zeros((432, 444), dtype=bool)
         # TODO do the same without a for loop
         for pixel in range(len(mappingfile)):
-            countrylocation = mappingfile.iloc[pixel]["countylocation"]
+            countrylocation = mappingfile.iloc[pixel]["countrylocation"]
             if countrylocation.startswith(country):
                 tsmpxindex = int(mappingfile.iloc[pixel]["tsmp_xindex"])
                 tsmpyindex = int(mappingfile.iloc[pixel]["tsmp_yindex"])
@@ -1710,21 +1687,116 @@ class postprocess_calculations:
 
     def location_of_localobs(self):
         plot_functions = plotting_helper()
-        proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_DPSFobs_TSMPproj.csv"))
+        proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_obs_TSMP_noduplicates.csv"))
         topo = np.load(os.path.join(INPUTPATH, "topo.npy"))
         topo = topo[0,:,:]  # remove time dimension if present
         # topo[topo==0] = np.nan  # set ocean to nan for better visualization
         for i in range(len(proj_mapping)):
-            obslocation = proj_mapping.iloc[i]["countylocation"]
+            obslocation = proj_mapping.iloc[i]["countrylocation"]
             tsmp_xindex = proj_mapping.iloc[i]["tsmp_xindex"]
             tsmp_yindex = proj_mapping.iloc[i]["tsmp_yindex"]
             df = proj_mapping
-            # select all rows with the same country in the column "countylocation" that has a format "country_lonlat"
+            # select all rows with the same country in the column "countrylocation" that has a format "country_lonlat"
             # create a column with only the country name
-            df["country"] = df["countylocation"].apply(lambda x: x.split("_")[0])
+            df["country"] = df["countrylocation"].apply(lambda x: x.split("_")[0])
             country = obslocation.split("_")[0]
             df = df[df["country"] == country]
             tsmplat = df["tsmp_lat"].to_list()
             tsmplon = df["tsmp_lon"].to_list()
 
             plot_functions.onepixel_in_doublefig_EU_2Dmap(x=tsmp_xindex, y=tsmp_yindex, location=obslocation, tsmp_lon=tsmplon, tsmp_lat=tsmplat, topo=topo)
+
+    def calc_ev_iqr_rmse_bias(self):
+        obswtd = pd.read_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU.parquet"))
+        obswtd = obswtd.dropna(axis=1)  # drop columns with all NaN values
+        proj_mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_obs_TSMP_noduplicates.csv"))
+        proj_mapping = proj_mapping.dropna(subset=["sim_1darrayindex"])
+        proj_mapping.reset_index(drop=True, inplace=True)
+        ev = []
+        iqr = []
+        rmse_list = []
+        ambias_list = []
+        for pixel in range(len(proj_mapping)):
+            print(f"Processing pixel {pixel+1} of {len(proj_mapping)}", end='\r')
+            # countrylocation = proj_mapping.iloc[pixel]["countrylocation"]
+            country = proj_mapping.iloc[pixel]["country"]
+            lon = proj_mapping.iloc[pixel]["lon"].replace("_","")
+            lat = proj_mapping.iloc[pixel]["lat"].replace("_","")
+            countrylocation = f"{country}_LON{lon}LAT{lat}"
+            if not countrylocation in obswtd.columns:
+                print(f"countrylocation {countrylocation} not in obswtd columns, skipping...")
+                continue
+            target = int(proj_mapping.iloc[pixel]["target_chunk"])
+            sim_1darrayindex = int(proj_mapping.iloc[pixel]["sim_1darrayindex"])
+            sim_era5wtd = self.get_era5wtd(target, sim_1darrayindex)
+            # sim_era5wtd = sim_era5wtd[:, :-365]  # remove year 2020 to match localobs
+            ens_mean_era5wtd = np.mean(sim_era5wtd, axis=0)
+            localobs = np.array(obswtd[f"{countrylocation}"].to_list())
+            # localobs = localobs[730:]  # remove year 2016 to match sim_era5wtd and tsmpobs
+            # check lengths
+            if len(localobs) != sim_era5wtd.shape[1]:
+                print(f"lengths do not match for pixel {countrylocation}, skipping...")
+                print(f"len localobs: {len(localobs)}, len sim_era5wtd: {sim_era5wtd.shape[1]}")
+                return
+            rmse = np.sqrt(np.mean((localobs - ens_mean_era5wtd) ** 2))
+            bias = np.mean(ens_mean_era5wtd - localobs)
+             
+            ############## collect data for EV vs metrics ##############
+            ensemble_variance = np.var(sim_era5wtd, axis=0)
+            ensemble_variance = np.mean(ensemble_variance)
+            ev.append(ensemble_variance)
+            ensemble_iqr = np.percentile(sim_era5wtd, 75, axis=0) - np.percentile(sim_era5wtd, 25, axis=0)
+            ensemble_iqr = np.mean(ensemble_iqr)
+            iqr.append(ensemble_iqr)
+            rmse_list.append(rmse)
+            ambias_list.append(np.abs(bias))
+        return np.array(ev), np.array(iqr), np.array(rmse_list), np.array(ambias_list)
+
+    def fitted_ev_rmse(self):
+        ev, iqr, rmse_list, ambias_list = self.calc_ev_iqr_rmse_bias()
+        # for EV vs RMSE: rmse2d_statspred = 0.67*(varmap**0.45)
+        # for IQR vs Bias: bias2d_statspred = 0.45*(iqrmap**1.03)
+        line = np.array([np.min(ev), np.max(ev)])
+        fitted_bias = 0.67 * (line ** 0.45)
+        ev = np.array(ev)
+        rmse_list = np.array(rmse_list)
+        log_ev = np.log(ev)
+        log_rmse = np.log(rmse_list)
+        slope, intercept, r_value, p_value, std_err = stats.linregress(log_ev, log_rmse)
+        r_squared = r_value**2
+        print(f"EV vs RMSE fitting line R2: {r_squared}")
+
+        plt.figure()
+        plt.scatter(ev, rmse_list, alpha=0.5)
+        plt.plot(line, fitted_bias, 'r-', label=f'R2={r_squared:.2f}\nRMSE=0.67*(EV^0.45)')
+        plt.legend(loc='lower right')
+        plt.xlabel(r'$\overline{EV}$')
+        plt.ylabel(r'RMSE (m)')
+        plt.xscale('log')
+        plt.yscale('log')
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics", "EV_vs_RMSE.png"), dpi=300, bbox_inches='tight')
+    
+    def fitted_iqr_mab(self):
+        ev, iqr, rmse_list, ambias_list = self.calc_ev_iqr_rmse_bias()
+        # for EV vs RMSE: rmse2d_statspred = 0.67*(varmap**0.45)
+        # for IQR vs Bias: bias2d_statspred = 0.45*(iqrmap**1.03)
+        line = np.array([np.min(iqr), np.max(iqr)])
+        fitted_bias = 0.45 * (line ** 1.03)
+        iqr = np.array(iqr)
+        ambias_list = np.array(ambias_list)
+        log_iqr = np.log(iqr)
+        log_ambias = np.log(ambias_list)
+        slope, intercept, r_value, p_value, std_err = stats.linregress(log_iqr, log_ambias)
+        r_squared = r_value**2
+        print(f"IQR vs Mean Absolute Bias fitting line R2: {r_squared}")
+
+        plt.figure()
+        plt.scatter(iqr, ambias_list, alpha=0.5)
+        plt.plot(line, fitted_bias, 'r-', label=f'R2={r_squared:.2f}\nMAB=0.45*(IQR^1.03)')
+        plt.legend(loc='lower right')
+        plt.xlabel(r'$\overline{IQR}$')
+        plt.ylabel(r'Mean Absolute Bias (m)')
+        plt.xscale('log')
+        plt.yscale('log')
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics", "IQR_vs_MAB.png"), dpi=300, bbox_inches='tight')
+    
