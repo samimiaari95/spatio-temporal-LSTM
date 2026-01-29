@@ -23,12 +23,12 @@ REGION = f"EU_74_-48_69_20"
 OUTPUTPATH = os.path.join(get_root_dir(), "outputs", REGION)
 INPUTPATH = os.path.join(get_root_dir(), "inputs", REGION)
 FEATURES_FILES = ["tp_EU.npy", "vpd_EU.npy", "swvl3_EU.npy", "slopex.npy", "slopey.npy", "soilind.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
-TARGETVAR_FILE = "wtd.npy"
+TARGETVAR_FILE = "wtd_2000-2015.npy"
 
 # time period
 TRAINING_PERIOD = 365*15
 LOOKBACK = 365
-TEST_PERIOD = 365*3+LOOKBACK
+TEST_PERIOD = 365*16+LOOKBACK
 
 # lstm setup
 INPUT_SIZE = len(FEATURES_FILES)
@@ -45,7 +45,7 @@ BATCH_SIZE = 1000
 
 # model name
 MODEL_NAME = f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}x{NUM_LAYERS}lr{str(LR_GAMMA).replace('.','')}x{LR_STEP_SIZE}_{LOOKBACK}x{BATCH_SIZE}_prvpdsmxyind" if LR_SCHEDULER else f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}x{NUM_LAYERS}_{LOOKBACK}x{BATCH_SIZE}_prvpdsmxyind"
-logger.warning(f"Check model name: {MODEL_NAME}")
+logger.warning(f"Model name: {MODEL_NAME}")
 
 
 class AwesomeLSTM(nn.Module):
