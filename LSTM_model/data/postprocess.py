@@ -254,125 +254,6 @@ class postprocess_calculations:
         df = pd.DataFrame(df_dic)
         df.to_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"), index=False)
 
-    def ensemble_crpsvsstats(self):
-        # NOTE we do this acc and statistics relationship only for transfer pixels for consistency with other metrics
-        # and also for the same reasons as the other metrics
-
-        # crpstrain = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"crps_99members_onlytraining.npy"))
-        crpstransfer = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"crps_100members_onlytransfer.npy"))
-
-        transfersims = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_100members_ts_transferpixels_{target}.npy")) for target in range(100)]
-        transfersims = np.concatenate(transfersims, axis=2) #(100 members, timeseries, pixels)
-
-        # trainsims = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_99members_ts_trainpixels_{target}.npy")) for target in range(100)]
-        # trainsims = np.concatenate(trainsims, axis=2) #(99 members, timeseries, pixels)
-
-        # Calculate diversity by Pairwise correlation
-        #correlation_matrix = np.corrcoef(ensemble_predictions.T)  # Transpose to get members on rows
-        #pairwisecorr = np.mean(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]) # Compute diversity as 1 - average correlation
-        #df_dic["Pairwise correlation"].append(pairwisecorr)
-
-        # trainensemblevariance = np.full((crpstrain.shape[0]), np.nan)
-        # trainiqr = np.full((crpstrain.shape[0]), np.nan)
-        transferensemblevariance = np.full((crpstransfer.shape[0]), np.nan)
-        transferiqr = np.full((crpstransfer.shape[0]), np.nan)
-
-        # Ntrain, Ttrain, Ptrain = trainsims.shape  # Extract dimensions
-        # for t in range(Ttrain):
-        #     print(f"train t:{t}")
-        #     for p in range(Ptrain):
-        #         trainensemblevariance[t * Ptrain + p] = np.var(trainsims[:, t, p], axis=0)
-        #         trainiqr[t * Ptrain + p] = np.percentile(trainsims[:, t, p], 75, axis=0) - np.percentile(trainsims[:, t, p], 25, axis=0)  # IQR
-
-        Ntransfer, Ttransfer, Ptransfer = transfersims.shape
-        data_2d = crpstransfer.reshape(Ttransfer, Ptransfer)
-        crps_meants_px = np.mean(data_2d, axis=0)
-        transferpairwisecorr = np.full((Ptransfer), np.nan)
-        for p in range(Ptransfer):
-            sims = transfersims[:,:,p]
-            sims = np.moveaxis(sims, 0, -1)   # (timeseries, members)
-            # Calculate Pairwise correlation
-            correlation_matrix = np.corrcoef(sims.T)  # Transpose to get members on rows
-            transferpairwisecorr[p] = np.mean(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]) # Compute diversity as 1 - average correlation
-
-        for t in range(Ttransfer):
-            print(f"transfer t:{t}")
-            for p in range(Ptransfer):
-                transferensemblevariance[t * Ptransfer + p] = np.var(transfersims[:, t, p], axis=0)
-                transferiqr[t * Ptransfer + p] = np.percentile(transfersims[:, t, p], 75, axis=0) - np.percentile(transfersims[:, t, p], 25, axis=0)  # IQR
-                # Calculate Pairwise correlation
-                #correlation_matrix = np.corrcoef(ensemble_predictions.T)  # Transpose to get members on rows
-                #pairwisecorr = np.mean(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]) # Compute diversity as 1 - average correlation
-        
-        dirpath = os.path.join(OUTPUTPATH, "statistics")
-        # ensemblevariance = np.concatenate((trainensemblevariance, transferensemblevariance), axis=0)
-        ensemblevariance = transferensemblevariance
-        # iqr = np.concatenate((trainiqr, transferiqr), axis=0)
-        iqr = transferiqr
-        # crps = np.concatenate((crpstrain, crpstransfer), axis=0)
-        crps = crpstransfer
-        print(f"crps shape: {crps.shape}")
-        print(f"ensemble variance shape: {ensemblevariance.shape}")
-        print(f"iqr shape: {iqr.shape}")
-        np.save(os.path.join(dirpath, "ensemblevariance_crps_transfer.npy"), ensemblevariance)
-        np.save(os.path.join(dirpath, "iqr_crps_transfer.npy"), iqr)
-        np.save(os.path.join(dirpath, "crps_transfer.npy"), crps)
-        np.save(os.path.join(dirpath, "crps_meants_px.npy"), crps_meants_px)
-        np.save(os.path.join(dirpath, "pairwisecorr_crps_transfer.npy"), transferpairwisecorr)
-
-    def ensemble_crpsvsstats_fitting(self):
-        utils = utilities()
-        dirpath = os.path.join(OUTPUTPATH, "statistics")
-        stats = ["IQR (75-25%)", "Ensemble variance", "Pairwise correlation"]
-        yval = np.load(os.path.join(dirpath, "crps_transfer.npy"))
-        for stat in stats:
-            if stat=="Pairwise correlation":
-                filename = "pairwisecorr_crps_transfer.npy"
-                yval = np.load(os.path.join(dirpath, "crps_meants_px.npy"))
-            elif stat=="IQR (75-25%)":
-                filename = "iqr_crps_transfer.npy"
-            elif stat=="Ensemble variance":
-                filename = "ensemblevariance_crps_transfer.npy"
-
-            xval = np.load(os.path.join(dirpath, filename))
-            if stat=="Pairwise correlation":
-                yval = yval[xval>0.01]
-                xval = xval[xval>0.01]
-            print(f"fitting {stat} with CRPS")
-            # Fit a powerlaw
-            # Fit power law
-            # linearize
-            y_lin = np.log(yval)
-            x_lin = np.log(xval)
-            # Fit the function
-            params, covariance = curve_fit(utils.linear_law, x_lin, y_lin)
-            a_fit, b_fit = params
-            # fitting accuracy
-            y_fit = [utils.linear_law(x, a_fit, b_fit) for x in x_lin]
-            R_square = r2_score(y_lin, y_fit)
-            #print(f"R2 = {R_square}")
-            # back transform to power law
-            a_fit = np.exp(a_fit)
-            #print(f"Fitted a: {a_fit} and b:{b_fit}")
-            textstr = '\n'.join((
-                f'y={a_fit:.2f}x^{b_fit:.2f}',
-                f'$R^2$ = {R_square:.3f}'))
-
-            x_fit = [min(xval), max(xval)]
-            y_fit = [utils.powerlaw_func(x, a_fit, b_fit) for x in x_fit]
-            plt.figure()
-            plt.plot(x_fit, y_fit, color="r", label=textstr, linestyle='--')
-            plt.scatter(xval, yval, marker='.', color='k')
-            plt.xlabel(stat)
-            plt.ylabel("CRPS")
-            plt.xscale("log")
-            plt.yscale("log")
-            plt.grid(True, linestyle='--', alpha=0.7)
-            plt.tight_layout()
-            plt.legend(fontsize=18, frameon=True)
-            plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"fitted_CRPS_{stat}.png"))
-
-
     def ensemble_statvsacc_fitting(self):
         utils = utilities()
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"))
@@ -1450,7 +1331,7 @@ class postprocess_calculations:
     
 
     def postprocess_era5wtd_vs_obs(self):
-        self.ensemble_statvsacc()
+        # self.ensemble_statvsacc()
         self.ensemble_statvsacc_fitting()
 
         # self.eval_era5wtd_obswtd_tsmpwtd()
