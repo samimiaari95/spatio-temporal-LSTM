@@ -2,6 +2,7 @@ import os
 import math
 import numpy as np
 import pandas as pd
+from datetime import datetime
 from pyproj import Transformer
 from LSTM_model.model.config import *
 
@@ -1439,6 +1440,8 @@ class obs_processing:
         for country in os.listdir(dirobsde):
             dircountry = os.path.join(dirobsde, country)
             print(country)
+            if "Bayern" in country or "Wuerttemberg" in country:
+                continue # should correct elevations manually
             if os.path.isdir(dircountry):
                 datapath = os.path.join(dircountry, "p.data.monthly_averaged_WTD_measured_data", os.listdir(os.path.join(dircountry, "p.data.monthly_averaged_WTD_measured_data"))[0], "2000_2015_monthly")
                 # read txt as a dataframe
@@ -1447,6 +1450,9 @@ class obs_processing:
 
                 for file in os.listdir(datapath):
                     if file.endswith('.csv'):
+                        # check modified date of elevation corrected files, should be after 2026-01-01:
+                        if ("Hessen" in country or "Sachsen_iDA" in country or "Rheinland_Pfalz" in country) and os.path.getmtime(os.path.join(datapath, file)) < datetime(2026,1,1).timestamp():
+                            continue
                         welldata = pd.read_csv(os.path.join(datapath, file))
                         wellindex = file.split('_')[-1].replace('.csv','')
                         colname = f"Germany_LON{well_coords_df[well_coords_df['well_index']==wellindex]['lon'].values[0]}LAT{well_coords_df[well_coords_df['well_index']==wellindex]['lat'].values[0]}"
