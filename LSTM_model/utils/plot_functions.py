@@ -546,22 +546,22 @@ class plotting_helper:
         print("saving seine")
         fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "Seine_30x30.png"))
     
-    def plot_predr2(self, obs, sim):
+    def plot_obspredr2(self, obs, sim):
         # Calculate R2
         r2 = r2_score(obs, sim)
         print(r2)
         # Scatter plot
         plt.figure(figsize=(16, 9))
-        plt.scatter(obs, sim, color='k', alpha=0.6, label=f'$R^2$: {r2:.3f}')
+        plt.scatter(obs, sim, color='k', alpha=0.3, label=f'$R^2$: {r2:.3f}')
 
         # Plot identity line (y = x)
         plt.plot([obs.min(), obs.max()],
                 [obs.min(), obs.max()],
-                color='red', linestyle='--', label='Identity Line')
+                color='red', linestyle='--', label='y=x')
 
         # Add labels, title, and legend
-        plt.xlabel('Original Simulations')
-        plt.ylabel('Predictions')
+        plt.xlabel('Observed')
+        plt.ylabel('Predicted')
 
         plt.xscale("log")
         plt.yscale("log")
@@ -570,7 +570,7 @@ class plotting_helper:
 
         # Show the plot
         print("saving r2")
-        plt.savefig(os.path.join(OUTPUTPATH, f"R2_{MODEL_NAME}.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", f"R2_obsvspred.png"))
 
     def EU_2Dmap(self, data_map, logscale, minval, maxval, title):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
@@ -731,6 +731,12 @@ class plotting_helper:
             lat_min = float(np.min(lats[valid_idx]))
             lat_max = float(np.max(lats[valid_idx]))
 
+        # define here zoom extent that only includes France, Netherlands, and Germany
+        lon_min = -5.0
+        lon_max = 15.0
+        lat_min = 45.0
+        lat_max = 55.0
+
         # small buffer for zoomed inset
         lon_buffer = 0.05 * (lon_max - lon_min) if (lon_max - lon_min) != 0 else 0.1
         lat_buffer = 0.05 * (lat_max - lat_min) if (lat_max - lat_min) != 0 else 0.1
@@ -841,9 +847,7 @@ class plotting_helper:
         # ax2.coastlines(resolution='10m')
         # ax2.add_feature(cfeature.BORDERS, linestyle=':') # Add country borders
         # ax2.gridlines(draw_labels=True)
-        country = "France"
-        country = "Sweden" if location.startswith("Sweden") else country
-        country = "Portugal" if location.startswith("Portugal") else country
+        country = location.split("_")[0]
 
         ax2.set_title(f"{country}")
         ax2.set_extent(zoom_extent, crs=ccrs.PlateCarree())
@@ -860,6 +864,6 @@ class plotting_helper:
         out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "location2Dmap")
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, f"{location.replace('.', 'p')}.png")
-        print(f"saving {os.path.basename(out_path)}")
+        # print(f"saving {os.path.basename(out_path)}")
         fig.savefig(out_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
