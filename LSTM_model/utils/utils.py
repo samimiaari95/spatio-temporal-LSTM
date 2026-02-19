@@ -116,8 +116,32 @@ class utilities:
         kge_p = 1 - np.sqrt((r - 1) ** 2 + (beta - 1) ** 2 + (gamma - 1) ** 2)
         return kge_p
     
-    
+    def calculate_ensemble_mad(self, ensemble_data):
+        """
+        Calculates the Mean Absolute Deviation of an ensemble about its mean.
+        
+        Parameters:
+        ensemble_data (np.array): 2D array with shape (n_timesteps, n_members)
+        
+        Returns:
+        np.array: 1D array of MAD values for each point in time.
+        """
+        # 1. Calculate the mean across the members (axis 1)
+        # The result has shape (n_timesteps,)
+        ensemble_mean = np.mean(ensemble_data, axis=1)
+        
+        # 2. Calculate absolute differences
+        # Broadcasting handles the subtraction of the 1D mean from the 2D array
+        abs_diff = np.zeros(ensemble_data.shape)
+        # abs_diff = np.abs(ensemble_data - ensemble_mean[:, None])
+        
+        for i in range(ensemble_data.shape[1]):
+            abs_diff[:, i] = np.abs(ensemble_data[:, i] - ensemble_mean)
 
+        # 3. Calculate the mean of those differences across the members
+        mad = np.mean(abs_diff)
+        
+        return mad
 
     def singleregion_inputfeatures(self, start, end, means_stds):
         all_inputs = np.array([])
