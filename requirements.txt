@@ -10,3 +10,4 @@ cdsapi
 torchrun-jsc
 rijksdriehoek
 fastparquet
+openpyxl
