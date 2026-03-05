@@ -88,7 +88,7 @@ if args.calc:
     # postprocess.crps_seasonal_trainEU()
     # postprocess.crps_seasonal_transferEU()
     # postprocess.boxplot_seasonal_crps()
-    postprocess.ensemble_statvsacc()
+    # postprocess.ensemble_statvsacc()
     postprocess.ensemble_statvsacc_fitting()
     # postprocess.crps_transferEU()
     # postprocess.ensemble_crpsvsstats()

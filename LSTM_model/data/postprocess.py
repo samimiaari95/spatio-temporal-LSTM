@@ -403,7 +403,7 @@ class postprocess_calculations:
                            "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"))
         metric = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
                              "ensemble_mean", "era5wtd_vs_localobs", "statistics", "performance_metrics.csv"))
-        xstats = {"Members RMSE std": "exp", "VPD variance": "lin", "Precipitation variance": "lin", "Soil moisture variance": "lin", "Ensemble mean": "lin", "Ensemble median": "lin", "Skewness": "lin", "Kurtosis": "lin",
+        xstats = {"VPD variance": "lin", "Precipitation variance": "lin", "Soil moisture variance": "lin", "Ensemble mean": "lin", "Ensemble median": "lin", "Skewness": "lin", "Kurtosis": "lin",
                   "Mean 5th quantile": "lin", "Mean 95th quantile": "lin", "Mean 50th quantile": "lin", "Topography": "lin", "std": "exp", "Ensemble variance": "exp", "Pairwise correlation": "lin", "IQR (75-25%)": "exp", "cv": "exp", "mad": "exp"}
         ymetrics = {"Spearman correlation": "lin", "Kendall's tau": "lin", "Pearson p-value": "lin", "CCC": "exp", "Median AE": "exp",
                     "MAPE": "lin", "SMAPE": "lin", "Murphy Skill Score": "lin", "Bias Slope": "lin", "Conditional Bias": "lin", "Unconditional Bias": "lin",
