@@ -1,5 +1,6 @@
 import argparse
 import matplotlib.pyplot as plt
+# from LSTM_model.data.ensemble_analysis import ensemble_analysis
 from LSTM_model.model.config import *
 from LSTM_model.model.train_LSTM import train_LSTM_model
 from LSTM_model.model.validate_LSTM import transfer_ensemble_LSTM
@@ -10,11 +11,12 @@ from LSTM_model.data.obs_processing import obs_processing
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.utils.utils import utilities
 import LSTM_model.data.download_ERA5 as download_ERA5
+# from LSTM_model.data.metplotpy import MetplotpyEnsembleAnalysis
 #from LSTM_model.utils.volumetric_soilmoisture import calculate_soilmoisture
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--batchind', type=str, required=True, help='yyyymmdd00') # month of simulation
+# parser.add_argument('--batchind', type=str, required=True, help='yyyymmdd00') # month of simulation
 
 parser.add_argument('-d', '--dera', action='store_true', required=False, help='ERA5 data download')
 
@@ -30,8 +32,12 @@ parser.add_argument('-c', '--calc', action='store_true', required=False, help='R
 
 parser.add_argument('-o', '--obs', action='store_true', required=False, help='Observations processing')
 
+# parser.add_argument('-a', '--ana', action='store_true', required=False, help='Ensemble analysis')
+
+# parser.add_argument('-m', '--metplotpy', action='store_true', required=False, help='METplotpy analysis')
+
 args = parser.parse_args()
-plt.rcParams.update({'font.size': 20})
+plt.rcParams.update({'font.size': 18})
 
 if args.dera:
     # download_ERA5.request_ERA5_t2m_d2m_swvl3()
@@ -82,8 +88,8 @@ if args.calc:
     # postprocess.crps_seasonal_trainEU()
     # postprocess.crps_seasonal_transferEU()
     # postprocess.boxplot_seasonal_crps()
-    # postprocess.ensemble_statvsacc()
-    # postprocess.ensemble_statvsacc_fitting()
+    postprocess.ensemble_statvsacc()
+    postprocess.ensemble_statvsacc_fitting()
     # postprocess.crps_transferEU()
     # postprocess.ensemble_crpsvsstats()
     # postprocess.ensemble_crpsvsstats_fitting()
@@ -92,15 +98,27 @@ if args.calc:
     # postprocess.kgecomponents_vs_EV()
     # postprocess.metrics_vs_topo()
     
-    postprocess.eval_era5wtd_obswtd_tsmpwtd()
-    postprocess.plot2Dmaps()
-    postprocess.fitted_ev_rmse()
-    postprocess.fitted_iqr_mab()
-    postprocess.plot_cdfs()
+    # postprocess.eval_era5wtd_obswtd_tsmpwtd()
+    # postprocess.plot2Dmaps()
+    # postprocess.fitted_ev_rmse()
+    # postprocess.fitted_iqr_mab()
+    # postprocess.plot_cdfs()
+    # TODO plot y=x
     # postprocess.location_of_localobs()
+    # postprocess.postprocess_era5wtd_vs_obs()
 
 if args.obs:
     obs_proc = obs_processing()
     # call function here
-    # obs_proc.read_csv_monthlyobs_from_yueling()
-    # obs_proc.maptoTSMP_averageduplicates()
+    obs_proc.read_csv_monthlyobs_from_yueling()
+    obs_proc.maptoTSMP_averageduplicates()
+
+# if args.ana:
+#     ensemble_ana = ensemble_analysis()
+#     # call function here
+#     ensemble_ana.run_analysis()
+
+# if args.metplotpy:
+#     metplotpy = MetplotpyEnsembleAnalysis()
+#     # call function here
+#     metplotpy.runmetplotpy_full()
