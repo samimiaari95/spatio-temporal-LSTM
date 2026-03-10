@@ -126,6 +126,8 @@ class postprocess_calculations:
             sim_1darrayindex = int(
                 proj_mapping.iloc[pixel]["sim_1darrayindex"])
             sim_era5wtd = self.get_era5wtd(target, sim_1darrayindex)
+            # important to set negatives to zero ##############
+            sim_era5wtd[sim_era5wtd < 0.0] = 0.0
 
             topography = topo[tsmpy, tsmpx]
             df_statdict["Topography"].append(topography)
@@ -169,8 +171,6 @@ class postprocess_calculations:
             # move axis to (timeseries, members) for easier calculation
             ensemble_predictions = np.moveaxis(
                 ensemble_predictions, 0, 1)  # shape (timeseries, members)
-            # important to set negatives to zero ##############
-            ensemble_predictions[ensemble_predictions < 0.0] = 0.0
             # check lengths
             if len(localobs) != sim_era5wtd.shape[1]:
                 raise ValueError(
@@ -189,7 +189,7 @@ class postprocess_calculations:
             iqr_mean = np.mean(ensemble_iqr)
             df_statdict["IQR (75-25%)"].append(iqr_mean)
 
-            # calculate MAD
+            # calculate Mean Absolute Deviation of an ensemble about its mean (MAD)
             mad = utils.calculate_ensemble_mad(ensemble_predictions)
             df_statdict["mad"].append(mad)
 
