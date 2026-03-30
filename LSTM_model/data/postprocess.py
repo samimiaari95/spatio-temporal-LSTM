@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
+import seaborn as sns
 from scipy import stats
 import torch
 import torch.nn as nn
@@ -601,6 +602,601 @@ class postprocess_calculations:
                 plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
                             "era5wtd_vs_localobs", "statistics", f"fitted_{ymetric}_{xstat}.png"))
                 plt.close()
+
+    def metrics_stat_pdf(self):
+        # Define a helper function to get midpoints
+        def get_bin_midpoints(series, num_bins):
+            _, bin_edges = pd.cut(series, bins=num_bins, labels=False, include_lowest=True, retbins=True)
+            return (bin_edges[:-1] + bin_edges[1:]) / 2
+
+        sdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                           "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"))
+        mdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                             "ensemble_mean", "era5wtd_vs_localobs", "statistics", "performance_metrics.csv"))
+
+        # Combine them into a single DataFrame
+        # Ensure both dataframes have the same index or are aligned for this operation.
+        # Assuming they are aligned by row index, as implied by previous interactions.
+        combined_df = pd.DataFrame({
+            'Ensemble variance': sdf['Ensemble variance'],
+            'RMSE': mdf['RMSE'],
+            'Pearson correlation': mdf['Pearson correlation'],
+            'Bias_std': mdf['Bias_std'], # Add Bias_std to combined_df
+            'Bias': np.absolute(mdf['Absolute mean bias']), # Add Bias to combined_df
+            'cv': sdf['cv'],
+            'Topography': sdf['Topography']
+        })
+
+        # Drop rows with any NaN values to ensure accurate probability calculation
+        combined_df.dropna(inplace=True)
+
+        # Define the number of bins
+        num_bins = 50 # Consistent number of bins
+
+        # Discretize each variable into bins
+        combined_df['Ensemble variance_bin'] = pd.cut(combined_df['Ensemble variance'], bins=num_bins, labels=False, include_lowest=True)
+        combined_df['RMSE_bin'] = pd.cut(combined_df['RMSE'], bins=num_bins, labels=False, include_lowest=True)
+        combined_df['Pearson correlation_bin'] = pd.cut(combined_df['Pearson correlation'], bins=num_bins, labels=False, include_lowest=True)
+        combined_df['Bias_std_bin'] = pd.cut(combined_df['Bias_std'], bins=num_bins, labels=False, include_lowest=True) # Add Bias_std binning
+        combined_df['Bias_bin'] = pd.cut(combined_df['Bias'], bins=num_bins, labels=False, include_lowest=True) # Add Bias binning
+        #combined_df.drop(combined_df[(combined_df['Bias']>100) & (combined_df['RMSE']>100)].index, inplace=True)
+
+        # Calculate the joint frequency of the binned variables
+        joint_frequencies = combined_df.groupby(['Ensemble variance_bin', 'RMSE_bin', 'Pearson correlation_bin', 'Bias_bin']).size().reset_index(name='frequency') # Include Bias_std_bin
+
+        # Calculate joint probabilities
+        total_observations = len(combined_df)
+        joint_frequencies['probability'] = joint_frequencies['frequency'] / total_observations
+
+        # Get all columns that end with '_bin'
+        binned_columns = [col for col in combined_df.columns if col.endswith('_bin')]
+
+        # Recalculate bin edges and midpoints for all relevant variables if not already done
+        # Ensure these are aligned with how combined_df was binned
+        # Map binned column names to their original series and midpoint arrays
+        bin_midpoint_map = {
+            'Ensemble variance_bin': get_bin_midpoints(combined_df['Ensemble variance'], num_bins),
+            'RMSE_bin': get_bin_midpoints(combined_df['RMSE'], num_bins),
+            'Pearson correlation_bin': get_bin_midpoints(combined_df['Pearson correlation'], num_bins),
+            'Bias_std_bin': get_bin_midpoints(combined_df['Bias_std'], num_bins),
+            'Bias_bin': get_bin_midpoints(combined_df['Bias'], num_bins)
+        }
+
+        # Plot the density distribution for each binned column
+        for col_bin_name in binned_columns:
+            original_col_name = col_bin_name.replace('_bin', '')
+            midpoints = bin_midpoint_map[col_bin_name]            
+            # Get the binned data
+            binned_data = combined_df[col_bin_name]
+            # Create a Series that maps bin index to midpoint for plotting
+            plot_x_values = binned_data.map(lambda x: midpoints[int(x)])
+
+            plt.figure(figsize=(10, 6))
+            sns.histplot(x=plot_x_values, kde=True, stat='density', bins=num_bins)
+            plt.xlabel(f'{original_col_name}')
+            plt.ylabel('Density')
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+                        "era5wtd_vs_localobs", "probabilities", "pdfs", f"pdf_{original_col_name}.png"))
+            print(f"Saved PDF plot for {original_col_name}")
+            plt.close()
+    
+    def statvsacc_scatter_bythreshold(self, thresholds: dict, plot_metric: str):
+        sdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                           "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"))
+        mdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                             "ensemble_mean", "era5wtd_vs_localobs", "statistics", "performance_metrics.csv"))
+
+        sdf_numerical = sdf.dropna(axis=1)
+        mdf_numerical = mdf.dropna(axis=1)
+        cols = list(thresholds.keys()) + [plot_metric]
+
+        # Ensure both dataframes have the same number of rows and are aligned
+        # If they are not aligned, a merge operation would be necessary based on a common key.
+        # For now, assuming they are aligned based on previous context.
+        combined_data = pd.concat([sdf_numerical, mdf_numerical[cols]], axis=1)
+        # Drop rows with any NaN values that might have been introduced or exist in the original data
+        combined_data.replace([np.inf, -np.inf], np.nan, inplace=True)
+        combined_data.dropna(inplace=True)
+
+        # search for rows with NaN values
+        nan_rows = combined_data[combined_data.isna().any(axis=1)]
+        #print(nan_rows)
+        #print(combined_data.replace([np.inf, -np.inf], np.nan).isnull().sum())
+
+        # Build a boolean mask dynamically for all thresholds
+        mask = np.ones(len(combined_data), dtype=bool)
+        for col, (op, val) in thresholds.items():
+            if op == '>':
+                mask &= (combined_data[col] > val)
+            elif op == '>=':
+                mask &= (combined_data[col] >= val)
+            elif op == '<':
+                mask &= (combined_data[col] < val)
+            elif op == '<=':
+                mask &= (combined_data[col] <= val)
+            elif op == '==':
+                mask &= (combined_data[col] == val)
+            elif op == '!=':
+                mask &= (combined_data[col] != val)
+            else:
+                raise ValueError(f"Unsupported operator: {op}")
+
+        goodpixels = combined_data[mask]
+
+        label_conditions = []
+        for col, (op, val) in thresholds.items():
+            if op == '>':
+                label_conditions.append(f"{col}>{val}")
+            elif op == '>=':
+                label_conditions.append(f"{col}>={val}")
+            elif op == '<':
+                label_conditions.append(f"{col}<{val}")
+            elif op == '<=':
+                label_conditions.append(f"{col}<={val}")
+            elif op == '==':
+                label_conditions.append(f"{col}=={val}")
+            elif op == '!=':
+                label_conditions.append(f"{col}!={val}")
+        label_str = ' & '.join(label_conditions)
+        print(f"Number of pixels meeting criteria ({label_str}): {len(goodpixels)}")
+
+        # Combine sdf_numerical with Pearson correlation for plotting
+        # We need to make sure the indices align correctly
+        plot_data = pd.concat([
+            sdf_numerical,
+            mdf_numerical[plot_metric]
+        ], axis=1).dropna()
+
+        # Iterate through each column in sdf_numerical to create a plot
+        for col_name in sdf_numerical.columns:
+            plt.figure(figsize=(10, 6))
+
+            plt.scatter(plot_data[col_name],plot_data[plot_metric],s=50,c="k", alpha=0.7, label='All pixels')
+            plt.scatter(goodpixels[col_name].values, goodpixels[plot_metric].values, s=50, c="r", alpha=0.7, label=label_str.replace("_","/").replace("Pearson correlation","r"))
+
+            plt.xlabel(col_name)
+            plt.ylabel(plot_metric.replace("_", "/"))
+            plt.yscale('log') if 'RMSE' in plot_metric or 'Bias_std' in plot_metric or 'Members RMSE' in plot_metric or 'Absolute mean bias' in plot_metric or 'Alpha' in plot_metric or 'Beta' in plot_metric or '(Alpha-1)^2' in plot_metric or '(Beta-1)^2' in plot_metric or '(r-1)^2' in plot_metric else None
+
+            # Apply log scale to x-axis for 'Ensemble variance' if it helps visualization
+            if 'variance' in col_name.lower() or 'mean' in col_name.lower() or 'IQR' in col_name or 'std' in col_name or 'mad' in col_name or "Topography" in col_name:
+                plt.xscale('log')
+
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.legend(fontsize=18, frameon=True)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+                        "era5wtd_vs_localobs", "probabilities", "scatter_threshold", f"scatter_{plot_metric}_vs_{col_name}_thresholded.png"))
+            print(f"Saved scatter plot for {plot_metric} vs {col_name} with thresholding")
+            plt.close()
+
+    def probability_acc_from_stat_logscaled(self, thresholds:dict):
+        sdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                           "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"))
+        mdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                             "ensemble_mean", "era5wtd_vs_localobs", "statistics", "performance_metrics.csv"))
+
+        # Ensure sdf_numerical is up-to-date by selecting numerical columns from original sdf
+        sdf_numerical_all = sdf.dropna(axis=1)
+        # Select necessary metrics from mdf for the performance condition
+        mdf_metrics_for_condition = mdf[thresholds.keys()].copy()
+
+        # Concatenate all sdf numerical columns with the specific mdf metrics
+        # Assuming alignment by index for sdf and mdf
+        combined_df_all_log_bins = pd.concat([sdf_numerical_all, mdf_metrics_for_condition], axis=1)
+        combined_df_all_log_bins.replace([np.inf, -np.inf], np.nan, inplace=True)
+        combined_df_all_log_bins.dropna(inplace=True)
+
+        # Build a boolean mask dynamically for all thresholds (similar to statvsacc_scatter_bythreshold)
+        mask = np.ones(len(combined_df_all_log_bins), dtype=bool)
+        for col, (op, val) in thresholds.items():
+            if op == '>':
+                mask &= (combined_df_all_log_bins[col] > val)
+            elif op == '>=':
+                mask &= (combined_df_all_log_bins[col] >= val)
+            elif op == '<':
+                mask &= (combined_df_all_log_bins[col] < val)
+            elif op == '<=':
+                mask &= (combined_df_all_log_bins[col] <= val)
+            elif op == '==':
+                mask &= (combined_df_all_log_bins[col] == val)
+            elif op == '!=':
+                mask &= (combined_df_all_log_bins[col] != val)
+            else:
+                raise ValueError(f"Unsupported operator: {op}")
+
+        label_conditions = []
+        for col, (op, val) in thresholds.items():
+            if op == '>':
+                label_conditions.append(f"{col}>{val}")
+            elif op == '>=':
+                label_conditions.append(f"{col}>={val}")
+            elif op == '<':
+                label_conditions.append(f"{col}<{val}")
+            elif op == '<=':
+                label_conditions.append(f"{col}<={val}")
+            elif op == '==':
+                label_conditions.append(f"{col}=={val}")
+            elif op == '!=':
+                label_conditions.append(f"{col}!={val}")
+        label_str = ' & '.join(label_conditions)
+        print(f"Number of pixels meeting criteria ({label_str}): {len(mask[mask])}")
+
+
+        num_bins = 100
+        # List of columns to apply logarithmic binning and plotting
+        columns_for_log_bins = ['Ensemble variance', 'IQR (75-25%)', 'std', 'mad', 'stdsim']
+
+        for col_name in columns_for_log_bins:
+            bin_col_name = f'{col_name}_log_bin'
+
+            # Ensure the column exists and has positive values for log scaling
+            if col_name in combined_df_all_log_bins.columns and (combined_df_all_log_bins[col_name] > 0).all():
+                # Generate logarithmically spaced bins
+                min_val = combined_df_all_log_bins[col_name].min()
+                max_val = combined_df_all_log_bins[col_name].max()
+                
+                # Use np.logspace to create logarithmically equal bins. num_bins + 1 for bin edges
+                log_bins = np.logspace(np.log10(min_val), np.log10(max_val), num_bins + 1)
+
+                combined_df_all_log_bins[bin_col_name] = pd.cut(
+                    combined_df_all_log_bins[col_name], 
+                    bins=log_bins, 
+                    labels=False, 
+                    include_lowest=True
+                )
+
+                # Calculate bin midpoints for plotting
+                midpoints = np.exp((np.log(log_bins[:-1]) + np.log(log_bins[1:])) / 2)
+
+                # Group by the current sdf column's log bin and calculate the conditional probability
+                count_performance_met = combined_df_all_log_bins.loc[mask].groupby(bin_col_name).size()
+                total_in_bin = combined_df_all_log_bins.groupby(bin_col_name).size()
+                conditional_probabilities = (count_performance_met.reindex(total_in_bin.index, fill_value=0) / total_in_bin).fillna(0)
+
+                # Convert to DataFrame for plotting
+                plot_data = pd.DataFrame({
+                    bin_col_name: conditional_probabilities.index,
+                    'Probability': conditional_probabilities.values
+                })
+
+                # Map bin indices to their midpoints for the x-axis
+                plot_data[col_name] = plot_data[bin_col_name].map(lambda x: midpoints[int(x)])
+
+                # For plotting, assign a small epsilon to 0 probabilities to make them visible as thin bars
+                plot_data_for_display = plot_data.copy()
+                epsilon = 0.01 # A very small value for visualization
+                plot_data_for_display.loc[plot_data_for_display['Probability'] == 0, 'Probability'] = epsilon
+
+                plt.figure(figsize=(12, 7))
+                ax = sns.barplot(
+                    x=col_name,
+                    y='Probability',
+                    data=plot_data_for_display, # Use the modified data for display
+                    color='black',
+                    alpha=0.7
+                )
+
+                plt.xlabel(col_name)
+                plt.ylabel(f'P({label_str.replace("_","/").replace("Pearson correlation","r")})')
+                plt.xscale('log') # Ensure x-axis is also logarithmically scaled for visualization
+
+                plt.grid(True, linestyle='--', alpha=0.7)
+                plt.tight_layout()
+                figname = ''.join(thresholds.keys()).replace("Pearson correlation","r")
+                print(f"Saved probability plot for {col_name} with performance condition {label_str}")
+                plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+                        "era5wtd_vs_localobs", "probabilities", "stat_pdf_thresholdprobability", f"{col_name}_log_probability_{figname}.png"))
+                plt.close()
+            else:
+                print(f"Skipping plot for '{col_name}' because it contains non-positive values or is missing.")
+    
+    def probability_acc_from_stat_linear(self, thresholds:dict):
+        sdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                           "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"))
+        mdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                             "ensemble_mean", "era5wtd_vs_localobs", "statistics", "performance_metrics.csv"))
+        # Ensure sdf_numerical is up-to-date by selecting numerical columns from original sdf
+        sdf_numerical_all = sdf.dropna(axis=1)
+
+        # Concatenate all sdf numerical columns with the specific mdf metrics
+        # Assuming alignment by index for sdf and mdf
+        combined_df_all_processed = pd.concat([sdf_numerical_all, mdf[thresholds.keys()]], axis=1)
+        combined_df_all_processed.replace([np.inf, -np.inf], np.nan, inplace=True)
+        combined_df_all_processed.dropna(inplace=True)
+
+        # Build a boolean mask dynamically for all thresholds (similar to statvsacc_scatter_bythreshold)
+        mask = np.ones(len(combined_df_all_processed), dtype=bool)
+        for col, (op, val) in thresholds.items():
+            if op == '>':
+                mask &= (combined_df_all_processed[col] > val)
+            elif op == '>=':
+                mask &= (combined_df_all_processed[col] >= val)
+            elif op == '<':
+                mask &= (combined_df_all_processed[col] < val)
+            elif op == '<=':
+                mask &= (combined_df_all_processed[col] <= val)
+            elif op == '==':
+                mask &= (combined_df_all_processed[col] == val)
+            elif op == '!=':
+                mask &= (combined_df_all_processed[col] != val)
+            else:
+                raise ValueError(f"Unsupported operator: {op}")
+
+        label_conditions = []
+        for col, (op, val) in thresholds.items():
+            if op == '>':
+                label_conditions.append(f"{col}>{val}")
+            elif op == '>=':
+                label_conditions.append(f"{col}>={val}")
+            elif op == '<':
+                label_conditions.append(f"{col}<{val}")
+            elif op == '<=':
+                label_conditions.append(f"{col}<={val}")
+            elif op == '==':
+                label_conditions.append(f"{col}=={val}")
+            elif op == '!=':
+                label_conditions.append(f"{col}!={val}")
+        label_str = ' & '.join(label_conditions)
+        print(f"Number of pixels meeting criteria ({label_str}): {len(mask[mask])}")
+
+        # List of columns that used logarithmic binning (to exclude them from linear binning)
+        columns_for_log_bins = ['Ensemble variance', 'IQR (75-25%)', 'std', 'mad', 'stdsim']
+
+        # Get columns for linear binning (all sdf_numerical_all columns not in columns_for_log_bins)
+        columns_for_linear_bins = [col for col in sdf_numerical_all.columns if col not in columns_for_log_bins]
+
+        # --- Plotting loop for LINEAR BINS ---
+        for col_name in columns_for_linear_bins:
+            bin_col_name = f'{col_name}_bin'
+            
+            if col_name in combined_df_all_processed.columns:
+                # Calculate dynamic num_bins based on the number of integers between min and max
+                min_val_col = combined_df_all_processed[col_name].min()
+                max_val_col = combined_df_all_processed[col_name].max()
+                
+                # Ensure at least one bin if min and max are the same, or default to 100 max bins
+                dynamic_num_bins = max(1, int(np.floor(max_val_col)) - int(np.ceil(min_val_col)) + 1)
+                # Cap dynamic_num_bins to a reasonable number to avoid too many bins/ticks
+                if dynamic_num_bins > 100: dynamic_num_bins = 100 
+                
+                combined_df_all_processed[bin_col_name] = pd.cut(
+                    combined_df_all_processed[col_name],
+                    bins=dynamic_num_bins,
+                    labels=False,
+                    include_lowest=True
+                )
+
+                # Calculate bin edges and midpoints for the current column
+                _, bin_edges = pd.cut(combined_df_all_processed[col_name], bins=dynamic_num_bins, labels=False, include_lowest=True, retbins=True)
+                midpoints = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+                # Group by the current sdf column's bin and calculate the conditional probability
+                count_performance_met = combined_df_all_processed.loc[mask].groupby(bin_col_name).size()
+                total_in_bin = combined_df_all_processed.groupby(bin_col_name).size()
+                conditional_probabilities = (count_performance_met.reindex(total_in_bin.index, fill_value=0) / total_in_bin).fillna(0)
+
+                # Convert to DataFrame for plotting
+                plot_data = pd.DataFrame({
+                    bin_col_name: conditional_probabilities.index,
+                    'Probability': conditional_probabilities.values
+                })
+
+                # Map bin indices to their midpoints for the x-axis
+                plot_data[col_name] = plot_data[bin_col_name].map(lambda x: int(midpoints[int(x)]))
+
+                # For plotting, assign a small epsilon to 0 probabilities to make them visible as thin bars
+                plot_data_for_display = plot_data.copy()
+                epsilon = 0.01 # A very small value for visualization
+                plot_data_for_display.loc[plot_data_for_display['Probability'] == 0, 'Probability'] = epsilon
+
+                plt.figure(figsize=(12, 7))
+                ax = sns.barplot(
+                    x=col_name,
+                    y='Probability',
+                    data=plot_data_for_display,
+                    color='black',
+                    alpha=0.7
+                )
+
+                plt.xlabel(col_name)
+                plt.ylabel(f'P({label_str.replace("_","/").replace("Pearson correlation","r")})')
+                plt.grid(True, linestyle='--', alpha=0.7)
+                plt.tight_layout()
+                figname = ''.join(thresholds.keys()).replace("Pearson correlation","r")
+                print(f"Saved probability plot for {col_name} with performance condition {label_str}")
+                plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+                        "era5wtd_vs_localobs", "probabilities", "stat_pdf_thresholdprobability", f"{col_name}_lin_probability_{figname}.png"))
+                plt.close()
+            else:
+                print(f"Column '{col_name}' not found in combined_df_all_processed after dropping NaNs, skipping linear-bin plot.")
+    
+    def plot_statacc_scatterthresholded(self):
+        # Define thresholds as a dictionary: column name -> (operator, threshold)
+        thresholds = {
+            'Pearson correlation': ('>', 0.5),
+            'RMSE': ('<', 10.0)
+        }
+        # thresholds = {'Bias_std': ('<', 10)}
+        plot_metric = "Pearson correlation"
+        # self.statvsacc_scatter_bythreshold(thresholds, plot_metric)
+        self.probability_acc_from_stat_logscaled(thresholds)
+        # self.probability_acc_from_stat_linear(thresholds)
+
+    def save_probabilities(self):
+        # Define the performance criteria thresholds
+        rmse_threshold_val = 10.0
+        pearson_correlation_threshold_val = 0.5
+
+        # --- Re-establish necessary dataframes and thresholds ---
+        sdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                           "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"))
+        mdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                             "ensemble_mean", "era5wtd_vs_localobs", "statistics", "performance_metrics.csv"))
+        # Ensure sdf_numerical is up-to-date by selecting numerical columns from original sdf
+        sdf_numerical_all = sdf.dropna(axis=1)
+        # Select necessary metrics from mdf for the performance condition
+        mdf_metrics_for_condition = mdf[['RMSE', 'Pearson correlation']].copy()
+
+        # Concatenate all sdf numerical columns with the specific mdf metrics
+        combined_df_all_processed = pd.concat([sdf_numerical_all, mdf_metrics_for_condition], axis=1)
+        combined_df_all_processed.replace([np.inf, -np.inf], np.nan, inplace=True)
+        combined_df_all_processed.dropna(inplace=True)
+
+        # Define the performance met condition
+        performance_met_condition = (
+            (combined_df_all_processed['RMSE'] < rmse_threshold_val) &
+            (combined_df_all_processed['Pearson correlation'] > pearson_correlation_threshold_val)
+        )
+
+        # List of columns for logarithmic binning (consistent with previous cells)
+        columns_for_log_bins = ['Ensemble variance', 'IQR (75-25%)', 'std', 'mad', 'stdsim']
+
+        # Get columns for linear binning (all sdf_numerical_all columns not in columns_for_log_bins)
+        columns_for_linear_bins = [col for col in sdf_numerical_all.columns if col not in columns_for_log_bins]
+
+        # --- Collect binning information ---
+        all_bin_info = []
+        num_bins = 100
+
+        # Process Logarithmically Binned Columns
+        for col_name in columns_for_log_bins:
+            if col_name in combined_df_all_processed.columns and (combined_df_all_processed[col_name] > 0).all():
+                min_val = combined_df_all_processed[col_name].min()
+                max_val = combined_df_all_processed[col_name].max()
+                log_bins = np.logspace(np.log10(min_val), np.log10(max_val), num_bins + 1)
+
+                bin_labels = pd.cut(combined_df_all_processed[col_name], bins=log_bins, labels=False, include_lowest=True)
+                
+                midpoints = np.exp((np.log(log_bins[:-1]) + np.log(log_bins[1:])) / 2)
+
+                count_performance_met = combined_df_all_processed.loc[performance_met_condition].groupby(bin_labels).size()
+                total_in_bin = combined_df_all_processed.groupby(bin_labels).size()
+                conditional_probabilities = (count_performance_met.reindex(total_in_bin.index, fill_value=0) / total_in_bin).fillna(0)
+
+                for bin_idx, prob in conditional_probabilities.items():
+                    all_bin_info.append({
+                        'Column Name': col_name,
+                        'Bin Type': 'Logarithmic',
+                        'Bin Index': bin_idx,
+                        'Bin Edge (Lower)': log_bins[int(bin_idx)],
+                        'Bin Edge (Upper)': log_bins[int(bin_idx) + 1],
+                        'Bin Midpoint': midpoints[int(bin_idx)],
+                        'Conditional Probability': prob
+                    })
+            else:
+                print(f"Skipping log-bin info for '{col_name}' because it contains non-positive values or is missing.")
+
+        # Process Linearly Binned Columns
+        for col_name in columns_for_linear_bins:
+            if col_name in combined_df_all_processed.columns:
+                min_val_col = combined_df_all_processed[col_name].min()
+                max_val_col = combined_df_all_processed[col_name].max()
+
+                dynamic_num_bins = max(1, int(np.floor(max_val_col)) - int(np.ceil(min_val_col)) + 1)
+                if dynamic_num_bins > 100: dynamic_num_bins = 100
+                
+                bin_labels = pd.cut(combined_df_all_processed[col_name], bins=dynamic_num_bins, labels=False, include_lowest=True)
+                
+                _, bin_edges = pd.cut(combined_df_all_processed[col_name], bins=dynamic_num_bins, labels=False, include_lowest=True, retbins=True)
+                midpoints = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+                count_performance_met = combined_df_all_processed.loc[performance_met_condition].groupby(bin_labels).size()
+                total_in_bin = combined_df_all_processed.groupby(bin_labels).size()
+                conditional_probabilities = (count_performance_met.reindex(total_in_bin.index, fill_value=0) / total_in_bin).fillna(0)
+
+                for bin_idx, prob in conditional_probabilities.items():
+                    all_bin_info.append({
+                        'Column Name': col_name,
+                        'Bin Type': 'Linear',
+                        'Bin Index': bin_idx,
+                        'Bin Edge (Lower)': bin_edges[int(bin_idx)],
+                        'Bin Edge (Upper)': bin_edges[int(bin_idx) + 1],
+                        'Bin Midpoint': midpoints[int(bin_idx)],
+                        'Conditional Probability': prob
+                    })
+            else:
+                print(f"Skipping linear-bin info for '{col_name}' because it is missing.")
+
+        # Convert to DataFrame and save to CSV
+        bin_info_df = pd.DataFrame(all_bin_info)
+        bin_info_df.to_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+                        "era5wtd_vs_localobs", "probabilities", "conditional_probability_bin_info.csv"), index=False)
+
+        print(f"All binning information saved")
+        print(bin_info_df)
+
+    def plot2dmap_probability(self):
+        plot_functions = plotting_helper()
+        obswtd = pd.read_parquet(os.path.join(os.path.join(
+            INPUTPATH, "localobservations"), "wtd_obsEU_monthly_avgdup.parquet"))
+        obswtd = obswtd.dropna(axis=1)  # drop columns with all NaN values
+        proj_mapping = pd.read_csv(os.path.join(
+            INPUTPATH, "localobservations", "mapping_wtdobsEU_TSMP_avgdup.csv"))
+        proj_mapping = proj_mapping.dropna(subset=["sim_1darrayindex"])
+        proj_mapping.reset_index(drop=True, inplace=True)
+
+        probabilities = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                             "ensemble_mean", "era5wtd_vs_localobs", "probabilities", "conditional_probability_bin_info.csv"))
+        
+        map2d = np.zeros(np.load(os.path.join(INPUTPATH, "mapping_0stdroll6months.npy")).shape)
+        map2d[:] = np.nan
+        for pixel in range(len(proj_mapping)):
+            print(
+                f"Processing pixel {pixel+1} of {len(proj_mapping)}", end='\r')
+            # countrylocation = proj_mapping.iloc[pixel]["countrylocation"]
+            country = proj_mapping.iloc[pixel]["country"]
+            tsmpx = int(proj_mapping.iloc[pixel]["tsmp_xindex"])
+            tsmpy = int(proj_mapping.iloc[pixel]["tsmp_yindex"])
+            lon = proj_mapping.iloc[pixel]["lon"].replace("_", "")
+            lat = proj_mapping.iloc[pixel]["lat"].replace("_", "")
+            countrylocation = f"{country}_LON{lon}LAT{lat}"
+            if not countrylocation in obswtd.columns:
+                print(
+                    f"countrylocation {countrylocation} not in obswtd columns, skipping...")
+                continue
+            target = int(proj_mapping.iloc[pixel]["target_chunk"])
+            sim_1darrayindex = int(
+                proj_mapping.iloc[pixel]["sim_1darrayindex"])
+            sim_era5wtd = self.get_era5wtd(target, sim_1darrayindex)
+            # important to set negatives to zero ##############
+            sim_era5wtd[sim_era5wtd < 0.0] = 0.0
+
+            # rescale sims from daily to monthly timestep
+            time = pd.date_range(start="2000-01-01", periods=5840, freq="D")
+            df = pd.DataFrame(sim_era5wtd.T, index=time)   # shape (5840, 100)
+            sim_era5wtd = df.resample(
+                "MS").mean().T.to_numpy()  # shape (100, 192)
+
+            localobs = np.array(obswtd[f"{countrylocation}"].to_list())
+            
+            ensemble_predictions = sim_era5wtd  # shape (members, timeseries)
+            # move axis to (timeseries, members) for easier calculation
+            ensemble_predictions = np.moveaxis(
+                ensemble_predictions, 0, 1)  # shape (timeseries, members)
+            # check lengths
+            if len(localobs) != sim_era5wtd.shape[1]:
+                raise ValueError(
+                    f"lengths do not match for pixel {countrylocation}, len localobs: {len(localobs)}, len sim_era5wtd: {sim_era5wtd.shape[1]}, skipping...")
+
+            # Calculate the variance for each time step
+            ensemble_variance = np.var(ensemble_predictions, axis=1)
+            ensemble_variance = np.mean(ensemble_variance)
+
+            prob_var = probabilities[(probabilities['Column Name'] == 'Ensemble variance')]
+            prob_var = prob_var.sort_values('Bin Edge (Lower)')
+            # Find the appropriate bin for the ensemble variance
+            bin_idx = np.digitize(ensemble_variance, prob_var['Bin Edge (Lower)'].values)
+            if bin_idx >= len(prob_var):
+                bin_idx = len(prob_var) - 1  # If variance exceeds all bins, assign to last bin
+            probability = prob_var.iloc[bin_idx]['Conditional Probability']
+            map2d[tsmpy, tsmpx] = probability
+        plot_functions.doublefig_EU_2Dmap(
+            data_map=map2d, logscale=False, minval=0, maxval=1, title="P(r>0.5 & RMSE<10)", country="EU")
+
+
 
     def onepoint_distribution(self):
         utils = utilities()
@@ -1740,64 +2336,6 @@ class postprocess_calculations:
         # np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "pixels_ts_obs_pred.npy"), obs_pred_pixels)
         return np.array(ev), np.array(iqr), np.array(rmse_list), np.array(ambias_list), obs_pred_pixels
 
-    def fitted_ev_rmse(self):
-        ev, iqr, rmse_list, ambias_list, obs_pred_pixels = self.calc_ev_iqr_rmse_bias()
-        # for EV vs RMSE: rmse2d_statspred = 0.67*(varmap**0.45)
-        # for IQR vs Bias: bias2d_statspred = 0.45*(iqrmap**1.03)
-        line = np.array([np.min(ev), np.max(ev)])
-        # fitted_bias = 1.01 * (line ** 0.47)
-        fitted_bias = 1.04 * line - 0.01
-        ev = np.array(ev)
-        rmse_list = np.array(rmse_list)
-        # log_ev = np.log(ev)
-        # log_rmse = np.log(rmse_list)
-        # slope, intercept, r_value, p_value, std_err = stats.linregress(log_ev, log_rmse)
-        slope, intercept, r_value, p_value, std_err = stats.linregress(
-            ev, rmse_list)
-        r_squared = r_value**2
-        print(f"EV vs RMSE fitting line R2: {r_squared}")
-
-        plt.figure()
-        plt.scatter(ev, rmse_list, alpha=0.5)
-        plt.plot(line, fitted_bias, 'r-',
-                 label=f'R2={r_squared:.2f}\nRMSE=1.04*EV-0.01')
-        plt.legend(loc='lower right')
-        plt.xlabel(r'$\overline{EV}$')
-        plt.ylabel(r'Members Correlation')
-        # plt.xscale('log')
-        # plt.yscale('log')
-        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
-                    "era5wtd_vs_localobs", "statistics", "EV_vs_mRMSE.png"), dpi=300, bbox_inches='tight')
-        plt.close()
-
-    def fitted_iqr_mab(self):
-        ev, iqr, rmse_list, ambias_list, obs_pred_pixels = self.calc_ev_iqr_rmse_bias()
-        # for EV vs RMSE: rmse2d_statspred = 0.67*(varmap**0.45)
-        # for IQR vs Bias: bias2d_statspred = 0.45*(iqrmap**1.03)
-        line = np.array([np.min(iqr), np.max(iqr)])
-        fitted_bias = 0.45 * (line ** 1.03)
-        iqr = np.array(iqr)
-        ambias_list = np.array(ambias_list)
-        log_iqr = np.log(iqr)
-        log_ambias = np.log(ambias_list)
-        slope, intercept, r_value, p_value, std_err = stats.linregress(
-            log_iqr, log_ambias)
-        r_squared = r_value**2
-        print(f"IQR vs Mean Absolute Bias fitting line R2: {r_squared}")
-
-        plt.figure()
-        plt.scatter(iqr, ambias_list, alpha=0.5)
-        plt.plot(line, fitted_bias, 'r-',
-                 label=f'R2={r_squared:.2f}\nMAB=0.45*(IQR^1.03)')
-        plt.legend(loc='lower right')
-        plt.xlabel(r'$\overline{IQR}$')
-        plt.ylabel(r'Mean Absolute Bias (m)')
-        plt.xscale('log')
-        plt.yscale('log')
-        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
-                    "era5wtd_vs_localobs", "statistics", "IQR_vs_MAB.png"), dpi=300, bbox_inches='tight')
-        plt.close()
-
     def plot_heatmap_scatter(self, observed, predicted, bins=50, cmap='viridis', i=0):
         # Calculate R²
         ss_res = np.sum((np.array(observed) - np.array(predicted)) ** 2)
@@ -1857,16 +2395,18 @@ class postprocess_calculations:
         ), obs_pred_pixels[:, :, 1].flatten(), bins=30, cmap='viridis', i=0)
 
     def postprocess_era5wtd_vs_obs(self):
-        pass
         # self.ensemble_statvsacc()
         # self.ensemble_statvsacc_fitting()
         # self.fit_ensvar_rmse_r()
         # self.onepoint_distribution()
         # self.eval_era5wtd_obswtd_tsmpwtd()
 
+        # self.metrics_stat_pdf()
+        # self.plot_statacc_scatterthresholded()
+        # self.save_probabilities()
+        self.plot2dmap_probability()
+
         # self.plot2Dmaps()
-        # self.fitted_ev_rmse()
-        # self.fitted_iqr_mab()
         # self.plot_cdfs()
         # self.yx_accuracy_plot()
         # self.location_of_localobs()
