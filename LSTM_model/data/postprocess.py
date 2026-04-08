@@ -417,7 +417,7 @@ class postprocess_calculations:
         transfer_subset = np.load(os.path.join(EU_train_inpath, "transfer_subset.npy"))
 
         #transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
-        df_dic = {"stdsim":[], "stdobs":[], "meansim":[], "meanobs":[], "Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "KGE'":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Ensemble variance":[], "IQR (75-25%)":[], "std":[], "cv":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
+        df_dic = {"mean_membersobs_RMSE":[], "mean_membersobs_correlation":[], "mean_membersobs_KGE":[], "KGE_nobias":[], "stdsim":[], "stdobs":[], "meansim":[], "meanobs":[], "Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "KGE'":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Ensemble variance":[], "IQR (75-25%)":[], "std":[], "cv":[], "mad":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
         x_axis = []
         y_axis = []
         for target in range(100):
@@ -456,6 +456,10 @@ class postprocess_calculations:
                 iqr_mean = np.mean(ensemble_iqr)
                 df_dic["IQR (75-25%)"].append(iqr_mean)
 
+                # calculate MAD
+                mad = utils.calculate_ensemble_mad(ensemble_predictions)
+                df_dic["mad"].append(mad)
+
                 # Calculate the std for each time step
                 ensemble_std = np.std(ensemble_predictions, axis=1)
                 ensemble_std = np.mean(ensemble_std)
@@ -471,6 +475,13 @@ class postprocess_calculations:
                 df_dic["cv"].append(cv)
                 
                 ########### Calculate accuracy metrics ###########
+                # Calculate mean bias
+                bias_mean = np.mean(mean_prediction - obs[:,pixel])
+                df_dic["Absolute mean bias"].append(bias_mean)
+
+                ### remove bias from mean prediction ###
+                # mean_prediction = mean_prediction - bias_mean
+
                 # Calculate the correlation between the mean prediction and observation
                 correlationobs = np.corrcoef(mean_prediction, obs[:,pixel])[0, 1]
                 df_dic["Pearson correlation"].append(correlationobs)
@@ -482,6 +493,26 @@ class postprocess_calculations:
                 # Calculate KGE
                 kge = utils.calculate_kge(obs[:,pixel], mean_prediction)
                 df_dic["KGE"].append(kge)
+                
+                # members correlation
+                members_correlation = [np.corrcoef(ensemble_predictions[:,m], obs[:,pixel])[0, 1] for m in range(ensemble_predictions.shape[1])]
+                members_correlation_mean = np.mean(members_correlation)
+                df_dic["mean_membersobs_correlation"].append(members_correlation_mean)
+                if members_correlation_mean==correlationobs:
+                    raise ValueError("members mean correlation is the same as correlationobs, check your code")
+
+                # members RMSE
+                members_rmse = np.mean(np.sqrt(np.mean((ensemble_predictions - obs[:,pixel][:, None]) ** 2, axis=0)))
+                df_dic["mean_membersobs_RMSE"].append(members_rmse)
+                if members_rmse==rmse:
+                    raise ValueError("members mean RMSE is the same as RMSE, check your code")
+
+                # members KGE
+                members_kge = [utils.calculate_kge(ensemble_predictions[:,m], obs[:,pixel]) for m in range(ensemble_predictions.shape[1])]
+                members_kge_mean = np.mean(members_kge)
+                df_dic["mean_membersobs_KGE"].append(members_kge_mean)
+                if members_kge_mean==kge:
+                    raise ValueError("members mean KGE is the same as KGE, check your code")
                 
                 ### KGE terms analysis ####
                 # Compute mean and standard deviation
@@ -495,7 +526,10 @@ class postprocess_calculations:
                 # Compute bias ratio (β) and variability ratio (γ)
                 beta = mu_p / mu_o
                 alpha = sigma_p / sigma_o
-                gamma = (np.std(mean_prediction) / np.mean(mean_prediction)) / (np.std(obs[:,pixel]) / np.mean(obs[:,pixel]))  # variability ratio
+                kge_nobias = 1 - np.sqrt((correlationobs - 1)**2 + (alpha - 1)**2)
+
+                # Store statistics and accuracy metrics
+                df_dic["KGE_nobias"].append(kge_nobias)
                 df_dic["stdsim"].append(np.std(mean_prediction))
                 df_dic["stdobs"].append(np.std(obs[:,pixel]))
                 df_dic["meansim"].append(np.mean(mean_prediction))
@@ -510,14 +544,7 @@ class postprocess_calculations:
 
                 # Calculate NSE
                 nse = 1 - (np.sum((obs[:,pixel] - mean_prediction) ** 2) / np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
-                #nsecomp = np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2)
-                # #if np.std(obs[:,pixel]) < 0.1:
-                # #    nse = np.nan
                 df_dic["NSE"].append(nse)
-
-                # Calculate mean bias
-                bias_mean = np.mean(mean_prediction - obs[:,pixel])
-                df_dic["Absolute mean bias"].append(bias_mean)
                 
                 # x_axis.append(ensemble_variance)
                 # y_axis.append(kgeprime)
@@ -526,7 +553,7 @@ class postprocess_calculations:
 
         ####### save to csv ########
         df = pd.DataFrame(df_dic)
-        df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
+        df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"), index=False)
 
     def kge_investigation(self):
         df = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
@@ -684,9 +711,9 @@ class postprocess_calculations:
 
     def ensemble_statvsacc_fitting(self):
         utils = utilities()
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
-        xstats = {"std":"exp", "Ensemble variance":"exp", "Pairwise correlation":"lin", "IQR (75-25%)":"exp"}
-        ystats = {"RMSE":"exp", "Pearson correlation":"lin", "KGE":"lin", "Absolute mean bias":"exp", "NSE":"lin", "Beta":"exp", "Alpha":"exp", "(Alpha-1)^2":"exp", "(Beta-1)^2":"exp", "(r-1)^2":"exp"}
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        xstats = {"std":"exp", "Ensemble variance":"exp", "Pairwise correlation":"lin", "IQR (75-25%)":"exp", "cv":"exp", "mad":"exp"}
+        ystats = {"mean_membersobs_correlation": "lin", "mean_membersobs_RMSE": "exp", "mean_membersobs_KGE": "lin", "RMSE":"exp", "Pearson correlation":"lin", "KGE":"lin", "KGE_nobias":"exp", "Absolute mean bias":"exp", "NSE":"lin", "Beta":"exp", "Alpha":"exp", "(Alpha-1)^2":"exp", "(Beta-1)^2":"exp", "(r-1)^2":"exp"}
         plotmapping = {
             "Ensemble variance":r"$\overline{EV}$",
             "IQR (75-25%)":r"$\overline{IQR}$",
@@ -712,13 +739,13 @@ class postprocess_calculations:
                 xval = stat[xstat].values
                 yval = stat[ystat].values if not ystat=="Absolute mean bias" else np.absolute(stat[ystat].values)
 
-                if ystat=="Pearson correlation":
+                if ystat=="Pearson correlation" or ystat=="mean_membersobs_correlation":
                     xval = xval[~np.isnan(yval)]
                     yval = yval[~np.isnan(yval)]
                     #xval = xval[yval>=0.0]
                     #yval = yval[yval>=0.0]
                 
-                if ystat=="KGE" or ystat=="NSE":
+                if ystat=="KGE" or ystat=="NSE" or ystat=="KGE_nobias" or ystat=="mean_membersobs_KGE":
                     xval = xval[~np.isnan(yval)]
                     yval = yval[~np.isnan(yval)]
                     xval = xval[yval>=0.2]
@@ -737,9 +764,9 @@ class postprocess_calculations:
                     xval = xval[xval>=0.0]
                 
                 logx, logy, xminlim, xmaxlim, yminlim, ymaxlim = None, None, None, None, None, None
-                if xstat=="std" or xstat=="Ensemble variance" or xstat=="IQR (75-25%)":
+                if xstat=="std" or xstat=="Ensemble variance" or xstat=="IQR (75-25%)" or xstat=="cv" or xstat=="mad":
                     logx = True
-                if ystat=="RMSE" or ystat=="Absolute mean bias" or ystat=="Alpha" or ystat=="Beta" or ystat=="(Alpha-1)^2" or ystat=="(Beta-1)^2" or ystat=="(r-1)^2":
+                if ystat=="RMSE" or ystat=="Absolute mean bias" or ystat=="Alpha" or ystat=="Beta" or ystat=="(Alpha-1)^2" or ystat=="(Beta-1)^2" or ystat=="(r-1)^2" or ystat=="mean_membersobs_RMSE":
                     logy = True
                 if xstat=="Pairwise correlation":
                     xminlim = 0
@@ -854,7 +881,8 @@ class postprocess_calculations:
                 plt.grid(True, linestyle='--', alpha=0.7)
                 plt.tight_layout()
                 plt.legend(fontsize=18, frameon=True)
-                plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"fitted_{ystat}_{xstat}.png"))
+                plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"fitted_{ystat}_{xstat}.png"))
+                plt.close()
 
     def cdf_EU(self):
         def calc_correlation(obs, sim):
@@ -1928,3 +1956,190 @@ class postprocess_calculations:
             if os.path.exists(os.path.join(intargetpath, f"sim_transferpixels_{i}.npy")):
                 shutil.move(os.path.join(intargetpath, f"sim_transferpixels_{i}.npy"), os.path.join(outpath, f"target_pixels_{i}", f"sim_transferpixels_{i}.npy"))
                 print("moved sim_transferpixels")
+
+    def relative_metrics_difference_transfer_local(self):
+        def calc_correlation(obs, sim):
+            correlation_map = []
+            for i in range(obs.shape[1]):
+                time_series1 = obs[:, i]
+                time_series2 = sim[:, i]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    correlation_matrix = np.corrcoef(time_series1, time_series2)
+                    r = correlation_matrix[0, 1]
+                else:
+                    r = np.nan
+                correlation_map.append(r)
+            return correlation_map
+        
+        def calc_RMSE(obs, sim):
+            RMSE_allcells = []
+            for i in range(obs.shape[1]):
+                time_series1 = obs[:, i]
+                time_series2 = sim[:, i]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    rmse = np.sqrt(np.mean((time_series1 - time_series2) ** 2))
+                else:
+                    rmse = np.nan
+                RMSE_allcells.append(rmse)
+            return RMSE_allcells
+        
+        def calc_KGE_NSE_bias(obs, sim):
+            all_kge = []
+            all_nse = []
+            all_bias = []
+            for pixel in range(obs.shape[1]):
+                time_series1 = obs[:, pixel]
+                time_series2 = sim[:, pixel]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    kge = utils.calculate_kge(time_series1, time_series2)# if np.std(time_series1)>=0.1 else np.nan
+                    nse = 1 - (np.sum((time_series1 - time_series2) ** 2) / np.sum((time_series1 - np.mean(time_series1)) ** 2))# if np.std(time_series1)>=0.1 else np.nan
+                    bias_mean = np.mean(time_series2 - time_series1)
+                else:
+                    kge = np.nan
+                    nse = np.nan
+                    bias_mean = np.nan
+                all_kge.append(kge)
+                all_nse.append(nse)
+                all_bias.append(bias_mean)
+            return all_kge, all_nse, all_bias
+
+        def load_obs_sim(dirpath, target, obsname, simname):
+            obs = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", obsname))
+            sims = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", simname))
+            obs = np.nan_to_num(obs)
+            sims = np.nan_to_num(sims)
+            obs[obs < 0.0] = 0.0
+            sims[sims < 0.0] = 0.0
+            return obs, sims
+
+        utils = utilities()
+        print("starting the cdf calculation")
+        correlation = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
+        rmse = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
+        kge = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
+        nse = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
+        bias = {"transfer_400px":[], "test_400px":[], "transfer_100px":[], "test_100px":[]}
+        
+        #### Transfer & training filtered subsets ####
+        EU400px_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU100px_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts/ensemble_100px", "ensemble_mean")
+        training_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU400px_inpath)), "ensemble_400px", "target_pixels", "training_subset.npy"))
+        training_subset_100px = np.load(os.path.join(os.path.dirname(EU100px_inpath), "target_pixels", "training_subset_ensemble100px.npy"))
+        print("Progress: [" + "." * 100 + "]", flush=True)
+        print("          [", end="", flush=True)  # Start progress bar            
+        for target in range(100):
+            print(".", end="", flush=True)  # Dots without newlines
+            ######## 400px ensemble ########
+            # calculate transfer metrics for 400px ensemble
+            obs_transfer400, sim_transfer400 = load_obs_sim(EU400px_inpath, target, f"obs_{target}.npy", f"sim_transferpixels_{target}.npy")
+            obs_test400, sim_test400 = load_obs_sim(EU400px_inpath, target, f"obs_{target}.npy", f"sim_testtrainpixels_{target}.npy")
+            target_map = np.load(os.path.join(os.path.dirname(EU400px_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            training400px_indices, ind2d = utils.intersect_subsets(target_map, training_subset)
+            corr_EU = calc_correlation(obs_transfer400, sim_transfer400)
+            rmse_EU = calc_RMSE(obs_transfer400, sim_transfer400)
+            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_transfer400, sim_transfer400)
+            corr_EU = np.array(corr_EU)
+            rmse_EU = np.array(rmse_EU)
+            kge_EU = np.array(kge_EU)
+            nse_EU = np.array(nse_EU)
+            bias_EU = np.array(bias_EU)
+            # append values from 99 transfer members (training subset) + 100 transfer members (transfer subset)
+            correlation["transfer_400px"].extend(corr_EU.tolist())
+            rmse["transfer_400px"].extend(rmse_EU.tolist())
+            kge["transfer_400px"].extend(kge_EU.tolist())
+            nse["transfer_400px"].extend(nse_EU.tolist())
+            bias["transfer_400px"].extend(bias_EU.tolist())
+
+            # calculate test metrics for 400px ensemble
+            corr_EU = calc_correlation(obs_test400, sim_test400)
+            rmse_EU = calc_RMSE(obs_test400, sim_test400)
+            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_test400, sim_test400)
+            corr_EU = np.array(corr_EU)
+            rmse_EU = np.array(rmse_EU)
+            kge_EU = np.array(kge_EU)
+            nse_EU = np.array(nse_EU)
+            bias_EU = np.array(bias_EU)
+            # append values from only 1 training member (training subset)
+            correlation["test_400px"].extend(corr_EU[training400px_indices].tolist())
+            rmse["test_400px"].extend(rmse_EU[training400px_indices].tolist())
+            kge["test_400px"].extend(kge_EU[training400px_indices].tolist())
+            nse["test_400px"].extend(nse_EU[training400px_indices].tolist())
+            bias["test_400px"].extend(bias_EU[training400px_indices].tolist())
+
+            ######## 100px ensemble ########
+            # calculate transfer metrics for 100px ensemble
+            obs_transfer100, sim_transfer100 = load_obs_sim(EU100px_inpath, target, f"obs_{target}.npy", f"sim_transferpixels_{target}.npy")
+            obs_test100, sim_test100 = load_obs_sim(EU100px_inpath, target, f"obs_{target}.npy", f"sim_testtrainpixels_{target}.npy")
+            target_map = np.load(os.path.join(os.path.dirname(EU100px_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            training100px_indices, ind2d = utils.intersect_subsets(target_map, training_subset_100px)
+            corr_EU = calc_correlation(obs_transfer100, sim_transfer100)
+            rmse_EU = calc_RMSE(obs_transfer100, sim_transfer100)
+            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_transfer100, sim_transfer100)
+            corr_EU = np.array(corr_EU)
+            rmse_EU = np.array(rmse_EU)
+            kge_EU = np.array(kge_EU)
+            nse_EU = np.array(nse_EU)
+            bias_EU = np.array(bias_EU)
+            # append values from 99 transfer members (training subset) + 100 transfer members (transfer subset)
+            correlation["transfer_100px"].extend(corr_EU.tolist())
+            rmse["transfer_100px"].extend(rmse_EU.tolist())
+            kge["transfer_100px"].extend(kge_EU.tolist())
+            nse["transfer_100px"].extend(nse_EU.tolist())
+            bias["transfer_100px"].extend(bias_EU.tolist())
+
+            # calculate test metrics for 100px ensemble
+            corr_EU = calc_correlation(obs_test100, sim_test100)
+            rmse_EU = calc_RMSE(obs_test100, sim_test100)
+            kge_EU, nse_EU, bias_EU = calc_KGE_NSE_bias(obs_test100, sim_test100)
+            corr_EU = np.array(corr_EU)
+            rmse_EU = np.array(rmse_EU)
+            kge_EU = np.array(kge_EU)
+            nse_EU = np.array(nse_EU)
+            bias_EU = np.array(bias_EU)
+            # append values from only 1 training member (training subset)
+            correlation["test_100px"].extend(corr_EU[training100px_indices].tolist())
+            rmse["test_100px"].extend(rmse_EU[training100px_indices].tolist())
+            kge["test_100px"].extend(kge_EU[training100px_indices].tolist())
+            nse["test_100px"].extend(nse_EU[training100px_indices].tolist())
+            bias["test_100px"].extend(bias_EU[training100px_indices].tolist())
+        
+        print("] Done!", flush=True)
+        # cleanup
+        for key in correlation.keys():
+            correlation[key] = np.array(correlation[key])
+            correlation[key] = correlation[key][~np.isnan(correlation[key])]
+
+        for key in rmse.keys():
+            rmse[key] = np.array(rmse[key])
+            rmse[key] = rmse[key][~np.isnan(rmse[key])]
+
+        for key in kge.keys():
+            kge[key] = np.array(kge[key])
+            kge[key] = kge[key][~np.isnan(kge[key])]
+
+        for key in nse.keys():
+            nse[key] = np.array(nse[key])
+            nse[key] = nse[key][~np.isnan(nse[key])]
+
+        for key in bias.keys():
+            bias[key] = np.array(bias[key])
+            bias[key] = bias[key][~np.isnan(bias[key])]
+
+        print("calculating relative difference")
+        # calculate relative difference 400px test vs transfer
+        relative_difference = {}
+        for metric_dict, metric_name in zip([correlation, rmse, kge, nse, bias],
+                            ["correlation", "rmse", "kge", "nse", "bias"]):
+            relative_difference[metric_name] = {}
+            transfer_400px_mean = np.nanmean(metric_dict["transfer_400px"])
+            test_400px_mean = np.nanmean(metric_dict["test_400px"])
+            transfer_100px_mean = np.nanmean(metric_dict["transfer_100px"])
+            test_100px_mean = np.nanmean(metric_dict["test_100px"])
+            relative_difference[metric_name]["transfer_vs_test_400px"] = (test_400px_mean - transfer_400px_mean) / transfer_400px_mean * 100
+            relative_difference[metric_name]["transfer_vs_test_100px"] = (test_100px_mean - transfer_100px_mean) / transfer_100px_mean * 100
+            relative_difference[metric_name]["transfer_400px_vs_100px"] = (transfer_100px_mean - transfer_400px_mean) / transfer_100px_mean * 100
+            relative_difference[metric_name]["test_400px_vs_100px"] = (test_100px_mean - test_400px_mean) / test_100px_mean * 100
+            print(f"{metric_name} relative difference test vs transfer 400px: {relative_difference[metric_name]['transfer_vs_test_400px']:.2f} %")
+            print(f"{metric_name} relative difference test vs transfer 100px: {relative_difference[metric_name]['transfer_vs_test_100px']:.2f} %")
+            print(f"{metric_name} relative difference transfer 400px vs 100px: {relative_difference[metric_name]['transfer_400px_vs_100px']:.2f} %")
+            print(f"{metric_name} relative difference test 400px vs 100px: {relative_difference[metric_name]['test_400px_vs_100px']:.2f} %")
