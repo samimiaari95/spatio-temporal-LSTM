@@ -580,7 +580,7 @@ class plotting_helper:
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
-        cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title or "water" in title) else "coolwarm"
+        cmap_colors = "viridis" if ("MSE" in title or "Pearson" in title or "KGE" in title or "water" in title) else "coolwarm"
         # cmap_colors = "terrain"
         cmap = plt.get_cmap(cmap_colors)
 
@@ -601,6 +601,157 @@ class plotting_helper:
         print(f"saving {title}")
         plt.tight_layout()
         fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_{title}.png"))
+    
+    def EU_2Dmap_wtdtopo(self, data_map, logscale, minval, maxval, title, ax=None, panel_label=None):
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
+        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+
+        cmap = plt.get_cmap("viridis") if "water table" in title.lower() else plt.get_cmap("terrain")
+
+        norm = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+
+        im = ax.pcolormesh(
+            lons, lats, data_map,
+            cmap=cmap, norm=norm,
+            transform=ccrs.PlateCarree()
+        )
+
+        cbar = plt.colorbar(
+            ScalarMappable(norm=norm, cmap=cmap),
+            ax=ax,
+            orientation='vertical',
+            pad=0.02,
+            shrink=0.8
+        )
+        cbar.set_label(f"{title} (m)")
+
+        ax.coastlines()
+        ax.gridlines(draw_labels=False)
+
+        if panel_label:
+            ax.text(
+                0.02, 0.97, panel_label,
+                transform=ax.transAxes,
+                va='top',
+                zorder=20,
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            )
+
+        return ax
+
+    def EU_2Dmap_predictedaccfromstats(self, data_map, logscale, minval, maxval, title, ax=None, panel_label=None):
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
+        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+
+        cmap = plt.get_cmap("viridis")
+
+        norm = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
+
+        # create axis if not provided
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+
+        im = ax.pcolormesh(
+            lons,
+            lats,
+            data_map,
+            cmap=cmap,
+            norm=norm,
+            transform=ccrs.PlateCarree()
+        )
+
+        colorbar_label = title if title in ["Pearson correlation", "NSE", "KGE"] else f"{title} (m)"
+
+        cbar = plt.colorbar(
+            ScalarMappable(norm=norm, cmap=cmap),
+            ax=ax,
+            orientation='vertical',
+            pad=0.02,
+            shrink=0.8
+        )
+        cbar.set_label(colorbar_label)
+
+        ax.coastlines()
+        ax.gridlines(draw_labels=False)
+
+        # panel label
+        if panel_label:
+            ax.text(
+                0.02, 0.97,
+                panel_label,
+                transform=ax.transAxes,
+                fontweight='bold',
+                va='top',
+                zorder=20,
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            )
+
+        return ax
+    
+    def combinedfigs_EU_2Dmap(self, data_map, logscale, minval, maxval, title, ax=None, panel_label=None):
+
+        projection = ccrs.LambertAzimuthalEqualArea(
+            central_longitude=19,
+            central_latitude=53
+        )
+
+        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
+        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+
+        cmap_colors = "viridis" if ("MSE" in title or "Pearson" in title or "KGE" in title or "water" in title or "ias" in title) else "coolwarm"
+        cmap = plt.get_cmap(cmap_colors)
+
+        norm = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
+
+        if ax is None:
+            fig, ax = plt.subplots(
+                figsize=(16, 9),
+                subplot_kw={'projection': projection}
+            )
+
+        cla = ax.pcolormesh(
+            lons,
+            lats,
+            data_map,
+            cmap=cmap,
+            norm=norm,
+            transform=ccrs.PlateCarree()
+        )
+
+        colorbar_label = title if title in ["Pearson correlation", "NSE", "KGE"] else f"{title} (m)"
+
+        cbar = plt.colorbar(
+            ScalarMappable(norm=norm, cmap=cmap),
+            ax=ax,
+            orientation='vertical',
+            pad=0.02,
+            shrink=0.85
+        )
+
+        cbar.set_label(colorbar_label)#, fontsize=11)
+
+        ax.coastlines()
+        ax.gridlines(draw_labels=False)
+
+        if panel_label:
+            ax.text(
+                0.02,
+                0.97,
+                panel_label,
+                transform=ax.transAxes,
+                #fontsize=14,
+                fontweight='bold',
+                va='top'
+            )
+
+        return ax
     
     def plot_4d_map_logscale(self, data, cmap='viridis', vmin=None, vmax=None, output_filename="map_4d_logscale.png"):
         """

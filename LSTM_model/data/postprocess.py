@@ -1,3 +1,4 @@
+from fileinput import filename
 import os
 import math
 import numpy as np
@@ -9,6 +10,7 @@ import torch.nn as nn
 from sklearn.metrics import r2_score
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
+import cartopy.crs as ccrs
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.utils.utils import utilities
 from LSTM_model.model.config import *
@@ -656,9 +658,16 @@ class postprocess_calculations:
     def ensemble_crpsvsstats_fitting(self):
         utils = utilities()
         dirpath = os.path.join(OUTPUTPATH, "statistics")
-        stats = ["IQR (75-25%)", "Ensemble variance", "Pairwise correlation"]
+        stats = ["Ensemble variance", "IQR (75-25%)"]#, "Pairwise correlation"]
         yval = np.load(os.path.join(dirpath, "crps_transfer.npy"))
-        for stat in stats:
+
+        ncols = 2
+        nrows = 1
+        fig, axes = plt.subplots(nrows, ncols, figsize=(10, 4))
+        axes = np.array(axes).flatten()
+        labels = ['(a)', '(b)']
+
+        for i, stat in enumerate(stats):
             if stat=="Pairwise correlation":
                 filename = "pairwisecorr_crps_transfer.npy"
                 yval = np.load(os.path.join(dirpath, "crps_meants_px.npy"))
@@ -674,7 +683,11 @@ class postprocess_calculations:
             if stat=="Pairwise correlation":
                 yval = yval[xval>0.01]
                 xval = xval[xval>0.01]
+            
             print(f"fitting {stat} with CRPS")
+            mask = ~np.isnan(xval) & ~np.isnan(yval)
+            xval = xval[mask]
+            yval = yval[mask]
             # Fit a powerlaw
             # Fit power law
             # linearize
@@ -686,30 +699,42 @@ class postprocess_calculations:
             # fitting accuracy
             y_fit = [utils.linear_law(x, a_fit, b_fit) for x in x_lin]
             R_square = r2_score(y_lin, y_fit)
-            #print(f"R2 = {R_square}")
             # back transform to power law
             a_fit = np.exp(a_fit)
-            #print(f"Fitted a: {a_fit} and b:{b_fit}")
-            textstr = '\n'.join((
-                f'y={a_fit:.2f}x^{b_fit:.2f}',
+            legend_text = '\n'.join((
+                f'$y={a_fit:.2f}x$^{b_fit:.2f}',
                 f'$R^2$ = {R_square:.3f}'))
 
             x_fit = [min(xval), max(xval)]
             y_fit = [utils.powerlaw_func(x, a_fit, b_fit) for x in x_fit]
-            plt.figure()
-            plt.plot(x_fit, y_fit, color="r", label=textstr, linestyle='--')
-            plt.scatter(xval, yval, marker='.', color='k')
-            plt.xlabel(xlabel)
-            plt.ylabel("CRPS")
-            plt.xscale("log")
-            plt.yscale("log")
-            plt.grid(True, linestyle='--', alpha=0.7)
-            plt.tight_layout()
-            plt.legend(fontsize=18, frameon=True)
-            plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"fitted_CRPS_{stat}.png"))
-
+            #plt.figure()
+            axes[i].scatter(xval, yval, color='k', s=20)
+            axes[i].plot(x_fit, y_fit, 'r--', label=legend_text)
+            # ---- keep only left y-label ----
+            axes[i].set_xlabel(xlabel)
+            axes[i].set_ylabel("CRPS (m)")
+            if i != 0:
+                axes[i].set_ylabel("")
+            axes[i].set_xscale("log")
+            axes[i].set_yscale("log")
+            axes[i].grid(True, linestyle='--', alpha=0.7)
+            axes[i].legend(fontsize=18, frameon=True)
+            # ---- subplot labels ----
+            axes[i].text(
+                0.02,
+                0.95,
+                labels[i],
+                transform=axes[i].transAxes,
+                va='top',
+                zorder=20,
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            )
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.eps"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.pdf"), dpi=300)
 
     def ensemble_statvsacc_fitting(self):
+        ####### old version --- replaced with create_group_figure ##########
         utils = utilities()
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
         xstats = {"std":"exp", "Ensemble variance":"exp", "Pairwise correlation":"lin", "IQR (75-25%)":"exp", "cv":"exp", "mad":"exp"}
@@ -883,6 +908,419 @@ class postprocess_calculations:
                 plt.legend(fontsize=18, frameon=True)
                 plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"fitted_{ystat}_{xstat}.png"))
                 plt.close()
+    
+    def plot_single_fit(self, ax, xval, yval, xstat, ystat, utils, plotmapping):
+        xstats = {
+            "std":"exp",
+            "Ensemble variance":"exp",
+            "Pairwise correlation":"lin",
+            "IQR (75-25%)":"exp",
+            "cv":"exp",
+            "mad":"exp",
+            "Alpha":"exp",
+            "Beta":"exp",
+            "Pearson correlation":"exp",
+            "stdsim":"exp",
+            "stdobs":"exp",
+            "meansim":"exp",
+            "meanobs":"exp"
+        }
+
+        ystats = {
+            "mean_membersobs_correlation": "lin",
+            "mean_membersobs_RMSE": "exp",
+            "mean_membersobs_KGE": "lin",
+            "RMSE":"exp",
+            "Pearson correlation":"lin",
+            "KGE":"lin",
+            "KGE_nobias":"exp",
+            "Absolute mean bias":"exp",
+            "NSE":"lin",
+            "Beta":"exp",
+            "Alpha":"exp",
+            "(Alpha-1)^2":"exp",
+            "(Beta-1)^2":"exp",
+            "(r-1)^2":"exp"
+        }
+
+        logarithmicfit = False
+
+        if xstats[xstat]=="exp" and ystats[ystat]=="exp":
+            fittype = "powerlaw"
+        elif xstats[xstat]=="exp" or ystats[ystat]=="exp":
+            fittype = "exponential"
+            if xstats[xstat]=="exp" and ystats[ystat]=="lin":
+                logarithmicfit = True
+        else:
+            fittype = "linear"
+
+        if xstat=="Pairwise correlation" and ystat=="Pearson correlation":
+            fittype = "exponential"
+            logarithmicfit = True
+
+        # -------- fitting --------
+        if fittype=="linear":
+            params, _ = curve_fit(utils.linear_law, xval, yval)
+            a_fit, b_fit = params
+            x_fit = np.linspace(min(xval), max(xval), 100)
+            y_fit = utils.linear_law(x_fit, a_fit, b_fit)
+
+            R2 = r2_score(yval, utils.linear_law(xval, a_fit, b_fit))
+
+            eq = f'$y={b_fit:.2f}x+{a_fit:.2f}$' if a_fit>=0 else f'$y={b_fit:.2f}x{a_fit:.2f}$'
+            legend_text = eq + '\n' + f'$R^2$={R2:.3f}'
+
+        elif fittype=="powerlaw":
+            params, _ = curve_fit(utils.linear_law, np.log(xval), np.log(yval))
+            a_fit, b_fit = params
+            a_fit = np.exp(a_fit)
+
+            x_fit = np.linspace(min(xval), max(xval), 100)
+            y_fit = utils.powerlaw_func(x_fit, a_fit, b_fit)
+
+            R2 = r2_score(np.log(yval), utils.linear_law(np.log(xval), np.log(a_fit), b_fit))
+
+            legend_text = f'$y={a_fit:.2f}x$^{b_fit:.2f}\n$R^2$={R2:.3f}'
+
+        elif fittype=="exponential":
+
+            def log_func(x, a, b):
+                return a + b*np.log(x)
+
+            def exp_func(x, a, b):
+                return a*np.exp(b*x)
+
+            if logarithmicfit:
+                popt, _ = curve_fit(log_func, xval, yval)
+                a_fit, b_fit = popt
+                x_fit = np.linspace(min(xval), max(xval), 100)
+                y_fit = log_func(x_fit, *popt)
+                y_pred = log_func(xval, *popt)
+                r2 = r2_score(yval, y_pred)  # Compute R²
+                logeq = f'y={a_fit:.2f}+{b_fit:.3f}log(x)' if b_fit>=0 else f'y={a_fit:.2f}{b_fit:.3f}log(x)'
+                legend_text = '\n'.join((
+                        logeq,
+                        f'$R^2$ = {r2:.3f}'))
+            else:
+                popt, _ = curve_fit(exp_func, xval, yval, p0=(1, -0.1))
+                a_fit, b_fit = popt
+                x_fit = np.linspace(min(xval), max(xval), 100)
+                y_fit = exp_func(x_fit, *popt)
+                y_pred = exp_func(xval, *popt)
+                r2 = r2_score(yval, y_pred)  # Compute R²
+                legend_text = '\n'.join((
+                        f'y={a_fit:.2f}e^{b_fit:.3f}x',
+                        f'$R^2$ = {r2:.3f}'))
+
+        # -------- plotting --------
+        ax.scatter(xval, yval, color='k', s=20)
+        ax.plot(x_fit, y_fit, 'r--', label=legend_text)
+
+        ax.set_xlabel(plotmapping.get(xstat, xstat))
+        ax.set_ylabel(plotmapping.get(ystat, ystat))
+
+        if xstat in ["std","Ensemble variance","IQR (75-25%)","cv","mad"]:
+            ax.set_xscale("log")
+
+        if ystat in ["RMSE","Absolute mean bias","Alpha","Beta","(Alpha-1)^2","(Beta-1)^2","(r-1)^2","mean_membersobs_RMSE"]:
+            ax.set_yscale("log")
+
+        if xstat=="Pairwise correlation":
+            ax.set_xlim(0,1)
+            if ystat=="Pearson correlation":
+                ax.set_xscale("log")
+                ax.set_xlim(0.001,1)
+
+        if ystat=="Pearson correlation":
+            ax.set_ylim(-1,1)
+
+        if ystat=="KGE": 
+            ax.set_ylim(0.2,1)
+            ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+            
+        if ystat=="NSE":
+            ax.set_ylim(0.2,1)
+            ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+        if ystat=="Absolute mean bias":
+            ax.set_yscale("log")
+            ax.set_yticks([0.01, 0.1, 1, 10])
+
+        ax.grid(True, linestyle='--', alpha=0.7)
+        ax.legend(fontsize=18, frameon=True)
+
+
+    def create_group_figure(self, stat, combinations, filename, ncols=2):
+        utils = utilities()
+
+        plotmapping = {
+            "Ensemble variance":r"$\overline{EV}$",
+            "IQR (75-25%)":r"$\overline{IQR}$",
+            "Beta":r"$\beta$",
+            "Alpha":r"$\alpha$"
+        }
+
+        n = len(combinations)
+        nrows = int(np.ceil(n / ncols))
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=(12, 4*nrows))
+        axes = np.array(axes).flatten()
+
+        labels = list("abcdefghijklmnopqrstuvwxyz")
+
+        for i, (ystat, xstat) in enumerate(combinations):
+
+            xval = stat[xstat].values
+            yval = stat[ystat].values
+
+            if ystat == "Absolute mean bias":
+                yval = np.abs(yval)
+                xval = xval[yval>=0.01]
+                yval = yval[yval>=0.01]
+            if ystat=="KGE" or ystat=="NSE":
+                xval = xval[~np.isnan(yval)]
+                yval = yval[~np.isnan(yval)]
+                xval = xval[yval>=0.2]
+                yval = yval[yval>=0.2]
+
+            mask = ~np.isnan(xval) & ~np.isnan(yval)
+            xval = xval[mask]
+            yval = yval[mask]
+
+            self.plot_single_fit(
+                axes[i],
+                xval,
+                yval,
+                xstat,
+                ystat,
+                utils,
+                plotmapping
+            )
+
+            row = i // ncols
+            col = i % ncols
+
+            # ---- remove repeated labels ----
+            if col != 0:
+                axes[i].set_ylabel("")
+
+            if row != nrows-1:
+                axes[i].set_xlabel("")
+
+            # ---- subplot label position ----
+            # ypos = 0.05 if ystat == "Pearson correlation" else 0.95
+            # va = 'bottom' if ystat == "Pearson correlation" else 'top'
+
+            axes[i].text(
+                0.02,
+                0.95,
+                f"({labels[i]})",
+                transform=axes[i].transAxes,
+                va='top',
+                zorder=20,
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            )
+
+        for j in range(i+1, len(axes)):
+            fig.delaxes(axes[j])
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.pdf"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.eps"), dpi=300)
+        print(f"saved figure: {filename}")
+        plt.close()
+    
+    def create_kge_component_figure(self, stat, filename):
+        stat = stat.dropna()
+        combinations = [
+            ("KGE","Alpha"),
+            ("KGE","Beta"),
+            ("KGE","Pearson correlation"),
+            ("KGE","stdobs"),
+            ("KGE","stdsim"),
+            ("KGE","meanobs"),
+            ("KGE","meansim")
+        ]
+
+        plotmapping = {
+            "Alpha": r"$\alpha=\frac{\sigma_{S}}{\sigma_{O}}$",
+            "Beta": r"$\beta=\frac{\bar{S}}{\bar{O}}$",
+            "stdsim": r"$\sigma_{S}$",
+            "stdobs": r"$\sigma_{O}$",
+            "meansim": r"$\bar{S}$",
+            "meanobs": r"$\bar{O}$"
+        }
+
+        ncols = 3
+        n = len(combinations)
+        nrows = int(np.ceil(n / ncols))
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=(15, 4*nrows))
+        axes = np.array(axes).flatten()
+
+        labels = list("abcdefghijklmnopqrstuvwxyz")
+
+        for i, (ystat, xstat) in enumerate(combinations):
+
+            xval = stat[xstat].values
+            yval = stat[ystat].values
+
+            mask = ~np.isnan(xval) & ~np.isnan(yval)
+            xval = xval[mask]
+            yval = yval[mask]
+
+            ax = axes[i]
+
+            ax.scatter(xval, yval, color='k', s=20)
+
+            # labels
+            col = i % ncols
+
+            if col != 0:
+                ax.set_ylabel("")
+            else:
+                ax.set_ylabel("KGE")
+
+            ax.set_xlabel(plotmapping.get(xstat, xstat))
+
+            # KGE limits
+            ax.set_yscale("symlog")
+            ax.set_xscale("log")
+
+            # subplot labels
+            ax.text(
+                0.02,
+                0.95,
+                f"({labels[i]})",
+                transform=ax.transAxes,
+                va='top',
+                zorder=20,
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            )
+
+            ax.grid(True, linestyle='--', alpha=0.7)
+
+        # remove empty axes
+        for j in range(i+1, len(axes)):
+            fig.delaxes(axes[j])
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.pdf"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.eps"), dpi=300)
+        print(f"saved figure: {filename}")
+        plt.close()
+    
+    def create_pairwise_corr_figure(self, stat, filename):
+        utils = utilities()
+
+        combinations = [
+            ("RMSE","Pairwise correlation"),
+            ("Pearson correlation","Pairwise correlation"),
+            ("Absolute mean bias","Pairwise correlation"),
+            # ("Alpha","Pairwise correlation"),
+            # ("Beta","Pairwise correlation"),
+            ("KGE","Pairwise correlation")
+            # ("CRPS","Pairwise correlation"),
+            # ("NSE","Pairwise correlation")
+        ]
+
+        plotmapping = {
+            "Beta": r"$\beta$",
+            "Alpha": r"$\alpha$"
+        }
+
+        ncols = 2
+        n = len(combinations)
+        nrows = int(np.ceil(n / ncols))
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=(12, 4*nrows))
+        axes = np.array(axes).flatten()
+
+        labels = list("abcdefghijklmnopqrstuvwxyz")
+
+        for i, (ystat, xstat) in enumerate(combinations):
+
+            xval = stat[xstat].values
+            yval = stat[ystat].values
+
+            if ystat == "Absolute mean bias":
+                yval = np.abs(yval)
+                xval = xval[yval>=0.01]
+                yval = yval[yval>=0.01]
+            
+            if ystat=="KGE":
+                xval = xval[~np.isnan(yval)]
+                yval = yval[~np.isnan(yval)]
+                xval = xval[yval>=0.2]
+                yval = yval[yval>=0.2]
+
+            mask = ~np.isnan(xval) & ~np.isnan(yval)
+            xval = xval[mask]
+            yval = yval[mask]
+
+            self.plot_single_fit(
+                axes[i],
+                xval,
+                yval,
+                xstat,
+                ystat,
+                utils,
+                plotmapping
+            )
+
+            # row = i // ncols
+
+            # keep ALL y-labels visible
+            # only remove x-labels above bottom row
+            # if row != nrows-1:
+            #     axes[i].set_xlabel("")
+
+            axes[i].text(
+                0.02,
+                0.95,
+                f"({labels[i]})",
+                transform=axes[i].transAxes,
+                va='top',
+                zorder=20,
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            )
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.pdf"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.eps"), dpi=300)
+        print(f"saved figure: {filename}")
+        plt.close()
+    
+    def run_statvsacc_fitting(self):
+        comb8 = [
+            ("RMSE","Ensemble variance"),
+            ("RMSE","IQR (75-25%)"),
+            ("Absolute mean bias","Ensemble variance"),
+            ("Absolute mean bias","IQR (75-25%)"),
+            ("Pearson correlation","Ensemble variance"),
+            ("Pearson correlation","IQR (75-25%)")
+        ]
+        comb9 = [
+            ("KGE","Ensemble variance"),
+            ("KGE","IQR (75-25%)")
+        ]
+        comb10 = [
+            ("Alpha","Ensemble variance"),
+            ("Alpha","IQR (75-25%)"),
+            ("Beta","Ensemble variance"),
+            ("Beta","IQR (75-25%)")
+        ]
+        combB2 = [
+            ("NSE","Ensemble variance"),
+            ("NSE","IQR (75-25%)")
+        ]
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        self.create_group_figure(stat, comb8, "figure8", ncols=2)
+        self.create_group_figure(stat, comb9, "figure9", ncols=2)
+        self.create_group_figure(stat, comb10, "figure10", ncols=2)
+        self.ensemble_crpsvsstats_fitting()
+        self.create_kge_component_figure(stat, "figureA1")
+        self.create_group_figure(stat, combB2, "figureB3", ncols=2)
+        self.create_pairwise_corr_figure(stat, "figureD1")
 
     def cdf_EU(self):
         def calc_correlation(obs, sim):
@@ -1053,52 +1491,152 @@ class postprocess_calculations:
             bias[key] = bias[key][~np.isnan(bias[key])]
 
         print("plotting")
-        #### plot Pearson correlation ####
-        utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': correlation["transfer_400px"],
-            f'Test (n=400)': correlation["test_400px"],
-            f'Transfer (n=100)': correlation["transfer_100px"],
-            f'Test (n=100)': correlation["test_100px"]
-        }, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
-        xlabel='Pearson correlation', title='testtransfersets')
+        fig, axes = plt.subplots(
+            2, 2,
+            figsize=(13, 10)
+        )
 
-        #### plot RMSE ####
-        utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': rmse["transfer_400px"],
-            f'Test (n=400)': rmse["test_400px"],
-            f'Transfer (n=100)': rmse["transfer_100px"],
-            f'Test (n=100)': rmse["test_100px"]
-        }, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
-        xlabel='RMSE (m)', logscale=True, title='testtransfersets')
+        common_colors = ['red', 'blue', 'red', 'blue']
+        common_styles = ['--', '--', ':', ':']
 
-        # #### plot KGE ####
-        utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': kge["transfer_400px"],
-            f'Test (n=400)': kge["test_400px"],
-            f'Transfer (n=100)': kge["transfer_100px"],
-            f'Test (n=100)': kge["test_100px"]
-        }, xmin=0.2, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
-        xlabel='KGE', xlim=(0.2, 1), yfloor=True, title='testtransfersets')
+        plot_specs = [
+            (
+                correlation,
+                'Pearson correlation',
+                '(a)',
+                axes[0, 0],
+                dict()
+            ),
+            (
+                rmse,
+                'RMSE (m)',
+                '(b)',
+                axes[0, 1],
+                dict(logscale=True)
+            ),
+            (
+                bias,
+                'Mean bias (m)',
+                '(c)',
+                axes[1, 0],
+                dict()
+            ),
+            (
+                kge,
+                'KGE',
+                '(d)',
+                axes[1, 1],
+                dict(xmin=0.2, xlim=(0.2, 1), yfloor=True)
+            )
+        ]
 
-        # #### plot NSE ####
-        utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': nse["transfer_400px"],
-            f'Test (n=400)': nse["test_400px"],
-            f'Transfer (n=100)': nse["transfer_100px"],
-            f'Test (n=100)': nse["test_100px"]
-        }, xmin=0.2, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
-        xlabel='NSE', xlim=(0.2, 1), yfloor=True, title='testtransfersets')
+        for metric_dict, xlabel, panel, ax, extra in plot_specs:
 
-        #### plot Bias ####
-        utils.plot_cdfs(data_dict={
-            f'Transfer (n=400)': bias["transfer_400px"],
-            f'Test (n=400)': bias["test_400px"],
-            f'Transfer (n=100)': bias["transfer_100px"],
-            f'Test (n=100)': bias["test_100px"]
-        }, colors=['red', 'blue', 'red', 'blue'], linestyles=['--', '--', ':', ':'],
-        xlabel='Mean bias (m)', title='testtransfersets')
+            utils.plot_cdfs(
+                data_dict={
+                    'Transfer (n=400)': metric_dict["transfer_400px"],
+                    'Test (n=400)': metric_dict["test_400px"],
+                    'Transfer (n=100)': metric_dict["transfer_100px"],
+                    'Test (n=100)': metric_dict["test_100px"]
+                },
+                ax=ax,
+                colors=common_colors,
+                linestyles=common_styles,
+                xlabel=xlabel,
+                ylabel='Cumulative probability',
+                **extra
+            )
 
-        return
+            ax.text(
+                0.03, 0.96,
+                panel,
+                transform=ax.transAxes,
+                fontsize=18,
+                fontweight='bold',
+                va='top'
+            )
+
+            ax.tick_params(axis='both', labelsize=11)
+            ax.xaxis.label.set_size(12)
+            ax.yaxis.label.set_size(12)
+
+        # remove subplot legends
+        for ax in axes.flat:
+            if ax.get_legend():
+                ax.legend().remove()
+
+        # single legend
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+
+        fig.legend(
+            handles,
+            labels,
+            loc='lower center',
+            ncol=4,
+            fontsize=18,
+            frameon=False,
+            bbox_to_anchor=(0.5, -0.01)
+        )
+
+        plt.subplots_adjust(
+            left=0.08,
+            right=0.98,
+            top=0.97,
+            bottom=0.12,
+            wspace=0.25,
+            hspace=0.25
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figure5.eps"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figure5.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.close()
+        
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        utils.plot_cdfs(
+            data_dict={
+                'Transfer (n=400)': nse["transfer_400px"],
+                'Test (n=400)': nse["test_400px"],
+                'Transfer (n=100)': nse["transfer_100px"],
+                'Test (n=100)': nse["test_100px"]
+            },
+            ax=ax,
+            colors=common_colors,
+            linestyles=common_styles,
+            xlabel='NSE',
+            ylabel='Cumulative probability',
+            xmin=0.2,
+            xlim=(0.2, 1),
+            yfloor=True
+        )
+
+        ax.tick_params(axis='both', labelsize=11)
+        ax.xaxis.label.set_size(12)
+        ax.yaxis.label.set_size(12)
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figureB1.eps"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figureB1.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.close()
 
     def crps_seasonal_trainEU(self):
         utils = utilities()
@@ -1163,7 +1701,8 @@ class postprocess_calculations:
                 axs[i].set_ylabel("CRPS (m)")
             
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"seasonal_crps.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"figure6.eps"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"figure6.pdf"), dpi=300)
         return
     
     def mapplot_seasonal_crps(self):
@@ -1419,7 +1958,7 @@ class postprocess_calculations:
         nse2d = np.zeros(transfer_subset.shape)
         nse2d[nse2d==0] = np.nan
         for target in range(100):
-            print(target)
+            print(f"{target}/99",end="\r", flush=True)
             obs_destand_test, sim_destand_test = load_obs_sim(target)
             target_map = np.load(os.path.join(EU_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             indices, indices_2d = utils.intersect_subsets(target_map, transfer_subset)
@@ -1448,6 +1987,104 @@ class postprocess_calculations:
             nse2d[indices_2d_train] = nse
 
         return corr2d, rmse2d, bias2d, kge2d, nse2d
+
+    def map_1Dto2D_EU_onlytransfer(self):
+        def calc_correlation(obs, sim):
+            correlation_map = []
+            for i in range(obs.shape[1]):
+                time_series1 = obs[:, i]
+                time_series2 = sim[:, i]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    correlation_matrix = np.corrcoef(time_series1, time_series2)
+                    r = correlation_matrix[0, 1]
+                else:
+                    r = np.nan
+                correlation_map.append(r)
+            return correlation_map
+        
+        def calc_RMSE(obs, sim):
+            RMSE_allcells = []
+            for i in range(obs.shape[1]):
+                time_series1 = obs[:, i]
+                time_series2 = sim[:, i]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    rmse = np.sqrt(np.mean((time_series1 - time_series2) ** 2))
+                else:
+                    rmse = np.nan
+                RMSE_allcells.append(rmse)
+            return RMSE_allcells
+        
+        def calc_KGE_NSE_bias(obs, sim):
+            kge = utils.calculate_kge(obs, sim)
+            all_kge = []
+            nse = 1 - (np.sum((obs - sim) ** 2) / np.sum((obs - np.mean(obs)) ** 2))
+            all_nse = []
+            bias_mean = np.mean(sim - obs)
+            all_bias = []
+            for pixel in range(obs.shape[1]):
+                time_series1 = obs[:, pixel]
+                time_series2 = sim[:, pixel]
+                if np.std(time_series1) > 0 and np.std(time_series2) > 0:
+                    kge = utils.calculate_kge(time_series1, time_series2)# if np.std(time_series1)>=0.1 else np.nan
+                    nse = 1 - (np.sum((time_series1 - time_series2) ** 2) / np.sum((time_series1 - np.mean(time_series1)) ** 2))# if np.std(time_series1)>=0.1 else np.nan
+                    bias_mean = np.mean(time_series2 - time_series1)
+                else:
+                    kge = np.nan
+                    nse = np.nan
+                    bias_mean = np.nan
+                all_kge.append(kge)
+                all_nse.append(nse)
+                all_bias.append(bias_mean)
+            return all_kge, all_nse, all_bias
+
+        def load_obs_sim(target):
+            obs_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_{target}.npy"))
+            sim_destand_test = np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_ensmean.npy"))
+            obs_destand_test = np.nan_to_num(obs_destand_test)
+            sim_destand_test = np.nan_to_num(sim_destand_test)
+            obs_destand_test[obs_destand_test < 0.0] = 0.0
+            sim_destand_test[sim_destand_test < 0.0] = 0.0
+            return obs_destand_test, sim_destand_test
+        
+        utils = utilities()
+        EU_inpath = os.path.dirname(INPUTPATH)
+        print("starting calculations")
+
+        #### Transfer subset ####
+        
+        # filtered subset
+        transfer_subset = np.load(os.path.join(EU_inpath, "target_pixels", "transfer_subset.npy"))
+        training_subset = np.load(os.path.join(EU_inpath, "target_pixels", "training_subset.npy"))
+
+        corr2d = np.zeros(transfer_subset.shape)
+        corr2d[corr2d==0] = np.nan
+        rmse2d = np.zeros(transfer_subset.shape)
+        rmse2d[rmse2d==0] = np.nan
+        bias2d = np.zeros(transfer_subset.shape)
+        bias2d[bias2d==0] = np.nan
+        kge2d = np.zeros(transfer_subset.shape)
+        kge2d[kge2d==0] = np.nan
+        nse2d = np.zeros(transfer_subset.shape)
+        nse2d[nse2d==0] = np.nan
+        for target in range(100):
+            print(f"{target}/99",end="\r", flush=True)
+            obs_destand_test, sim_destand_test = load_obs_sim(target)
+            target_map = np.load(os.path.join(EU_inpath, f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            indices, indices_2d = utils.intersect_subsets(target_map, transfer_subset)
+            indices_train, indices_2d_train = utils.intersect_subsets(target_map, training_subset)
+
+            obs_transfer = obs_destand_test[:, indices]
+            sim_transfer = sim_destand_test[:, indices]
+            corr_EU = calc_correlation(sim_transfer, obs_transfer)
+            rmse_EU = calc_RMSE(sim_transfer, obs_transfer)
+            kge, nse, bias = calc_KGE_NSE_bias(obs_transfer, sim_transfer)
+            corr2d[indices_2d] = corr_EU
+            rmse2d[indices_2d] = rmse_EU
+            bias2d[indices_2d] = bias
+            kge2d[indices_2d] = kge
+            nse2d[indices_2d] = nse
+
+        return corr2d, rmse2d, bias2d, kge2d, nse2d
     
     def metrics_2D_EU(self):
         plot_functions = plotting_helper()
@@ -1460,22 +2097,196 @@ class postprocess_calculations:
         rmse2d = np.where(np.isnan(kge2d), np.nan, rmse2d)
         bias2d = np.where(np.isnan(kge2d), np.nan, bias2d)
         bias2d = np.where(kge2d<0.2, np.nan, bias2d)
+        
+        fig, axes = plt.subplots(
+            2, 2,
+            figsize=(16, 12),
+            subplot_kw={'projection': ccrs.LambertAzimuthalEqualArea(
+                central_longitude=19,
+                central_latitude=53
+            )}
+            )
 
-        plot_functions.EU_2Dmap(data_map=corr2d, logscale=False, minval=0, maxval=1, title="Pearson correlation")
-        plot_functions.EU_2Dmap(data_map=rmse2d, logscale=True, minval=0.01, maxval=10, title="RMSE")
-        plot_functions.EU_2Dmap(data_map=bias2d, logscale=False, minval=-10, maxval=10, title="Mean bias")
-        plot_functions.EU_2Dmap(data_map=kge2d, logscale=False, minval=0.2, maxval=1, title="KGE")
-        plot_functions.EU_2Dmap(data_map=nse2d, logscale=False, minval=-1, maxval=1, title="NSE")
+        plot_functions.combinedfigs_EU_2Dmap(
+            data_map=corr2d,
+            logscale=False,
+            minval=0,
+            maxval=1,
+            title="Pearson correlation",
+            ax=axes[0, 0],
+            panel_label="(a)"
+        )
+
+        plot_functions.combinedfigs_EU_2Dmap(
+            data_map=rmse2d,
+            logscale=True,
+            minval=0.01,
+            maxval=10,
+            title="RMSE",
+            ax=axes[0, 1],
+            panel_label="(b)"
+        )
+
+        plot_functions.combinedfigs_EU_2Dmap(
+            data_map=bias2d,
+            logscale=False,
+            minval=-10,
+            maxval=10,
+            title="Mean bias",
+            ax=axes[1, 0],
+            panel_label="(c)"
+        )
+
+        plot_functions.combinedfigs_EU_2Dmap(
+            data_map=kge2d,
+            logscale=False,
+            minval=0.2,
+            maxval=1,
+            title="KGE",
+            ax=axes[1, 1],
+            panel_label="(d)"
+        )
+
+        plt.subplots_adjust(
+            left=0.03,
+            right=0.97,
+            top=0.97,
+            bottom=0.03,
+            wspace=0.08,
+            hspace=0.08
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figure7.eps"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figure7.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.close()
+
+        # plot_functions.EU_2Dmap(data_map=corr2d, logscale=False, minval=0, maxval=1, title="Pearson correlation")
+        # plot_functions.EU_2Dmap(data_map=rmse2d, logscale=True, minval=0.01, maxval=10, title="RMSE")
+        # plot_functions.EU_2Dmap(data_map=bias2d, logscale=False, minval=-10, maxval=10, title="Mean bias")
+        # plot_functions.EU_2Dmap(data_map=kge2d, logscale=False, minval=0.2, maxval=1, title="KGE")
+        # plot_functions.EU_2Dmap(data_map=nse2d, logscale=False, minval=-1, maxval=1, title="NSE")
+        fig, ax = plt.subplots(
+            figsize=(10, 7),
+            subplot_kw={'projection': ccrs.LambertAzimuthalEqualArea(
+                central_longitude=19,
+                central_latitude=53
+            )}
+        )
+
+        plot_functions.combinedfigs_EU_2Dmap(
+            data_map=nse2d,
+            logscale=False,
+            minval=-1,
+            maxval=1,
+            title="NSE",
+            ax=ax
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figureB2.eps"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figureB2.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.close()
+    
+    def metrics_vs_topo_combined(self):
+        # --- data ---
+        corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU_onlytransfer()
+
+        topo = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))[0, :, :]
+        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        wtd = np.mean(wtd, axis=0)
+
+        # mask invalid pixels
+        topo = np.where(np.isnan(corr2d), np.nan, topo)
+        wtd = np.where(np.isnan(corr2d), np.nan, wtd)
+        wtd = np.where(wtd <= 0, np.nan, wtd)  # set non-positive WTD to NaN for log scale
+
+        # flatten & remove NaNs
+        def clean_xy(x, y):
+            x = x.flatten()
+            y = y.flatten()
+            mask = ~np.isnan(x) & ~np.isnan(y)
+            return x[mask], y[mask]
+
+        wtd_x, corr_wtd = clean_xy(wtd, corr2d)
+        topo_x, corr_topo = clean_xy(topo, corr2d)
+
+        # --- figure ---
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # (a) WTD vs correlation
+        axes[0].scatter(wtd_x, corr_wtd, alpha=0.5)
+        axes[0].set_xlabel(r'$Mean\ WTD\ (m)$')
+        axes[0].set_ylabel('Pearson correlation')
+        axes[0].set_xscale('log')
+        axes[0].grid(True, linestyle='--', alpha=0.7)
+
+        axes[0].text(
+            0.02, 0.95, '(a)',
+            transform=axes[0].transAxes,
+            va='top',
+            zorder=20,
+            bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+        )
+
+        # (b) Topography vs correlation
+        axes[1].scatter(topo_x, corr_topo, alpha=0.5)
+        axes[1].set_xlabel(r'$Topography\ (m)$')
+        axes[1].set_ylabel('')  # remove y-label
+        axes[1].set_xscale('log')
+        axes[1].grid(True, linestyle='--', alpha=0.7)
+
+        axes[1].text(
+            0.02, 0.95, '(b)',
+            transform=axes[1].transAxes,
+            va='top',
+            zorder=20,
+            bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+        )
+
+        # layout
+        plt.tight_layout()
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figureC1.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figureC1.eps"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+        plt.close()
 
     def metrics_vs_topo(self):
         ###### comment out the training pixels from self.map_1Dto2D_EU() ######
         # take only the transfer ones
-        # change topo for wtd and select the average wtd for year 2020
         corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU()
         plot_functions = plotting_helper()
+        #### for topography #####
         topo_v1 = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))
         topo_v1 = topo_v1[0,:,:]
-        # topo_v1 = np.mean(topo_v1[-365:,:,:], axis=0)  # average wtd for year 2020
+        #### for wtd #####
+        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        wtd = np.mean(wtd, axis=0)  # average wtd over time
 
         topo = topo_v1
         topo[np.isnan(corr2d)] = np.nan
@@ -1672,9 +2483,59 @@ class postprocess_calculations:
         print("] Done!", flush=True)
         bias2d_statspred = 0.45*(iqrmap**1.03)
         rmse2d_statspred = 0.67*(varmap**0.45)
-        plot_functions.EU_2Dmap(data_map=bias2d_statspred, logscale=True, minval=0.01, maxval=10, title="Absolute mean bias")
-        plot_functions.EU_2Dmap(data_map=rmse2d_statspred, logscale=True, minval=0.01, maxval=10, title="RMSE")
-    
+        # ----- create combined figure -----
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        fig, axes = plt.subplots(
+            1, 2,
+            figsize=(18, 7),
+            subplot_kw={'projection': projection}
+        )
+
+        # (a) RMSE
+        plot_functions.EU_2Dmap_predictedaccfromstats(
+            data_map=rmse2d_statspred,
+            logscale=True,
+            minval=0.01,
+            maxval=10,
+            title="RMSE",
+            ax=axes[0],
+            panel_label="(a)"
+        )
+
+        # (b) Absolute mean bias
+        plot_functions.EU_2Dmap_predictedaccfromstats(
+            data_map=bias2d_statspred,
+            logscale=True,
+            minval=0.01,
+            maxval=10,
+            title="Absolute mean bias",
+            ax=axes[1],
+            panel_label="(b)"
+        )
+
+        plt.subplots_adjust(
+            left=0.03,
+            right=0.97,
+            top=0.95,
+            bottom=0.05,
+            wspace=0.08
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figure12.eps"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figure12.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.close()
+
     def plot_map_selectedpixels(self):
         plot_functions = plotting_helper()
         EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
@@ -1792,6 +2653,9 @@ class postprocess_calculations:
         plot_functions = plotting_helper()
         wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))
         print(wtd.shape)
+        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        wtd = np.mean(wtd[-365:,:,:], axis=0)
+
         # exclude sides
         wtd[:, :100,:] = 0
         wtd[:, 432-10:,:] = 0
@@ -1807,6 +2671,94 @@ class postprocess_calculations:
         print(maxwtd)
         wtd[wtd==0] = np.nan
         plot_functions.EU_2Dmap(wtd, logscale=False, minval=0.01, maxval=maxwtd, title="Topography")
+    
+    def plot_wtd_topo_combined(self):
+        plot_functions = plotting_helper()
+
+        base_path = os.path.dirname(os.path.dirname(INPUTPATH))
+
+        # --- Load Topography ---
+        topo = np.load(os.path.join(base_path, "topo.npy"))
+        topo = topo[0, :, :]
+        topo[:100,:] = 0
+        topo[432-10:,:] = 0
+        topo[:, 444-10:] = 0
+        topo[:, :10] = 0
+
+        topo[topo <= 0] = np.nan
+        max_topo = np.nanmax(topo)
+
+        # --- Load WTD ---
+        wtd = np.load(os.path.join(base_path, "wtd.npy"))
+        print(wtd.shape)
+        wtd = np.mean(wtd[-365:, :, :], axis=0)
+        print(wtd.shape)
+        # exclude edges
+        wtd[:100,:] = 0
+        wtd[432-10:,:] = 0
+        wtd[:, 444-10:] = 0
+        wtd[:, :10] = 0
+
+        wtd[wtd < 0] = 0
+        wtd[wtd == 0] = np.nan
+        max_wtd = np.nanmax(wtd)
+
+        # --- Figure with 2 subplots ---
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        fig, axes = plt.subplots(
+            1, 2,
+            figsize=(18, 7),
+            subplot_kw={'projection': projection}
+        )
+
+        # (a) WTD
+        plot_functions.EU_2Dmap_wtdtopo(
+            data_map=wtd,
+            logscale=True,
+            minval=0.01,
+            maxval=max_wtd,
+            title="Average Water table depth in 2020",
+            ax=axes[0],
+            panel_label="(a)"
+        )
+
+        # (b) Topography
+        plot_functions.EU_2Dmap_wtdtopo(
+            data_map=topo,
+            logscale=False,
+            minval=0.01,
+            maxval=max_topo,
+            title="Topography",
+            ax=axes[1],
+            panel_label="(b)"
+        )
+
+        plt.subplots_adjust(
+            left=0.03,
+            right=0.97,
+            top=0.95,
+            bottom=0.05,
+            wspace=0.08
+        )
+
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figureC2.eps"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figureC2.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figureC2.png"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+
+        plt.close()
 
     def plot_wtd_variance(self):
         plot_functions = plotting_helper()
@@ -1861,7 +2813,7 @@ class postprocess_calculations:
         plot_functions.logscales_histogram(ev_nse, "Ensemble variance", "NSE < 0.2", nbbins=30, title="Ensemble variance vs NSElessthan02")
 
     def kgecomponents_vs_EV(self):
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
         
         ev = stat["Ensemble variance"].values
         kge = stat["KGE"].values
@@ -1878,20 +2830,21 @@ class postprocess_calculations:
         r_comp = r_comp[kge<0.2]
 
         plt.figure(figsize=(8, 6))
-        plt.scatter(ev, alpha_comp, color='blue', alpha=0.4, label=r'$(\alpha-1)^2$')
-        plt.scatter(ev, beta_comp, color='green', alpha=0.4, label=r'$(\beta-1)^2$')
-        plt.scatter(ev, r_comp, color='red', alpha=0.4, label=r'$(r-1)^2$')
+        plt.scatter(ev, alpha_comp, color='#0072B2', alpha=0.4, label=r'$(\alpha-1)^2$')
+        plt.scatter(ev, beta_comp, color='#009E73', alpha=0.4, label=r'$(\beta-1)^2$')
+        plt.scatter(ev, r_comp, color='#D55E00', alpha=0.4, label=r'$(r-1)^2$')
 
         # Decorations
         print("plotting it")
         plt.xlabel(r"$\overline{EV}$")
         plt.ylabel("KGE component")
-        plt.legend()
+        plt.legend(fontsize=18)
         plt.xscale('log')
         plt.yscale('log')
         plt.grid(True, linestyle='--', alpha=0.4)
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "KGEcomp_EV_kgelessthan02.png"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "figureA2.eps"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "figureA2.pdf"), dpi=300)
     
     def check_equal_files(self):
         dir1 = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_100px"

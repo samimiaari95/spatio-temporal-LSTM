@@ -341,90 +341,73 @@ class utilities:
         return all_inputs, means_stds
 
     def plot_cdfs(self,
-        data_dict: Dict[str, Union[list, np.ndarray]],
-        xmin: Optional[float] = None,
-        colors: Optional[List[str]] = None,
-        linestyles: Optional[List[str]] = None,
-        title: str = "",
-        xlabel: str = "Values",
-        ylabel: str = "Cumulative Probability",
-        xlim: Optional[tuple] = None,
-        yfloor:  bool = False,
-        logscale: bool = False,
-        symlog: bool = False,
-        grid: bool = True,
-        figsize: tuple = (10, 6)
-    ) -> plt.Figure:
-        """
-        Plot CDFs for multiple datasets using dictionary input.
-        
-        Args:
-            data_dict: Dictionary where keys are labels and values are data lists
-            xmin: Minimum x-value to start plotting
-            colors: Optional list of line colors (matches dictionary order)
-            linestyles: Optional list of line styles (matches dictionary order)
-            title: Plot title
-            xlabel: X-axis label
-            ylabel: Y-axis label
-            xlim: X-axis limits
-            logscale: Whether to use logarithmic scale for x-axis
-            symlog: Whether to use symmetric logarithmic scale for x-axis
-            grid: Whether to show grid
-            figsize: Figure size
-        
-        Returns:
-            matplotlib Figure object
-        """
-        # Extract labels and data from dictionary
+        data_dict,
+        ax=None,
+        xmin=None,
+        colors=None,
+        linestyles=None,
+        title="",
+        xlabel="Values",
+        ylabel="Cumulative Probability",
+        xlim=None,
+        yfloor=False,
+        logscale=False,
+        symlog=False,
+        grid=True
+    ):
+    
         labels = list(data_dict.keys())
-        data_lists = list(data_dict.values())
         n = len(data_dict)
-        
-        # Set default styles if not provided
+
         if colors is None:
-            colors = plt.cm.tab10(np.linspace(0, 1, n))  # Use colormap
+            colors = plt.cm.tab10(np.linspace(0, 1, n))
         if linestyles is None:
-            linestyles = ['-'] * n  # Solid lines by default
-        
-        # Create figure
-        fig, ax = plt.subplots(figsize=figsize)
-        
-        # Plot each dataset
+            linestyles = ['-'] * n
+
+        # Create axis only if none provided
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(10, 6))
+
         ymin = 999
+
         for (label, data), color, ls in zip(data_dict.items(), colors, linestyles):
             arr = np.array(data)
             sorted_data = np.sort(arr)
             cdf = np.arange(1, len(sorted_data)+1) / len(sorted_data)
+
             if xmin:
-                # Find the index where x >= xmin
                 start_idx = np.searchsorted(sorted_data, xmin)
-                ax.plot(sorted_data[start_idx:], cdf[start_idx:], label=label, color=color, linestyle=ls, linewidth=4)
+                ax.plot(sorted_data[start_idx:], cdf[start_idx:], label=label,
+                        color=color, linestyle=ls, linewidth=3)
                 ymin = min(ymin, min(cdf[start_idx:]))
             else:
-                ax.plot(sorted_data, cdf, label=label, color=color, linestyle=ls, linewidth=4)
-        
-        # Add plot decorations
-        #ax.set_title(title)
+                ax.plot(sorted_data, cdf, label=label,
+                        color=color, linestyle=ls, linewidth=3)
+
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
+
         if xlim:
             ax.set_xlim(xlim)
+
         if yfloor:
-            # ymin = min(cdf[start_idx:])
             ax.set_ylim((np.floor(ymin*10)/10, 1))
-            ticks = [*range(int(np.floor(ymin*10)), 11, 1)]
-            ticks = [i/10 for i in ticks]
+            ticks = [i/10 for i in range(int(np.floor(ymin*10)), 11)]
             ax.set_yticks(ticks)
+
         if logscale:
             ax.set_xscale('log')
+
         if symlog:
             ax.set_xscale('symlog')
-        ax.legend()
+
         if grid:
             ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"cdf_{xlabel}_{title}.png"))
-        return print(f"plotted cdfs of {xlabel}")
+
+        if title:
+            ax.set_title(title)
+
+        return ax
 
     def plot_pdfs(self,
         data_dict: Dict[str, Union[list, np.ndarray]],
