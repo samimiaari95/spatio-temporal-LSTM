@@ -385,7 +385,9 @@ class utilities:
                         color=color, linestyle=ls, linewidth=3)
 
         ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
+        # ax.set_ylabel(ylabel)
+        if "Pearson" in xlabel or "ias" in xlabel or "NSE" in xlabel:
+            ax.set_ylabel(ylabel)
 
         if xlim:
             ax.set_xlim(xlim)

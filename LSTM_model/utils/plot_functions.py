@@ -579,7 +579,7 @@ class plotting_helper:
         lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
-        fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+        fig, ax = plt.subplots(figsize=(3.34, 2.6), subplot_kw={'projection': projection})
         cmap_colors = "viridis" if ("MSE" in title or "Pearson" in title or "KGE" in title or "water" in title) else "coolwarm"
         # cmap_colors = "terrain"
         cmap = plt.get_cmap(cmap_colors)
@@ -600,7 +600,40 @@ class plotting_helper:
         
         print(f"saving {title}")
         plt.tight_layout()
-        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_{title}.png"))
+        fig.savefig(os.path.join(OUTPUTPATH, f"figure1.pdf"))
+
+    def EU_2Dmap_inputvars(self, data_map, logscale, minval, maxval, title):
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        # get EU lon lat
+        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
+        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        lons = lons[100:-10,10:-10]
+        lats = lats[100:-10,10:-10]
+        
+        # Create a figure and an axis with a Cartopy projection
+        fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
+        cmap_colors = "viridis"
+        cmap = plt.get_cmap(cmap_colors)
+
+        # define limits and normalization
+        norm = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
+
+        # Plot the 2D EU map
+        cla = ax.pcolormesh(lons, lats, data_map, cmap=cmap, norm=norm, transform=ccrs.PlateCarree())
+
+        # Add coastlines, gridlines, etc.
+        # import shapefile
+        shapefile_path = os.path.join(os.path.dirname(get_root_dir()), "global_TL", "ne_10m_admin_0_countries", "ne_10m_admin_0_countries.shp")
+        shape_feature = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='black')
+        ax.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        # ax.coastlines()
+        ax.gridlines(draw_labels=False)
+        
+        print(f"saving {title}")
+        plt.tight_layout()
+        fig.savefig(os.path.join(OUTPUTPATH, f"2Dmap_vars_{title}.png"))
     
     def EU_2Dmap_wtdtopo(self, data_map, logscale, minval, maxval, title, ax=None, panel_label=None):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
@@ -635,11 +668,12 @@ class plotting_helper:
 
         if panel_label:
             ax.text(
-                0.02, 0.97, panel_label,
+                0.02, 1.065, panel_label,
                 transform=ax.transAxes,
                 va='top',
-                zorder=20,
-                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+                fontsize=12,
+                # zorder=20,
+                # bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
             )
 
         return ax
@@ -684,13 +718,14 @@ class plotting_helper:
         # panel label
         if panel_label:
             ax.text(
-                0.02, 0.97,
+                0.02, 1.065,
                 panel_label,
                 transform=ax.transAxes,
-                fontweight='bold',
+                fontsize=12,
+                #fontweight='bold',
                 va='top',
-                zorder=20,
-                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+                # zorder=20,
+                # bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
             )
 
         return ax
@@ -743,11 +778,11 @@ class plotting_helper:
         if panel_label:
             ax.text(
                 0.02,
-                0.97,
+                1.065,
                 panel_label,
                 transform=ax.transAxes,
-                #fontsize=14,
-                fontweight='bold',
+                fontsize=12,
+                # fontweight='bold',
                 va='top'
             )
 
