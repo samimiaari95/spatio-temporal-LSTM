@@ -663,9 +663,9 @@ class postprocess_calculations:
 
         ncols = 2
         nrows = 1
-        fig, axes = plt.subplots(nrows, ncols, figsize=(10, 4))
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7.09, 2.84))
         axes = np.array(axes).flatten()
-        labels = ['(a)', '(b)']
+        labels = ['(A)', '(B)']
 
         for i, stat in enumerate(stats):
             if stat=="Pairwise correlation":
@@ -708,7 +708,7 @@ class postprocess_calculations:
             x_fit = [min(xval), max(xval)]
             y_fit = [utils.powerlaw_func(x, a_fit, b_fit) for x in x_fit]
             #plt.figure()
-            axes[i].scatter(xval, yval, color='k', s=20)
+            axes[i].scatter(xval, yval, color='k', s=5)
             axes[i].plot(x_fit, y_fit, 'r--', label=legend_text)
             # ---- keep only left y-label ----
             axes[i].set_xlabel(xlabel)
@@ -718,16 +718,17 @@ class postprocess_calculations:
             axes[i].set_xscale("log")
             axes[i].set_yscale("log")
             axes[i].grid(True, linestyle='--', alpha=0.7)
-            axes[i].legend(fontsize=18, frameon=True)
+            axes[i].legend(fontsize=12, frameon=True)
             # ---- subplot labels ----
             axes[i].text(
                 0.02,
-                0.95,
+                1.11,
                 labels[i],
                 transform=axes[i].transAxes,
                 va='top',
-                zorder=20,
-                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+                fontsize=12,
+                # zorder=20,
+                # bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
             )
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.eps"), dpi=300)
@@ -1013,7 +1014,7 @@ class postprocess_calculations:
                         f'$R^2$ = {r2:.3f}'))
 
         # -------- plotting --------
-        ax.scatter(xval, yval, color='k', s=20)
+        ax.scatter(xval, yval, color='k', s=5)
         ax.plot(x_fit, y_fit, 'r--', label=legend_text)
 
         ax.set_xlabel(plotmapping.get(xstat, xstat))
@@ -1046,7 +1047,7 @@ class postprocess_calculations:
             ax.set_yticks([0.01, 0.1, 1, 10])
 
         ax.grid(True, linestyle='--', alpha=0.7)
-        ax.legend(fontsize=18, frameon=True)
+        ax.legend(fontsize=12, frameon=True)
 
 
     def create_group_figure(self, stat, combinations, filename, ncols=2):
@@ -1062,10 +1063,10 @@ class postprocess_calculations:
         n = len(combinations)
         nrows = int(np.ceil(n / ncols))
 
-        fig, axes = plt.subplots(nrows, ncols, figsize=(12, 4*nrows))
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7.09, 2.5*nrows))
         axes = np.array(axes).flatten()
 
-        labels = list("abcdefghijklmnopqrstuvwxyz")
+        labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
         for i, (ystat, xstat) in enumerate(combinations):
 
@@ -1112,12 +1113,16 @@ class postprocess_calculations:
 
             axes[i].text(
                 0.02,
-                0.95,
+                1.11,
                 f"({labels[i]})",
                 transform=axes[i].transAxes,
                 va='top',
-                zorder=20,
-                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+                fontsize=12,
+                #zorder=20,
+                #bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            )
+            plt.subplots_adjust(
+            hspace=0.0
             )
 
         for j in range(i+1, len(axes)):
@@ -1154,10 +1159,11 @@ class postprocess_calculations:
         n = len(combinations)
         nrows = int(np.ceil(n / ncols))
 
-        fig, axes = plt.subplots(nrows, ncols, figsize=(15, 4*nrows))
+        # fig, axes = plt.subplots(nrows, ncols, figsize=(7.09, 1.89*nrows))
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7.09, 2.7*nrows))
         axes = np.array(axes).flatten()
 
-        labels = list("abcdefghijklmnopqrstuvwxyz")
+        labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
         for i, (ystat, xstat) in enumerate(combinations):
 
@@ -1170,8 +1176,8 @@ class postprocess_calculations:
 
             ax = axes[i]
 
-            ax.scatter(xval, yval, color='k', s=20)
-
+            ax.scatter(xval, yval, color='k', s=1)
+            
             # labels
             col = i % ncols
 
@@ -1185,23 +1191,39 @@ class postprocess_calculations:
             # KGE limits
             ax.set_yscale("symlog")
             ax.set_xscale("log")
+            if "A" in labels[i]:
+                ax.set_xticks([1, 10, 100])
+                print("done")
 
             # subplot labels
             ax.text(
                 0.02,
-                0.95,
+                1.11,
                 f"({labels[i]})",
                 transform=ax.transAxes,
                 va='top',
-                zorder=20,
-                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+                fontsize=12,
             )
+            
+            
 
             ax.grid(True, linestyle='--', alpha=0.7)
 
+        for ax in axes.flat:
+            ax.tick_params(axis='both', which='both', length=0)
         # remove empty axes
         for j in range(i+1, len(axes)):
             fig.delaxes(axes[j])
+        
+        
+        plt.subplots_adjust(
+            left=0.08,
+            right=0.98,
+            top=0.97,
+            bottom=0.12,
+            wspace=0.0,
+            hspace=-0.20
+        )
 
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.pdf"), dpi=300)
@@ -1232,10 +1254,10 @@ class postprocess_calculations:
         n = len(combinations)
         nrows = int(np.ceil(n / ncols))
 
-        fig, axes = plt.subplots(nrows, ncols, figsize=(12, 4*nrows))
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7.09, 2.36*nrows))
         axes = np.array(axes).flatten()
 
-        labels = list("abcdefghijklmnopqrstuvwxyz")
+        labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
         for i, (ystat, xstat) in enumerate(combinations):
 
@@ -1276,12 +1298,13 @@ class postprocess_calculations:
 
             axes[i].text(
                 0.02,
-                0.95,
+                1.11,
                 f"({labels[i]})",
                 transform=axes[i].transAxes,
                 va='top',
-                zorder=20,
-                bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+                fontsize=12,
+                # zorder=20,
+                # bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
             )
 
         plt.tight_layout()
@@ -1314,12 +1337,12 @@ class postprocess_calculations:
             ("NSE","IQR (75-25%)")
         ]
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
-        self.create_group_figure(stat, comb8, "figure8", ncols=2)
-        self.create_group_figure(stat, comb9, "figure9", ncols=2)
-        self.create_group_figure(stat, comb10, "figure10", ncols=2)
-        self.ensemble_crpsvsstats_fitting()
-        self.create_kge_component_figure(stat, "figureA1")
-        self.create_group_figure(stat, combB2, "figureB3", ncols=2)
+        # self.create_group_figure(stat, comb8, "figure8", ncols=2)
+        # self.create_group_figure(stat, comb9, "figure9", ncols=2)
+        # self.create_group_figure(stat, comb10, "figure10", ncols=2)
+        # self.ensemble_crpsvsstats_fitting()
+        # self.create_kge_component_figure(stat, "figureA1")
+        # self.create_group_figure(stat, combB2, "figureB3", ncols=2)
         self.create_pairwise_corr_figure(stat, "figureD1")
 
     def cdf_EU(self):
@@ -1493,7 +1516,7 @@ class postprocess_calculations:
         print("plotting")
         fig, axes = plt.subplots(
             2, 2,
-            figsize=(13, 10)
+            figsize=(7.09, 6.5)
         )
 
         common_colors = ['red', 'blue', 'red', 'blue']
@@ -1503,28 +1526,28 @@ class postprocess_calculations:
             (
                 correlation,
                 'Pearson correlation',
-                '(a)',
+                '(A)',
                 axes[0, 0],
                 dict()
             ),
             (
                 rmse,
                 'RMSE (m)',
-                '(b)',
+                '(B)',
                 axes[0, 1],
                 dict(logscale=True)
             ),
             (
                 bias,
                 'Mean bias (m)',
-                '(c)',
+                '(C)',
                 axes[1, 0],
                 dict()
             ),
             (
                 kge,
                 'KGE',
-                '(d)',
+                '(D)',
                 axes[1, 1],
                 dict(xmin=0.2, xlim=(0.2, 1), yfloor=True)
             )
@@ -1548,15 +1571,15 @@ class postprocess_calculations:
             )
 
             ax.text(
-                0.03, 0.96,
+                0.03, 1.08,
                 panel,
                 transform=ax.transAxes,
-                fontsize=18,
-                fontweight='bold',
+                fontsize=12,
+                #fontweight='bold',
                 va='top'
             )
 
-            ax.tick_params(axis='both', labelsize=11)
+            ax.tick_params(axis='both', labelsize=12)
             ax.xaxis.label.set_size(12)
             ax.yaxis.label.set_size(12)
 
@@ -1572,10 +1595,10 @@ class postprocess_calculations:
             handles,
             labels,
             loc='lower center',
-            ncol=4,
-            fontsize=18,
+            ncol=2,
+            fontsize=12,
             frameon=False,
-            bbox_to_anchor=(0.5, -0.01)
+            bbox_to_anchor=(0.5, -0.05)
         )
 
         plt.subplots_adjust(
@@ -1584,7 +1607,7 @@ class postprocess_calculations:
             top=0.97,
             bottom=0.12,
             wspace=0.25,
-            hspace=0.25
+            hspace=0.30
         )
 
         plt.savefig(
@@ -1601,7 +1624,7 @@ class postprocess_calculations:
 
         plt.close()
         
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(3.35, 2.51))
 
         utils.plot_cdfs(
             data_dict={
@@ -1691,7 +1714,7 @@ class postprocess_calculations:
         crpstransfer = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_100members_onlytransfer_4years4seasonspixel.npy"))
         crps = np.concatenate((crpstrain, crpstransfer), axis=2)
         # Plot boxplot per season per year
-        fig, axs = plt.subplots(1, crps.shape[0], figsize=(20, 6), sharey=True)
+        fig, axs = plt.subplots(1, crps.shape[0], figsize=(7.09, 2.13), sharey=True)
         for i, year in enumerate(range(2017, 2021)):
             axs[i].boxplot(crps[i].T, labels=["DJF", "MAM", "JJA", "SON"])
             axs[i].set_title(f"{year}")
@@ -2100,7 +2123,7 @@ class postprocess_calculations:
         
         fig, axes = plt.subplots(
             2, 2,
-            figsize=(16, 12),
+            figsize=(7.09, 5.31),
             subplot_kw={'projection': ccrs.LambertAzimuthalEqualArea(
                 central_longitude=19,
                 central_latitude=53
@@ -2114,7 +2137,7 @@ class postprocess_calculations:
             maxval=1,
             title="Pearson correlation",
             ax=axes[0, 0],
-            panel_label="(a)"
+            panel_label="(A)"
         )
 
         plot_functions.combinedfigs_EU_2Dmap(
@@ -2124,7 +2147,7 @@ class postprocess_calculations:
             maxval=10,
             title="RMSE",
             ax=axes[0, 1],
-            panel_label="(b)"
+            panel_label="(B)"
         )
 
         plot_functions.combinedfigs_EU_2Dmap(
@@ -2134,7 +2157,7 @@ class postprocess_calculations:
             maxval=10,
             title="Mean bias",
             ax=axes[1, 0],
-            panel_label="(c)"
+            panel_label="(C)"
         )
 
         plot_functions.combinedfigs_EU_2Dmap(
@@ -2144,7 +2167,7 @@ class postprocess_calculations:
             maxval=1,
             title="KGE",
             ax=axes[1, 1],
-            panel_label="(d)"
+            panel_label="(D)"
         )
 
         plt.subplots_adjust(
@@ -2170,13 +2193,8 @@ class postprocess_calculations:
 
         plt.close()
 
-        # plot_functions.EU_2Dmap(data_map=corr2d, logscale=False, minval=0, maxval=1, title="Pearson correlation")
-        # plot_functions.EU_2Dmap(data_map=rmse2d, logscale=True, minval=0.01, maxval=10, title="RMSE")
-        # plot_functions.EU_2Dmap(data_map=bias2d, logscale=False, minval=-10, maxval=10, title="Mean bias")
-        # plot_functions.EU_2Dmap(data_map=kge2d, logscale=False, minval=0.2, maxval=1, title="KGE")
-        # plot_functions.EU_2Dmap(data_map=nse2d, logscale=False, minval=-1, maxval=1, title="NSE")
         fig, ax = plt.subplots(
-            figsize=(10, 7),
+            figsize=(3.35, 2.345),
             subplot_kw={'projection': ccrs.LambertAzimuthalEqualArea(
                 central_longitude=19,
                 central_latitude=53
@@ -2230,7 +2248,7 @@ class postprocess_calculations:
         topo_x, corr_topo = clean_xy(topo, corr2d)
 
         # --- figure ---
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(7.09, 2.95))
 
         # (a) WTD vs correlation
         axes[0].scatter(wtd_x, corr_wtd, alpha=0.5)
@@ -2240,11 +2258,12 @@ class postprocess_calculations:
         axes[0].grid(True, linestyle='--', alpha=0.7)
 
         axes[0].text(
-            0.02, 0.95, '(a)',
+            0.02, 1.08, '(A)',
             transform=axes[0].transAxes,
             va='top',
-            zorder=20,
-            bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            fontsize=12,
+            # zorder=20,
+            # bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
         )
 
         # (b) Topography vs correlation
@@ -2255,11 +2274,12 @@ class postprocess_calculations:
         axes[1].grid(True, linestyle='--', alpha=0.7)
 
         axes[1].text(
-            0.02, 0.95, '(b)',
+            0.02, 1.08, '(B)',
             transform=axes[1].transAxes,
             va='top',
-            zorder=20,
-            bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
+            fontsize=12,
+            # zorder=20,
+            # bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
         )
 
         # layout
@@ -2488,7 +2508,7 @@ class postprocess_calculations:
 
         fig, axes = plt.subplots(
             1, 2,
-            figsize=(18, 7),
+            figsize=(7.09, 2.76),
             subplot_kw={'projection': projection}
         )
 
@@ -2500,7 +2520,7 @@ class postprocess_calculations:
             maxval=10,
             title="RMSE",
             ax=axes[0],
-            panel_label="(a)"
+            panel_label="(A)"
         )
 
         # (b) Absolute mean bias
@@ -2511,7 +2531,7 @@ class postprocess_calculations:
             maxval=10,
             title="Absolute mean bias",
             ax=axes[1],
-            panel_label="(b)"
+            panel_label="(B)"
         )
 
         plt.subplots_adjust(
@@ -2651,26 +2671,26 @@ class postprocess_calculations:
 
     def plot_avg_wtd(self):
         plot_functions = plotting_helper()
-        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))
-        print(wtd.shape)
+        # wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))
+        # print(wtd.shape)
         wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
         wtd = np.mean(wtd[-365:,:,:], axis=0)
 
         # exclude sides
-        wtd[:, :100,:] = 0
-        wtd[:, 432-10:,:] = 0
-        wtd[:, :,444-10:] = 0
-        wtd[:, :,:10] = 0
+        wtd[:100,:] = 0
+        wtd[432-10:,:] = 0
+        wtd[:,444-10:] = 0
+        wtd[:,:10] = 0
 
         # set negative wtd to 0
         wtd[wtd<0] = 0
 
-        wtd = wtd[0,:,:]
+        #wtd = wtd[0,:,:]
         print(wtd.shape)
         maxwtd = np.nanmax(wtd)
         print(maxwtd)
         wtd[wtd==0] = np.nan
-        plot_functions.EU_2Dmap(wtd, logscale=False, minval=0.01, maxval=maxwtd, title="Topography")
+        plot_functions.EU_2Dmap(wtd, logscale=True, minval=0.01, maxval=maxwtd, title="Mean water table depth")
     
     def plot_wtd_topo_combined(self):
         plot_functions = plotting_helper()
@@ -2708,7 +2728,7 @@ class postprocess_calculations:
 
         fig, axes = plt.subplots(
             1, 2,
-            figsize=(18, 7),
+            figsize=(7.09, 2.76),
             subplot_kw={'projection': projection}
         )
 
@@ -2718,9 +2738,9 @@ class postprocess_calculations:
             logscale=True,
             minval=0.01,
             maxval=max_wtd,
-            title="Average Water table depth in 2020",
+            title="Mean water table depth",
             ax=axes[0],
-            panel_label="(a)"
+            panel_label="(A)"
         )
 
         # (b) Topography
@@ -2731,7 +2751,7 @@ class postprocess_calculations:
             maxval=max_topo,
             title="Topography",
             ax=axes[1],
-            panel_label="(b)"
+            panel_label="(B)"
         )
 
         plt.subplots_adjust(
@@ -2829,7 +2849,7 @@ class postprocess_calculations:
         beta_comp = beta_comp[kge<0.2]
         r_comp = r_comp[kge<0.2]
 
-        plt.figure(figsize=(8, 6))
+        plt.figure(figsize=(3.35, 2.51))
         plt.scatter(ev, alpha_comp, color='#0072B2', alpha=0.4, label=r'$(\alpha-1)^2$')
         plt.scatter(ev, beta_comp, color='#009E73', alpha=0.4, label=r'$(\beta-1)^2$')
         plt.scatter(ev, r_comp, color='#D55E00', alpha=0.4, label=r'$(r-1)^2$')
@@ -2845,6 +2865,45 @@ class postprocess_calculations:
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "figureA2.eps"), dpi=300)
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "figureA2.pdf"), dpi=300)
+    
+    def inputvars_plot(self):
+        plot_functions = plotting_helper()
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months.npy"))
+        vars = FEATURES_FILES
+        vars.append(TARGETVAR_FILE)
+        for var in vars:
+            print(var)
+            data = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), var))
+            print(data.shape)
+            data = np.mean(data, axis=0)
+            print(data.shape)
+            data[mapping==0] = np.nan
+            data = data[100:-10,10:-10]
+            print(data.shape)
+            logscale = True if var in ["wtd.npy", "vpd.npy"] else False
+            minval = 0.01 if logscale else np.nanmin(data)
+            plot_functions.EU_2Dmap_inputvars(data_map=data, logscale=logscale, minval=minval, maxval=np.nanmax(data), title=var.replace(".npy", ""))
+
+    def wtd_timeseries_plot(self):
+        mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months.npy"))
+        data = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        data = data[365:,mapping==1]
+        data = data[:, 234] # select one pixel with mapping=1
+        
+        dates = pd.date_range(start='2002-01-01', end='2020-12-31', freq='D')
+        dates = dates[(dates.month != 2) | (dates.day != 29)]
+
+        # Aggregate daily values to monthly means before plotting.
+        monthly_mean = pd.Series(data, index=dates).resample('MS').mean()
+
+        fig, ax = plt.subplots()
+        ax.plot(monthly_mean.index, monthly_mean.values, color='k')
+        ax.xaxis.set_major_locator(mdates.MonthLocator([1]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        ax.set_ylabel("Water table depth (m)")
+        plt.xticks(rotation=45)
+        plt.savefig(os.path.join(OUTPUTPATH, "wtd_timeseries.png"), dpi=300, bbox_inches='tight')
+        plt.close()
     
     def check_equal_files(self):
         dir1 = "/p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/inputs/20yrs_ts/ensemble_100px"
