@@ -690,7 +690,7 @@ class postprocess_calculations:
 
         sdf_numerical = sdf.dropna(axis=1)
         mdf_numerical = mdf.dropna(axis=1)
-        cols = list(thresholds.keys()) + [plot_metric]
+        cols = list(thresholds.keys()) + [plot_metric] if plot_metric not in thresholds.keys() else list(thresholds.keys())
 
         # Ensure both dataframes have the same number of rows and are aligned
         # If they are not aligned, a merge operation would be necessary based on a common key.
@@ -825,7 +825,7 @@ class postprocess_calculations:
         print(f"Number of pixels meeting criteria ({label_str}): {len(mask[mask])}")
 
 
-        num_bins = 100
+        num_bins = 10
         # List of columns to apply logarithmic binning and plotting
         columns_for_log_bins = ['Ensemble variance', 'IQR (75-25%)', 'std', 'mad', 'stdsim']
 
@@ -839,7 +839,7 @@ class postprocess_calculations:
                 max_val = combined_df_all_log_bins[col_name].max()
                 
                 # Use np.logspace to create logarithmically equal bins. num_bins + 1 for bin edges
-                log_bins = np.logspace(np.log10(min_val), np.log10(max_val), num_bins + 1)
+                log_bins = np.logspace(np.log10(min_val), np.log10(max_val+0.01), num_bins+1)
 
                 combined_df_all_log_bins[bin_col_name] = pd.cut(
                     combined_df_all_log_bins[col_name], 
@@ -859,17 +859,19 @@ class postprocess_calculations:
                 # Convert to DataFrame for plotting
                 plot_data = pd.DataFrame({
                     bin_col_name: conditional_probabilities.index,
-                    'Probability': conditional_probabilities.values
+                    'Probability': conditional_probabilities.values,
+                    'Count': total_in_bin.reindex(conditional_probabilities.index, fill_value=0).values # Add count of points
                 })
 
                 # Map bin indices to their midpoints for the x-axis
-                plot_data[col_name] = plot_data[bin_col_name].map(lambda x: midpoints[int(x)])
+                plot_data[col_name] = plot_data[bin_col_name].map(lambda x: round(midpoints[int(x)], 2))
 
                 # For plotting, assign a small epsilon to 0 probabilities to make them visible as thin bars
                 plot_data_for_display = plot_data.copy()
                 epsilon = 0.01 # A very small value for visualization
                 plot_data_for_display.loc[plot_data_for_display['Probability'] == 0, 'Probability'] = epsilon
-
+                plot_data_for_display = plot_data_for_display[[col_name, 'Probability']]
+        
                 plt.figure(figsize=(12, 7))
                 ax = sns.barplot(
                     x=col_name,
@@ -881,7 +883,7 @@ class postprocess_calculations:
 
                 plt.xlabel(col_name)
                 plt.ylabel(f'P({label_str.replace("_","/").replace("Pearson correlation","r")})')
-                plt.xscale('log') # Ensure x-axis is also logarithmically scaled for visualization
+                plt.xticks(rotation=45, ha='right')
 
                 plt.grid(True, linestyle='--', alpha=0.7)
                 plt.tight_layout()
@@ -1016,19 +1018,19 @@ class postprocess_calculations:
     def plot_statacc_scatterthresholded(self):
         # Define thresholds as a dictionary: column name -> (operator, threshold)
         thresholds = {
-            'Pearson correlation': ('>', 0.5),
+            'Pearson correlation': ('>', 0.7),
             'RMSE': ('<', 10.0)
         }
         # thresholds = {'Bias_std': ('<', 10)}
-        plot_metric = "Pearson correlation"
-        # self.statvsacc_scatter_bythreshold(thresholds, plot_metric)
-        self.probability_acc_from_stat_logscaled(thresholds)
+        plot_metric = "RMSE"
+        self.statvsacc_scatter_bythreshold(thresholds, plot_metric)
+        # self.probability_acc_from_stat_logscaled(thresholds)
         # self.probability_acc_from_stat_linear(thresholds)
 
     def save_probabilities(self):
         # Define the performance criteria thresholds
         rmse_threshold_val = 10.0
-        pearson_correlation_threshold_val = 0.5
+        pearson_correlation_threshold_val = 0.7
 
         # --- Re-establish necessary dataframes and thresholds ---
         sdf = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
@@ -1059,14 +1061,14 @@ class postprocess_calculations:
 
         # --- Collect binning information ---
         all_bin_info = []
-        num_bins = 100
+        num_bins = 10
 
         # Process Logarithmically Binned Columns
         for col_name in columns_for_log_bins:
             if col_name in combined_df_all_processed.columns and (combined_df_all_processed[col_name] > 0).all():
                 min_val = combined_df_all_processed[col_name].min()
                 max_val = combined_df_all_processed[col_name].max()
-                log_bins = np.logspace(np.log10(min_val), np.log10(max_val), num_bins + 1)
+                log_bins = np.logspace(np.log10(min_val), np.log10(max_val+0.01), num_bins+1)
 
                 bin_labels = pd.cut(combined_df_all_processed[col_name], bins=log_bins, labels=False, include_lowest=True)
                 
@@ -1193,10 +1195,9 @@ class postprocess_calculations:
                 bin_idx = len(prob_var) - 1  # If variance exceeds all bins, assign to last bin
             probability = prob_var.iloc[bin_idx]['Conditional Probability']
             map2d[tsmpy, tsmpx] = probability
+        print(np.nanmax(map2d), np.nanmin(map2d))
         plot_functions.doublefig_EU_2Dmap(
-            data_map=map2d, logscale=False, minval=0, maxval=1, title="P(r>0.5 & RMSE<10)", country="EU")
-
-
+            data_map=map2d, logscale=False, minval=0, maxval=round(np.nanmax(map2d), 2), title="P(r>0.7 & RMSE<10)", country="EU")
 
     def onepoint_distribution(self):
         utils = utilities()
@@ -2360,7 +2361,7 @@ class postprocess_calculations:
         # Use KDE (Kernel Density Estimation) for smooth density calculation
         kde = gaussian_kde(points.T)
         colors = kde(points.T)
-
+        colors = ["k" for c in colors]
         # Create plot
         plt.figure(figsize=(10, 8))
 
@@ -2382,29 +2383,34 @@ class postprocess_calculations:
         plt.title(f'R² = {r2:.3f}')
         plt.legend()
         plt.tight_layout()
-        # plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r2plots", f"obsvspred_{i}.png"), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
-                    "era5wtd_vs_localobs", f"obsvspred_r2_3d.png"), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r2plots_v2", f"obsvspred_{i}.png"), dpi=300, bbox_inches='tight')
+        # plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+        #             "era5wtd_vs_localobs", f"obsvspred_r2_3d.png"), dpi=300, bbox_inches='tight')
         return r2
 
     def yx_accuracy_plot(self):
         # ev, iqr, rmse_list, ambias_list, obs_pred_pixels = self.calc_ev_iqr_rmse_bias()
         obs_pred_pixels = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
                                   "ensemble_mean", "era5wtd_vs_localobs", "pixels_ts_obs_pred.npy"))
-        self.plot_heatmap_scatter(obs_pred_pixels[:, :, 0].flatten(
-        ), obs_pred_pixels[:, :, 1].flatten(), bins=30, cmap='viridis', i=0)
+        print(obs_pred_pixels.shape)
+        for pixel in range(obs_pred_pixels.shape[0]):
+            print(pixel)
+            self.plot_heatmap_scatter(obs_pred_pixels[pixel, :, 0].flatten(),
+                                      obs_pred_pixels[pixel, :, 1].flatten(), bins=30, cmap='viridis', i=pixel)
 
     def postprocess_era5wtd_vs_obs(self):
         # self.ensemble_statvsacc()
         # self.ensemble_statvsacc_fitting()
         # self.fit_ensvar_rmse_r()
         # self.onepoint_distribution()
-        # self.eval_era5wtd_obswtd_tsmpwtd()
+        self.eval_era5wtd_obswtd_tsmpwtd()
 
         # self.metrics_stat_pdf()
+        # this was the last one
         # self.plot_statacc_scatterthresholded()
+        
         # self.save_probabilities()
-        self.plot2dmap_probability()
+        # self.plot2dmap_probability()
 
         # self.plot2Dmaps()
         # self.plot_cdfs()
