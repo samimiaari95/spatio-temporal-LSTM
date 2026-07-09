@@ -6,13 +6,16 @@ import matplotlib.dates as mdates
 import pandas as pd
 import seaborn as sns
 from scipy import stats
+from LSTM_model.utils import utils
 import torch
 import torch.nn as nn
+import h5py
 from sklearn.metrics import r2_score
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.utils.utils import utilities
+from LSTM_model.data.obs_processing import obs_processing
 from LSTM_model.model.config import *
 
 
@@ -84,19 +87,23 @@ class postprocess_calculations:
 
     def ensemble_statvsacc(self):
         utils = utilities()
+        obsprocessing = obs_processing()
         topo = np.load(os.path.join(INPUTPATH, "topo.npy"))
         topo = topo[0, :, :]
         soilmoisture = np.load(os.path.join(INPUTPATH, "swvl3_EU.npy"))
         precip = np.load(os.path.join(INPUTPATH, "tp_EU.npy"))
         vpd = np.load(os.path.join(INPUTPATH, "vpd_EU.npy"))
-
-        obswtd = pd.read_parquet(os.path.join(os.path.join(
-            INPUTPATH, "localobservations"), "wtd_obsEU_monthly_avgdup.parquet"))
-        obswtd = obswtd.dropna(axis=1)  # drop columns with all NaN values
-        proj_mapping = pd.read_csv(os.path.join(
-            INPUTPATH, "localobservations", "mapping_wtdobsEU_TSMP_avgdup.csv"))
-        proj_mapping = proj_mapping.dropna(subset=["sim_1darrayindex"])
-        proj_mapping.reset_index(drop=True, inplace=True)
+        corr_precip = np.load(os.path.join(INPUTPATH, "checkinputs", "correlation_ERA5vsTSMP_Precipitation.npy"))
+        corr_soilmoisture = np.load(os.path.join(INPUTPATH, "checkinputs", "correlation_ERA5vsTSMP_soil moisture.npy"))
+        corr_vpd = np.load(os.path.join(INPUTPATH, "checkinputs", "correlation_ERA5vsTSMP_vpd.npy"))
+        
+        obsfilepath = os.path.join(INPUTPATH, "wtd_obsEU_YMA_1996_2016.npy")
+        obswtda = np.load(obsfilepath)
+        indices = np.where(~np.isnan(np.nanmean(obswtda, axis=0)))
+        yindices = indices[0]
+        xindices = indices[1]
+        # selected_members = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "selected_members_pearson", "ranked_members_by_ratio.csv"))
+        # selected_members = selected_members["member_id"].values[:10]  # select top 10 members
         # metrics according to https://climpred.readthedocs.io/en/stable/metrics.html
         df_metricdict = {"Spearman correlation": [], "Kendall's tau": [], "Pearson p-value": [], "CCC": [], "Median AE": [],
                          "MAPE": [], "SMAPE": [], "Murphy Skill Score": [], "Bias Slope": [], "Conditional Bias": [], "Unconditional Bias": [],
@@ -106,50 +113,117 @@ class postprocess_calculations:
                          "Members correlation std": [], "Members RMSE std": [], "Members KGE std": [],
                          "KGE_nobias": [], "stdobs": [], "meanobs": [], "Absolute mean bias": [], "MAE": [],
                          "Pearson correlation": [], "RMSE": [], "KGE": [], "KGE'": [], "Beta": [], "Alpha": [], "NSE": [],
-                         "(Alpha-1)^2": [], "(Beta-1)^2": [], "(r-1)^2": []}
-        df_statdict = {"Pairwise correlation": [], "Ensemble variance": [], "IQR (75-25%)": [], "std": [], "cv": [], "mad": [], "meansim": [], "stdsim": [], "VPD variance": [], "Precipitation variance": [
+                         "(Alpha-1)^2": [], "(Beta-1)^2": [], "(r-1)^2": [], "corr_precip": [], "corr_soilmoisture": [], "corr_vpd": []}
+        df_statdict = {"meansimwtda": [], "meanobswtda": [], "Pairwise correlation": [], "Ensemble variance": [], "IQR (75-25%)": [], "std": [], "cv": [], "mad": [], "meansim": [], "stdsim": [], "VPD variance": [], "Precipitation variance": [
         ], "Soil moisture variance": [], "Ensemble mean": [], "Ensemble median": [], "Skewness": [], "Kurtosis": [], "Mean 5th quantile": [], "Mean 95th quantile": [], "Mean 50th quantile": [], "Topography": []}
-        for pixel in range(len(proj_mapping)):
-            print(
-                f"Processing pixel {pixel+1} of {len(proj_mapping)}", end='\r')
-            # countrylocation = proj_mapping.iloc[pixel]["countrylocation"]
-            country = proj_mapping.iloc[pixel]["country"]
-            tsmpx = int(proj_mapping.iloc[pixel]["tsmp_xindex"])
-            tsmpy = int(proj_mapping.iloc[pixel]["tsmp_yindex"])
-            lon = proj_mapping.iloc[pixel]["lon"].replace("_", "")
-            lat = proj_mapping.iloc[pixel]["lat"].replace("_", "")
-            countrylocation = f"{country}_LON{lon}LAT{lat}"
-            if not countrylocation in obswtd.columns:
-                print(
-                    f"countrylocation {countrylocation} not in obswtd columns, skipping...")
+        for yindex, xindex in zip(yindices, xindices):
+            print(f"Processing pixel {yindex}_{xindex} with {yindices.tolist().index(yindex) + 1} of {len(yindices)}")#, end='\r')  
+            if yindices.tolist().index(yindex)<500:
                 continue
-            target = int(proj_mapping.iloc[pixel]["target_chunk"])
-            sim_1darrayindex = int(
-                proj_mapping.iloc[pixel]["sim_1darrayindex"])
-            sim_era5wtd = self.get_era5wtd(target, sim_1darrayindex)
-            # important to set negatives to zero ##############
-            sim_era5wtd[sim_era5wtd < 0.0] = 0.0
-
-            topography = topo[tsmpy, tsmpx]
+            sim_1darrayindex = obsprocessing.find_flatidx_from_2Dindices(yindex, xindex)
+            
+            topography = topo[yindex, xindex]
             df_statdict["Topography"].append(topography)
-            sm_pixel = soilmoisture[:, tsmpy, tsmpx]
+            sm_pixel = soilmoisture[:, yindex, xindex]
             df_statdict["Soil moisture variance"].append(np.var(sm_pixel))
-            precip_pixel = precip[:, tsmpy, tsmpx]
+            precip_pixel = precip[:, yindex, xindex]
             df_statdict["Precipitation variance"].append(np.var(precip_pixel))
-            vpd_pixel = vpd[:, tsmpy, tsmpx]
+            vpd_pixel = vpd[:, yindex, xindex]
             df_statdict["VPD variance"].append(np.var(vpd_pixel))
 
+            df_metricdict["corr_precip"].append(corr_precip[yindex, xindex])
+            df_metricdict["corr_soilmoisture"].append(corr_soilmoisture[yindex, xindex])
+            df_metricdict["corr_vpd"].append(corr_vpd[yindex, xindex])
+
+            ##### ERA5 ensemble #####
+            # (members, timeseries) (100, 7665)
+            sim_era5wtd = self.get_era5wtd_obspixels(sim_1darrayindex)
+            sim_era5wtd[sim_era5wtd < 0.0] = 0.0
+            
             # rescale sims from daily to monthly timestep
-            time = pd.date_range(start="2000-01-01", periods=5840, freq="D")
-            df = pd.DataFrame(sim_era5wtd.T, index=time)   # shape (5840, 100)
+            time = pd.date_range(start="1996-01-01", periods=7665, freq="D")
+            df = pd.DataFrame(sim_era5wtd.T, index=time)   # shape (7665, 100)
             sim_era5wtd = df.resample(
-                "MS").mean().T.to_numpy()  # shape (100, 192)
-
-            # sim_era5wtd = sim_era5wtd[:, :-365]  # remove year 2020 to match localobs
+                "MS").mean().T.to_numpy()  # shape (100, 252)
+            # select only the top 50 members based on RMSE
+            # sim_era5wtd = sim_era5wtd[selected_members, :]
+            # print(f"Selected top 50 members for pixel {countrylocation}, shape: {sim_era5wtd.shape}")
             ens_mean_era5wtd = np.mean(sim_era5wtd, axis=0)
-            localobs = np.array(obswtd[f"{countrylocation}"].to_list())
-            # localobs = localobs[730:]  # remove year 2016 to match sim_era5wtd and tsmpobs
 
+            ##### local observations #####
+            localobs = obswtda[:, yindex, xindex]
+            df_statdict["meanobswtda"].append(np.mean(localobs))
+
+            # check lengths
+            if len(localobs) != sim_era5wtd.shape[1]:
+                print(
+                    f"lengths do not match for pixel {yindex}_{xindex}, skipping...")
+                print(
+                    f"len localobs: {len(localobs)}, len sim_era5wtd: {sim_era5wtd.shape[1]}")
+                raise ValueError("Lengths do not match")
+
+            ###### calculate anomalies for localobs and sim_era5wtd ######
+            # calculate climatological mean and std for each month (Jan-Dec) for localobs and sim_era5wtd
+            climatology_mean_localobs = np.array([np.mean(localobs[i::12]) for i in range(12)])
+            climatology_mean_sim_era5wtd = np.array([np.mean(ens_mean_era5wtd[i::12]) for i in range(12)])
+            climatology_std_localobs = np.array([np.std(localobs[i::12]) for i in range(12)])
+            climatology_std_sim_era5wtd = np.array([np.std(ens_mean_era5wtd[i::12]) for i in range(12)])
+            # calculate anomalies by subtracting climatological mean/std for each month
+            anom_localobs = np.array([(localobs[i::12] - climatology_mean_localobs[i])/climatology_std_localobs[i] for i in range(12)])
+            anom_sim_era5wtd = np.array([(ens_mean_era5wtd[i::12] - climatology_mean_sim_era5wtd[i])/climatology_std_sim_era5wtd[i] for i in range(12)])
+            anom_localobs = anom_localobs.T  # shape (21, 12)
+            anom_sim_era5wtd = anom_sim_era5wtd.T  # shape (21, 12)
+            print(anom_sim_era5wtd.shape)
+            print(climatology_std_sim_era5wtd)
+            print(np.isnan(climatology_std_sim_era5wtd).any())
+            if 0 in climatology_std_sim_era5wtd:
+                print(
+                    f"Standard deviation is zero for pixel {yindex}_{xindex}")
+            
+            anom_localobs = anom_localobs.flatten()
+            anom_sim_era5wtd = anom_sim_era5wtd.flatten()
+            # TODO plot them to check 
+            
+            #### calculate anomalies for all ensemble members
+            # ens_era5wtd: (n_members, n_timesteps)
+            n_members = sim_era5wtd.shape[0]
+
+            ens_climatology_mean = np.array([
+                np.mean(sim_era5wtd[:, i::12], axis=1)
+                for i in range(12)
+            ])  # (12, n_members)
+
+            ens_climatology_std = np.array([
+                np.std(sim_era5wtd[:, i::12], axis=1)
+                for i in range(12)
+            ])  # (12, n_members)
+
+            ens_anom = np.array([
+                (sim_era5wtd[:, i::12] - ens_climatology_mean[i][:, None])
+                / ens_climatology_std[i][:, None]
+                for i in range(12)
+            ])  # (12, n_members, n_years)
+
+            # some simulations have negative wtd, we set wtd<0 to 0.0 earlier.
+            # however this happens for some members on some pixels that in a specific month all the wtd<0 thus become wtd=0.0
+            # for this month on all years.
+            # therefore the std for this month becomes 0.0 and thus the anomaly becomes nan.
+            # since the wtd is not changing for this specific month throughout the study period, we can safely set the anomaly to 0.0 for this month.
+            ens_anom = np.where(np.isnan(ens_anom), 0.0, ens_anom)  # replace nan with 0.0
+
+            # Rearrange to (n_members, n_years, 12)
+            ens_anom = np.transpose(ens_anom, (1, 2, 0))
+
+            # Flatten months back into a time series
+            ens_anom = ens_anom.reshape(n_members, -1)
+
+            # rename for anomalies
+            localobs = anom_localobs
+            sim_era5wtd = ens_anom
+            ens_mean_era5wtd = anom_sim_era5wtd
+            df_statdict["meansimwtda"].append(np.mean(ens_mean_era5wtd))
+
+            ########### statistics ###########
             # call the statistics function here:
             stats_dict = self.ensemble_statistics_scipy(
                 sim_era5wtd, observations=localobs)
@@ -172,10 +246,6 @@ class postprocess_calculations:
             # move axis to (timeseries, members) for easier calculation
             ensemble_predictions = np.moveaxis(
                 ensemble_predictions, 0, 1)  # shape (timeseries, members)
-            # check lengths
-            if len(localobs) != sim_era5wtd.shape[1]:
-                raise ValueError(
-                    f"lengths do not match for pixel {countrylocation}, len localobs: {len(localobs)}, len sim_era5wtd: {sim_era5wtd.shape[1]}, skipping...")
 
             ########### Calculate ensemble statistics ###########
             # Calculate the variance for each time step
@@ -224,9 +294,6 @@ class postprocess_calculations:
             mae = np.mean(np.abs(ens_mean_era5wtd - localobs))
             df_metricdict["MAE"].append(mae)
 
-            ### remove bias from mean prediction ###
-            # mean_prediction = mean_prediction - bias_mean
-
             # Calculate the correlation between the mean prediction and observation
             correlationobs = np.corrcoef(ens_mean_era5wtd, localobs)[0, 1]
             df_metricdict["Pearson correlation"].append(correlationobs)
@@ -248,6 +315,16 @@ class postprocess_calculations:
             df_metricdict["CCC"].append(ccc)
 
             # Calculate Pearson Correlation p value
+            print(correlationobs)
+            print(bias_mean)
+            print(ensemble_variance)
+            print(ens_mean_era5wtd)
+            print(localobs)
+            print(np.isnan(ens_mean_era5wtd).any())
+            print(np.isnan(localobs).any())
+            print(np.isinf(ens_mean_era5wtd).any())
+            print(np.isinf(localobs).any())
+
             _, p_value = stats.pearsonr(ens_mean_era5wtd, localobs)
             df_metricdict["Pearson p-value"].append(p_value)
 
@@ -291,15 +368,15 @@ class postprocess_calculations:
             df_metricdict["MSE Skill Score"].append(mse_skill_score)
 
             # Calculate Normalized Mean Square Error
-            nmse = mse / ensemble_variance
+            nmse = mse / (np.max(localobs) - np.min(localobs))
             df_metricdict["NMSE"].append(nmse)
 
             # Normalized Root Mean Square Error
-            nrmse = np.sqrt(mse) / np.sqrt(ensemble_variance)
-            df_metricdict["NRMSE"].append(nrmse)
+            nrmse = np.sqrt(mse) / (np.max(localobs) - np.min(localobs))
+            df_metricdict["NRMSE"].append(nrmse) # TODO replace with std of observations instead of ensemble variance, or difference between max & min of observations
 
             # Normalized Mean Absolute Error
-            nmae = mae / np.sqrt(ensemble_variance)
+            nmae = mae / (np.max(localobs) - np.min(localobs))
             df_metricdict["NMAE"].append(nmae)
 
             # Unbiased Anomaly Correlation Coefficient
@@ -394,19 +471,19 @@ class postprocess_calculations:
         df_metric = pd.DataFrame(df_metricdict)
         df_stat = pd.DataFrame(df_statdict)
         df_metric.to_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
-                         "era5wtd_vs_localobs", "statistics", "performance_metrics.csv"), index=False)
+                         "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom.csv"), index=False)
         df_stat.to_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
-                       "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"), index=False)
+                       "era5wtd_vs_localobs", "statistics_anom", "ensemble_statistics_anom.csv"), index=False)
 
     def ensemble_statvsacc_fitting(self):
         utils = utilities()
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                           "ensemble_mean", "era5wtd_vs_localobs", "statistics", "ensemble_statistics.csv"))
+                           "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom", "ensemble_statistics_anom.csv"))
         metric = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                             "ensemble_mean", "era5wtd_vs_localobs", "statistics", "performance_metrics.csv"))
+                             "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom.csv"))
         xstats = {"VPD variance": "lin", "Precipitation variance": "lin", "Soil moisture variance": "lin", "Ensemble mean": "lin", "Ensemble median": "lin", "Skewness": "lin", "Kurtosis": "lin",
                   "Mean 5th quantile": "lin", "Mean 95th quantile": "lin", "Mean 50th quantile": "lin", "Topography": "lin", "std": "exp", "Ensemble variance": "exp", "Pairwise correlation": "lin", "IQR (75-25%)": "exp", "cv": "exp", "mad": "exp"}
-        ymetrics = {"Spearman correlation": "lin", "Kendall's tau": "lin", "Pearson p-value": "lin", "CCC": "exp", "Median AE": "exp",
+        ymetrics = {"Spearman correlation": "lin", "Kendall's tau": "lin", "Pearson p-value": "exp", "CCC": "exp", "Median AE": "exp",
                     "MAPE": "lin", "SMAPE": "lin", "Murphy Skill Score": "lin", "Bias Slope": "lin", "Conditional Bias": "lin", "Unconditional Bias": "lin",
                     "MSE Skill Score": "lin", "NMSE": "exp", "NRMSE": "exp", "NMAE": "exp", "Unbiased Anomaly Correlation Coefficient": "lin",
                     "Multiplicative Bias": "lin", "LESS": "lin", "Bias_std": "exp", "Members correlation": "lin", "Members RMSE": "exp", "Members KGE": "lin",
@@ -445,7 +522,7 @@ class postprocess_calculations:
                     # xval = xval[yval>=0.0]
                     # yval = yval[yval>=0.0]
 
-                if ymetric == "KGE" or ymetric == "NSE" or ymetric == "KGE_nobias" or ymetric == "Members KGE":
+                if ymetric == "KGE" or ymetric == "KGE_nobias" or ymetric == "Members KGE":
                     xval = xval[~np.isnan(yval)]
                     yval = yval[~np.isnan(yval)]
                     xval = xval[yval >= 0.2]
@@ -478,7 +555,7 @@ class postprocess_calculations:
                 if ymetric == "Pearson correlation":
                     yminlim = -1
                     ymaxlim = 1
-                if ymetric == "KGE" or ymetric == "NSE":
+                if ymetric == "KGE":
                     yminlim = 0.2
                     ymaxlim = 1
 
@@ -571,8 +648,7 @@ class postprocess_calculations:
                                 f'y={a_fit:.2f}e^{b_fit:.3f}x',
                                 f'$R^2$ = {r2:.3f}'))
                 except:
-                    print(
-                        f"fitting failed for {xstat} with {ymetric}, skipping...")
+                    print(f"Fitting failed for {xstat} and {ymetric}, skipping...")
                     continue
 
                 plt.figure()
@@ -600,8 +676,436 @@ class postprocess_calculations:
                 plt.tight_layout()
                 plt.legend(fontsize=18, frameon=True)
                 plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
-                            "era5wtd_vs_localobs", "statistics", f"fitted_{ymetric}_{xstat}.png"))
+                            "era5wtd_vs_localobs", "statistics_anom", f"fitted_{ymetric}_{xstat}.png"))
                 plt.close()
+
+    def ensemble_statvsacc_fitting_colored_by_wtd(self):
+        utils = utilities()
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                           "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom", "ensemble_statistics_anom.csv"))
+        metric = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                             "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom.csv"))
+        xstats = {"VPD variance": "lin", "Precipitation variance": "lin", "Soil moisture variance": "lin", "Ensemble mean": "lin", "Ensemble median": "lin", "Skewness": "lin", "Kurtosis": "lin",
+                  "Mean 5th quantile": "lin", "Mean 95th quantile": "lin", "Mean 50th quantile": "lin", "Topography": "lin", "std": "exp", "Ensemble variance": "exp", "Pairwise correlation": "lin", "IQR (75-25%)": "exp", "cv": "exp", "mad": "exp"}
+        ymetrics = {"Spearman correlation": "lin", "Kendall's tau": "lin", "Pearson p-value": "lin", "CCC": "exp", "Median AE": "exp",
+                    "MAPE": "lin", "SMAPE": "lin", "Murphy Skill Score": "lin", "Bias Slope": "lin", "Conditional Bias": "lin", "Unconditional Bias": "lin",
+                    "MSE Skill Score": "lin", "NMSE": "exp", "NRMSE": "exp", "NMAE": "exp", "Unbiased Anomaly Correlation Coefficient": "lin",
+                    "Multiplicative Bias": "lin", "LESS": "lin", "Bias_std": "exp", "Members correlation": "lin", "Members RMSE": "exp", "Members KGE": "lin",
+                    "Members correlation std": "exp", "Members RMSE std": "exp", "Members KGE std": "exp",
+                    "RMSE": "exp", "Pearson correlation": "lin", "KGE": "lin", "KGE_nobias": "exp", "Absolute mean bias": "exp", "NSE": "lin", "Beta": "exp",
+                    "Alpha": "exp", "(Alpha-1)^2": "exp", "(Beta-1)^2": "exp", "(r-1)^2": "exp"}
+        plotmapping = {
+            "Ensemble variance": r"$\overline{EV}$",
+            "IQR (75-25%)": r"$\overline{IQR}$",
+            "Beta": r"$\beta$",
+            "Alpha": r"$\alpha$",
+            "(Alpha-1)^2": r"$(\alpha-1)^2$",
+            "(Beta-1)^2": r"$(\beta-1)^2$",
+        }
+        meanobswtd = metric["meanobswtda"].values
+        for xstat in xstats.keys():
+            for ymetric in ymetrics.keys():
+                print(f"fitting {xstat} with {ymetric}")
+
+                logarithmicfit = False
+                if xstats[xstat] == "exp" and ymetrics[ymetric] == "exp":
+                    fittype = "powerlaw"
+                elif xstats[xstat] == "exp" or ymetrics[ymetric] == "exp":
+                    fittype = "exponential"
+                    if xstats[xstat] == "exp" and ymetrics[ymetric] == "lin":
+                        logarithmicfit = True
+                else:
+                    fittype = "linear"
+
+                xval = stat[xstat].values
+                yval = metric[ymetric].values if not ymetric == "Absolute mean bias" else np.absolute(
+                    metric[ymetric].values)
+                colorval = meanobswtd.copy()
+
+                if ymetric == "Pearson correlation" or ymetric == "Members correlation":
+                    mask = ~np.isnan(yval)
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+                    # xval = xval[yval>=0.0]
+                    # yval = yval[yval>=0.0]
+
+                if ymetric == "KGE" or ymetric == "NSE" or ymetric == "KGE_nobias" or ymetric == "Members KGE":
+                    mask = ~np.isnan(yval)
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+                    mask = yval >= 0.2
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+
+                if ymetric == "Beta" or ymetric == "Alpha" or ymetric == "(Alpha-1)^2" or ymetric == "(Beta-1)^2" or ymetric == "(r-1)^2":
+                    mask = ~np.isnan(yval)
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+
+                if ymetric == "Absolute mean bias":
+                    mask = yval >= 0.01
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+
+                if xstat == "Pairwise correlation":
+                    mask = xval >= 0.0
+                    yval = yval[mask]
+                    xval = xval[mask]
+                    colorval = colorval[mask]
+
+                logx, logy, xminlim, xmaxlim, yminlim, ymaxlim = None, None, None, None, None, None
+                if xstat == "std" or xstat == "Ensemble variance" or xstat == "IQR (75-25%)" or xstat == "cv" or xstat == "mad":
+                    logx = True
+                if ymetric == "Members correlation std" or ymetric == "Members RMSE std" or ymetric == "Members KGE std" or ymetric == "RMSE" or ymetric == "Absolute mean bias" or ymetric == "Alpha" or ymetric == "Beta" or ymetric == "(Alpha-1)^2" or ymetric == "(Beta-1)^2" or ymetric == "(r-1)^2" or ymetric == "Members RMSE" or ymetric == "Bias_std":
+                    logy = True
+                if ymetrics[ymetric] == "exp":
+                    logy = True
+                if xstats[xstat] == "exp":
+                    logx = True
+                if xstat == "Pairwise correlation":
+                    xminlim = 0
+                    xmaxlim = 1
+                if ymetric == "Pearson correlation":
+                    yminlim = -1
+                    ymaxlim = 1
+                if ymetric == "KGE" or ymetric == "NSE":
+                    yminlim = 0.2
+                    ymaxlim = 1
+
+                if xstat == "Pairwise correlation" and ymetric == "Members correlation std":
+                    fittype = "powerlaw"
+                    logx = True
+                    logy = True
+                try:
+                    if fittype == "linear":
+                        params, covariance = curve_fit(
+                            utils.linear_law, xval, yval)
+                        a_fit, b_fit = params
+                        y_fit = [utils.linear_law(x, a_fit, b_fit)
+                                 for x in xval]
+                        R_square = r2_score(yval, y_fit)
+                        lin_eq = f'$y={b_fit:.2f}x+{a_fit:.2f}$' if a_fit >= 0 else f'$y={b_fit:.2f}x{a_fit:.2f}$'
+                        textstr = '\n'.join((
+                            lin_eq,
+                            f'$R^2$ = {R_square:.3f}'))
+                        x_fit = [min(xval), max(xval)]
+                        y_fit = [utils.linear_law(x, a_fit, b_fit)
+                                 for x in x_fit]
+
+                    if fittype == "powerlaw":
+                        y_lin = np.log(yval)
+                        x_lin = np.log(xval)
+                        params, covariance = curve_fit(
+                            utils.linear_law, x_lin, y_lin)
+                        a_fit, b_fit = params
+                        y_fit = [utils.linear_law(x, a_fit, b_fit)
+                                 for x in x_lin]
+                        R_square = r2_score(y_lin, y_fit)
+                        a_fit = np.exp(a_fit)
+                        textstr = '\n'.join((
+                            f'y={a_fit:.2f}x^{b_fit:.2f}',
+                            f'$R^2$ = {R_square:.3f}'))
+
+                        x_fit = [min(xval), max(xval)]
+                        y_fit = [utils.powerlaw_func(
+                            x, a_fit, b_fit) for x in x_fit]
+
+                    if fittype == "exponential":
+                        def log_func(x, a, b):
+                            return a + b * np.log(x)
+
+                        def exp_func(x, a, b):
+                            return a * np.exp(b * x)
+
+                        if logarithmicfit:
+                            popt, _ = curve_fit(log_func, xval, yval)
+                            a_fit, b_fit = popt
+                            y_pred = log_func(xval, *popt)
+                            r2 = r2_score(yval, y_pred)
+
+                            x_fit = np.linspace(min(xval), max(xval), 100)
+                            y_fit = log_func(x_fit, *popt)
+                            logeq = f'y={a_fit:.2f}+{b_fit:.3f}log(x)' if b_fit >= 0 else f'y={a_fit:.2f}{b_fit:.3f}log(x)'
+                            textstr = '\n'.join((
+                                logeq,
+                                f'$R^2$ = {r2:.3f}'))
+                        else:
+                            popt, _ = curve_fit(exp_func, xval, yval, p0=(
+                                1, -0.1))
+                            a_fit, b_fit = popt
+                            y_pred = exp_func(xval, *popt)
+
+                            r2 = r2_score(yval, y_pred)
+
+                            x_fit = np.linspace(min(xval), max(xval), 100)
+                            y_fit = exp_func(x_fit, *popt)
+
+                            textstr = '\n'.join((
+                                f'y={a_fit:.2f}e^{b_fit:.3f}x',
+                                f'$R^2$ = {r2:.3f}'))
+                except:
+                    print(
+                        f"fitting failed for {xstat} with {ymetric}, skipping...")
+                    continue
+
+                plt.figure()
+                plt.plot(x_fit, y_fit, color="r",
+                         label=textstr, linestyle='--')
+                scatter = plt.scatter(xval, yval, c=colorval, cmap="viridis", marker='.', edgecolors='none')
+                plt.colorbar(scatter, label="corr_swvl3")
+                if xstat in plotmapping.keys():
+                    plt.xlabel(plotmapping[xstat])
+                else:
+                    plt.xlabel(xstat)
+                if ymetric in plotmapping.keys():
+                    plt.ylabel(plotmapping[ymetric])
+                else:
+                    plt.ylabel(ymetric)
+                if logx:
+                    plt.xscale("log")
+                if logy:
+                    plt.yscale("log")
+                if xminlim:
+                    plt.xlim(xminlim, xmaxlim)
+                if yminlim:
+                    plt.ylim(yminlim, ymaxlim)
+
+                plt.grid(True, linestyle='--', alpha=0.7)
+                plt.tight_layout()
+                plt.legend(fontsize=18, frameon=True)
+                plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+                            "era5wtd_vs_localobs", "statistics_anom_colored", f"fitted_coloredwtd_{ymetric}_{xstat}.png"))
+                plt.close()
+
+    def select_best_50_members_rmse(self, members_filepath=None, obs_filepath=None, save_dir=None):
+        """Select the top 50 ensemble members by mean RMSE across all pixels.
+
+        Parameters
+        ----------
+        members_filepath : str, optional
+            Path to sim_members_anomalies.npy with shape (pixels, members, timeseries).
+        obs_filepath : str, optional
+            Path to obs_anomalies.npy with shape (pixels, timeseries).
+        save_dir : str, optional
+            Directory where ranking, summary and selected members are saved.
+        """
+        if members_filepath is None:
+            members_filepath = os.path.join(INPUTPATH, "sim_members_anomalies.npy")
+        if obs_filepath is None:
+            obs_filepath = os.path.join(INPUTPATH, "obs_anomalies.npy")
+        if save_dir is None:
+            save_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+                                     "era5wtd_vs_localobs", "selected_members")
+        os.makedirs(save_dir, exist_ok=True)
+
+        if not os.path.exists(members_filepath):
+            raise FileNotFoundError(f"Member predictions file not found: {members_filepath}")
+        if not os.path.exists(obs_filepath):
+            raise FileNotFoundError(f"Observation file not found: {obs_filepath}")
+
+        sim_members = np.load(members_filepath)
+        obs = np.load(obs_filepath)
+        print(f"Loaded sim_members_anomalies.npy with shape {sim_members.shape}")
+        print(f"Loaded obs_anomalies.npy with shape {obs.shape}")
+
+        if sim_members.ndim != 3:
+            raise ValueError(f"sim_members_anomalies.npy must be 3D, got shape {sim_members.shape}")
+        if obs.ndim != 2:
+            raise ValueError(f"obs_anomalies.npy must be 2D, got shape {obs.shape}")
+
+        if sim_members.shape[0] != obs.shape[0]:
+            raise ValueError(
+                f"Pixel dimension mismatch: members {sim_members.shape[0]} vs obs {obs.shape[0]}")
+        if sim_members.shape[2] != obs.shape[1]:
+            raise ValueError(
+                f"Time dimension mismatch: members {sim_members.shape[2]} vs obs {obs.shape[1]}")
+
+        n_pixels, n_members, _ = sim_members.shape
+        rmse_per_member_pixel = np.full((n_members, n_pixels), np.nan)
+        for member in range(n_members):
+            diff = sim_members[:, member, :] - obs
+            rmse_per_member_pixel[member] = np.sqrt(np.nanmean(np.square(diff), axis=1))
+
+        member_scores = np.nanmean(rmse_per_member_pixel, axis=1)
+        ranking = pd.DataFrame({
+            "member_id": np.arange(n_members, dtype=int),
+            "rmse_score": member_scores
+        })
+        ranking = ranking.sort_values("rmse_score", ascending=True).reset_index(drop=True)
+
+        selected_ranking = ranking.head(50).copy()
+        selected_member_ids = selected_ranking["member_id"].to_numpy(dtype=int)
+        selected_members = sim_members[:, selected_member_ids, :]
+
+        np.save(os.path.join(save_dir, "selected_50_members.npy"), selected_members)
+        ranking.to_csv(os.path.join(save_dir, "ranked_members_by_rmse.csv"), index=False)
+        selected_ranking.to_csv(os.path.join(save_dir, "top50_members_by_rmse.csv"), index=False)
+
+        selected_scores = selected_ranking["rmse_score"].values
+        summary = {
+            "selected_count": int(len(selected_scores)),
+            "selected_mean_score": float(np.nanmean(selected_scores)),
+            "selected_median_score": float(np.nanmedian(selected_scores)),
+            "selected_min_score": float(np.nanmin(selected_scores)),
+            "selected_max_score": float(np.nanmax(selected_scores)),
+            "full_mean_score": float(np.nanmean(member_scores)),
+            "full_median_score": float(np.nanmedian(member_scores)),
+            "full_min_score": float(np.nanmin(member_scores)),
+            "full_max_score": float(np.nanmax(member_scores))
+        }
+        pd.DataFrame([summary]).to_csv(os.path.join(save_dir, "selected_members_summary.csv"), index=False)
+
+        full_ensemble_mean = np.nanmean(sim_members, axis=1)
+        selected_ensemble_mean = np.nanmean(selected_members, axis=1)
+
+        full_pixel_rmse = np.sqrt(np.nanmean(np.square(full_ensemble_mean - obs), axis=1))
+        selected_pixel_rmse = np.sqrt(np.nanmean(np.square(selected_ensemble_mean - obs), axis=1))
+
+        comparison = pd.DataFrame({
+            "ensemble_type": ["full_100", "selected_50"],
+            "ensemble_mean_rmse": [float(np.nanmean(full_pixel_rmse)), float(np.nanmean(selected_pixel_rmse))],
+            "ensemble_median_rmse": [float(np.nanmedian(full_pixel_rmse)), float(np.nanmedian(selected_pixel_rmse))],
+            "ensemble_min_rmse": [float(np.nanmin(full_pixel_rmse)), float(np.nanmin(selected_pixel_rmse))],
+            "ensemble_max_rmse": [float(np.nanmax(full_pixel_rmse)), float(np.nanmax(selected_pixel_rmse))]
+        })
+        comparison.to_csv(os.path.join(save_dir, "ensemble_selection_comparison.csv"), index=False)
+
+        print("Selected top 50 members by RMSE:", selected_member_ids.tolist())
+        print("Selection summary:", summary)
+        print("Ensemble comparison saved to:", os.path.join(save_dir, "ensemble_selection_comparison.csv"))
+
+        return {
+            "ranking": ranking,
+            "selected_member_ids": selected_member_ids,
+            "summary": summary,
+            "comparison": comparison,
+            "selected_members": selected_members
+        }
+
+    def select_best_50_members_pearson(self, members_filepath=None, obs_filepath=None, save_dir=None):
+        """Select the top 50 ensemble members by mean Pearson correlation across all pixels.
+
+        Parameters
+        ----------
+        members_filepath : str, optional
+            Path to sim_members_anomalies.npy with shape (pixels, members, timeseries).
+        obs_filepath : str, optional
+            Path to obs_anomalies.npy with shape (pixels, timeseries).
+        save_dir : str, optional
+            Directory where ranking, summary and selected members are saved.
+        """
+        if members_filepath is None:
+            members_filepath = os.path.join(INPUTPATH, "sim_members_anomalies.npy")
+        if obs_filepath is None:
+            obs_filepath = os.path.join(INPUTPATH, "obs_anomalies.npy")
+        if save_dir is None:
+            save_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
+                                     "era5wtd_vs_localobs", "selected_members_pearson")
+        os.makedirs(save_dir, exist_ok=True)
+
+        if not os.path.exists(members_filepath):
+            raise FileNotFoundError(f"Member predictions file not found: {members_filepath}")
+        if not os.path.exists(obs_filepath):
+            raise FileNotFoundError(f"Observation file not found: {obs_filepath}")
+
+        sim_members = np.load(members_filepath)
+        obs = np.load(obs_filepath)
+
+        if sim_members.ndim != 3:
+            raise ValueError(f"sim_members_anomalies.npy must be 3D, got shape {sim_members.shape}")
+        if obs.ndim != 2:
+            raise ValueError(f"obs_anomalies.npy must be 2D, got shape {obs.shape}")
+
+        if sim_members.shape[0] != obs.shape[0]:
+            raise ValueError(
+                f"Pixel dimension mismatch: members {sim_members.shape[0]} vs obs {obs.shape[0]}")
+        if sim_members.shape[2] != obs.shape[1]:
+            raise ValueError(
+                f"Time dimension mismatch: members {sim_members.shape[2]} vs obs {obs.shape[1]}")
+
+        def safe_pearson(x, y):
+            valid = np.isfinite(x) & np.isfinite(y)
+            if np.sum(valid) < 2:
+                return np.nan
+            x_valid = x[valid]
+            y_valid = y[valid]
+            if np.nanstd(x_valid) == 0 or np.nanstd(y_valid) == 0:
+                return np.nan
+            return stats.pearsonr(x_valid, y_valid)[0]
+
+        n_pixels, n_members, _ = sim_members.shape
+        pearson_per_member_pixel = np.full((n_members, n_pixels), np.nan)
+        for member in range(n_members):
+            for pixel in range(n_pixels):
+                pearson_per_member_pixel[member, pixel] = safe_pearson(
+                    sim_members[pixel, member, :], obs[pixel, :])
+
+        member_scores = np.nanmean(pearson_per_member_pixel, axis=1)
+        ranking = pd.DataFrame({
+            "member_id": np.arange(n_members, dtype=int),
+            "pearson_score": member_scores
+        })
+        ranking = ranking.sort_values("pearson_score", ascending=False, na_position='last').reset_index(drop=True)
+
+        selected_ranking = ranking.head(50).copy()
+        selected_member_ids = selected_ranking["member_id"].to_numpy(dtype=int)
+        selected_members = sim_members[:, selected_member_ids, :]
+
+        np.save(os.path.join(save_dir, "selected_50_members_pearson.npy"), selected_members)
+        ranking.to_csv(os.path.join(save_dir, "ranked_members_by_pearson.csv"), index=False)
+        selected_ranking.to_csv(os.path.join(save_dir, "top50_members_by_pearson.csv"), index=False)
+
+        selected_scores = selected_ranking["pearson_score"].values
+        summary = {
+            "selected_count": int(len(selected_scores)),
+            "selected_mean_score": float(np.nanmean(selected_scores)),
+            "selected_median_score": float(np.nanmedian(selected_scores)),
+            "selected_min_score": float(np.nanmin(selected_scores)),
+            "selected_max_score": float(np.nanmax(selected_scores)),
+            "full_mean_score": float(np.nanmean(member_scores)),
+            "full_median_score": float(np.nanmedian(member_scores)),
+            "full_min_score": float(np.nanmin(member_scores)),
+            "full_max_score": float(np.nanmax(member_scores))
+        }
+        pd.DataFrame([summary]).to_csv(os.path.join(save_dir, "selected_members_summary_by_pearson.csv"), index=False)
+
+        full_ensemble_mean = np.nanmean(sim_members, axis=1)
+        selected_ensemble_mean = np.nanmean(selected_members, axis=1)
+
+        full_pixel_corr = np.array([
+            safe_pearson(full_ensemble_mean[pixel, :], obs[pixel, :])
+            for pixel in range(n_pixels)
+        ])
+        selected_pixel_corr = np.array([
+            safe_pearson(selected_ensemble_mean[pixel, :], obs[pixel, :])
+            for pixel in range(n_pixels)
+        ])
+
+        comparison = pd.DataFrame({
+            "ensemble_type": ["full_100", "selected_50"],
+            "ensemble_mean_pearson": [float(np.nanmean(full_pixel_corr)), float(np.nanmean(selected_pixel_corr))],
+            "ensemble_median_pearson": [float(np.nanmedian(full_pixel_corr)), float(np.nanmedian(selected_pixel_corr))],
+            "ensemble_min_pearson": [float(np.nanmin(full_pixel_corr)), float(np.nanmin(selected_pixel_corr))],
+            "ensemble_max_pearson": [float(np.nanmax(full_pixel_corr)), float(np.nanmax(selected_pixel_corr))]
+        })
+        comparison.to_csv(os.path.join(save_dir, "ensemble_selection_comparison_by_pearson.csv"), index=False)
+
+        print("Selected top 50 members by Pearson correlation:", selected_member_ids.tolist())
+        print("Selection summary:", summary)
+        print("Ensemble comparison saved to:", os.path.join(save_dir, "ensemble_selection_comparison_by_pearson.csv"))
+
+        return {
+            "ranking": ranking,
+            "selected_member_ids": selected_member_ids,
+            "summary": summary,
+            "comparison": comparison,
+            "selected_members": selected_members
+        }
 
     def metrics_stat_pdf(self):
         # Define a helper function to get midpoints
@@ -1974,7 +2478,7 @@ class postprocess_calculations:
             newscript.close()
 
     def era5wtdensemble_localobs_timeseries(self, obslocation, sim_era5wtd, mean_prediction, tsmpobs, localobs, kge, rmse, r, bias, nse):
-        dates = pd.date_range(start='2000-01-01', end='2015-12-31', freq='MS')
+        dates = pd.date_range(start='1996-01-01', end='2016-12-31', freq='MS')
         fig, ax = plt.subplots(figsize=(16, 10))
 
         kge = round(kge, 2)
@@ -1988,9 +2492,9 @@ class postprocess_calculations:
             sim = sim_era5wtd[m, :]
             ax.plot(dates, sim, color="gray", alpha=0.5)
 
-        ax.plot(dates, localobs, "r-", label="Observations", linewidth=3.0)
+        ax.plot(dates, localobs, "r-", label="Obs_a", linewidth=3.0)
         ax.plot(dates, mean_prediction, "k-",
-                label="ERA5-LSTM ensemble mean", linewidth=3.0)
+                label="ERA5-LSTM ensemble mean_a", linewidth=3.0)
         # ax.plot(dates, tsmpobs, "b-", label="TSMP observations", linewidth=3.0)
         ax.scatter([], [], color="k",
                    label=f"KGE:{kge}, r:{r}, RMSE:{rmse},\nBias:{bias}, NSE: {nse}")
@@ -2003,11 +2507,25 @@ class postprocess_calculations:
         plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.17), ncol=3)
         plt.grid()
         plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
-                    "era5wtd_vs_localobs", "timeseries", f"timeseries_{obslocation.replace('.', 'p')}.png"))
+                    "era5wtd_vs_localobs", "timeseries_anomalies_top10", f"timeseries_{obslocation.replace('.', 'p')}.png"))
 
     def get_era5wtd(self, target, sim_1darrayindex):
         sim_allmembers = np.array([np.load(os.path.join(OUTPUTPATH, "validation_ERA5",
                                   "ensemble_400px", f"400px_member_{m}", f"sim_{target}.npy")) for m in range(100)])
+        # (members, timeseries)
+        sim_allmembers = sim_allmembers[:, :, sim_1darrayindex]
+        return sim_allmembers
+
+    def get_era5wtd_obspixels(self, sim_1darrayindex):
+        sim_allmembers = np.array([np.load(os.path.join(OUTPUTPATH, "validation_ERA5",
+                                  "ensemble_400px", f"400px_member_{m}", "sim_ERA5onlocalobspixels.npy")) for m in range(100)])
+        # (members, timeseries)
+        sim_allmembers = sim_allmembers[:, :, sim_1darrayindex]
+        return sim_allmembers
+    
+    def get_lstmtsmpwtd(self, target, sim_1darrayindex):
+        dirpath = os.path.join(os.path.dirname(os.path.dirname(get_root_dir())), "spatio-temporal-LSTM", "outputs", "20yrs_ts", "ensemble_400px")
+        sim_allmembers = np.array([np.load(os.path.join(dirpath, f"400px_member_{m}", f"sim_destand_100_256dr0x1lr01x50_365x1000_prvpdsmxyind_{target}.npy")) for m in range(100)])
         # (members, timeseries)
         sim_allmembers = sim_allmembers[:, :, sim_1darrayindex]
         return sim_allmembers
@@ -2040,6 +2558,8 @@ class postprocess_calculations:
             INPUTPATH, "localobservations", "mapping_wtdobsEU_TSMP_avgdup.csv"))
         proj_mapping = proj_mapping.dropna(subset=["sim_1darrayindex"])
         proj_mapping.reset_index(drop=True, inplace=True)
+        selected_members = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "selected_members_pearson", "ranked_members_by_ratio.csv"))
+        selected_members = selected_members["member_id"].values[:10]  # select top 10 members
         cdf_data = {
             'KGE': [],
             'Pearson correlation': [],
@@ -2078,10 +2598,10 @@ class postprocess_calculations:
             # tsmpobs = self.get_tsmpwtd(target, sim_1darrayindex)
             # tsmpobs = tsmpobs[:-365]  # remove year 2020 to match localobs
             localobs = np.array(obswtd[f"{countrylocation}"].to_list())
-            if np.mean(localobs) > 50:
-                print(
-                    f"mean localobs > 50m for pixel {countrylocation}, skipping...")
-                continue
+            # if np.mean(localobs) > 50:
+            #     print(
+            #         f"mean localobs > 50m for pixel {countrylocation}, skipping...")
+            #     continue
             # localobs = localobs[730:]  # remove year 2016 to match sim_era5wtd and tsmpobs
             # check lengths
             if len(localobs) != sim_era5wtd.shape[1]:
@@ -2090,19 +2610,25 @@ class postprocess_calculations:
                 print(
                     f"len localobs: {len(localobs)}, len sim_era5wtd: {sim_era5wtd.shape[1]}")
                 raise ValueError("Lengths do not match")
-            kge = utils.calculate_kge(localobs, ens_mean_era5wtd)
-            rmse = np.sqrt(np.mean((localobs - ens_mean_era5wtd) ** 2))
-            r = np.corrcoef(localobs, ens_mean_era5wtd)[0, 1]
-            bias = np.mean(ens_mean_era5wtd - localobs)
-            nse = 1 - (np.sum((localobs - ens_mean_era5wtd) ** 2) /
-                       np.sum((localobs - np.mean(localobs)) ** 2))
+        
+            ###### calculate anomalies for localobs and sim_era5wtd ######
+            localobs_anom = localobs - np.mean(localobs)
+            sim_era5wtd_anom = sim_era5wtd - np.mean(sim_era5wtd, axis=1, keepdims=True)
+            # ens_mean_era5wtd_anom = np.mean(sim_era5wtd_anom, axis=0)
+            ens_mean_era5wtd_anom = ens_mean_era5wtd - np.mean(ens_mean_era5wtd)
+            kge = utils.calculate_kge(localobs_anom, ens_mean_era5wtd_anom)
+            rmse = np.sqrt(np.mean((localobs_anom - ens_mean_era5wtd_anom) ** 2))
+            r = np.corrcoef(localobs_anom, ens_mean_era5wtd_anom)[0, 1]
+            bias = np.mean(ens_mean_era5wtd_anom - localobs_anom)
+            nse = 1 - (np.sum((localobs_anom - ens_mean_era5wtd_anom) ** 2) /
+                       np.sum((localobs_anom - np.mean(localobs_anom)) ** 2))
             cdf_data['KGE'].append(kge)
             cdf_data['Pearson correlation'].append(r)
             cdf_data['RMSE'].append(rmse)
             cdf_data['Bias'].append(bias)
             cdf_data['NSE'].append(nse)
             ############## plot timeseries ##############
-            self.era5wtdensemble_localobs_timeseries(countrylocation, sim_era5wtd, ens_mean_era5wtd, None, localobs,
+            self.era5wtdensemble_localobs_timeseries(countrylocation, sim_era5wtd_anom, ens_mean_era5wtd_anom, None, localobs_anom,
                                                      kge=kge,
                                                      rmse=rmse,
                                                      r=r,
@@ -2118,23 +2644,253 @@ class postprocess_calculations:
             map2d_metrics["NSE"][int(tsmp_yindex), int(tsmp_xindex)] = nse
 
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "r_map.npy"), map2d_metrics["r"])
+                "ensemble_mean", "era5wtd_vs_localobs", "r_map_anomalies_top10.npy"), map2d_metrics["r"])
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "KGE_map.npy"), map2d_metrics["KGE"])
+                "ensemble_mean", "era5wtd_vs_localobs", "KGE_map_anomalies_top10.npy"), map2d_metrics["KGE"])
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map.npy"), map2d_metrics["RMSE"])
+                "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map_anomalies_top10.npy"), map2d_metrics["RMSE"])
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "Bias_map.npy"), map2d_metrics["Bias"])
+                "ensemble_mean", "era5wtd_vs_localobs", "Bias_map_anomalies_top10.npy"), map2d_metrics["Bias"])
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "NSE_map.npy"), map2d_metrics["NSE"])
+                "ensemble_mean", "era5wtd_vs_localobs", "NSE_map_anomalies_top10.npy"), map2d_metrics["NSE"])
+
+    def eval_era5wtd_obswtd_tsmpwtd_anomalies(self):
+        utils = utilities()
+        obsprocessing = obs_processing()
+        map2d = np.load(os.path.join(INPUTPATH, "mapping_wtdobs_YMA.npy"))
+        map2d_metrics = {"KGE": np.zeros(map2d.shape), "r": np.zeros(map2d.shape), "RMSE": np.zeros(
+            map2d.shape), "Bias": np.zeros(map2d.shape), "NSE": np.zeros(map2d.shape)}
+        map2d_metrics["KGE"][map2d_metrics["KGE"] == 0] = np.nan
+        map2d_metrics["r"][map2d_metrics["r"] == 0] = np.nan
+        map2d_metrics["RMSE"][map2d_metrics["RMSE"] == 0] = np.nan
+        map2d_metrics["Bias"][map2d_metrics["Bias"] == 0] = np.nan
+        map2d_metrics["NSE"][map2d_metrics["NSE"] == 0] = np.nan
+
+        obsfilepath = os.path.join(INPUTPATH, "wtd_obsEU_YMA_1996_2016.npy")
+        obswtda = np.load(obsfilepath)
+        indices = np.where(~np.isnan(np.nanmean(obswtda, axis=0)))
+        yindices = indices[0]
+        xindices = indices[1]
+        
+        for yindex, xindex in zip(yindices, xindices):
+            print(f"Processing pixel {yindex}_{xindex} with {yindices.tolist().index(yindex) + 1} of {len(yindices)}", end='\r')  
+            sim_1darrayindex = obsprocessing.find_flatidx_from_2Dindices(yindex, xindex)
+            
+            # (members, timeseries) (100, 5840)
+            sim_era5wtd = self.get_era5wtd_obspixels(sim_1darrayindex)
+            sim_era5wtd[sim_era5wtd < 0.0] = 0.0
+
+            # rescale sims from daily to monthly timestep
+            time = pd.date_range(start="1996-01-01", periods=7665, freq="D")
+            df = pd.DataFrame(sim_era5wtd.T, index=time)   # shape (7665, 100)
+            sim_era5wtd = df.resample(
+                "MS").mean().T.to_numpy()  # shape (100, 252)
+            ens_mean_era5wtd = np.mean(sim_era5wtd, axis=0)
+
+            # tsmpobs = self.get_tsmpwtd(target, sim_1darrayindex)
+            # tsmpobs = tsmpobs[:-365]  # remove year 2020 to match localobs
+            localobs = obswtda[:, yindex, xindex]
+            # check lengths
+            if len(localobs) != sim_era5wtd.shape[1]:
+                print(
+                    f"lengths do not match for pixel {yindex}_{xindex}, skipping...")
+                print(
+                    f"len localobs: {len(localobs)}, len sim_era5wtd: {sim_era5wtd.shape[1]}")
+                raise ValueError("Lengths do not match")
+        
+            ###### calculate anomalies for localobs and sim_era5wtd ######
+            # calculate climatological mean and std for each month (Jan-Dec) for localobs and sim_era5wtd
+            climatology_mean_localobs = np.array([np.mean(localobs[i::12]) for i in range(12)])
+            climatology_mean_sim_era5wtd = np.array([np.mean(ens_mean_era5wtd[i::12]) for i in range(12)])
+            climatology_std_localobs = np.array([np.std(localobs[i::12]) for i in range(12)])
+            climatology_std_sim_era5wtd = np.array([np.std(ens_mean_era5wtd[i::12]) for i in range(12)])
+            # calculate anomalies by subtracting climatological mean/std for each month
+            anom_localobs = np.array([(localobs[i::12] - climatology_mean_localobs[i])/climatology_std_localobs[i] for i in range(12)])
+            anom_sim_era5wtd = np.array([(ens_mean_era5wtd[i::12] - climatology_mean_sim_era5wtd[i])/climatology_std_sim_era5wtd[i] for i in range(12)])
+            anom_localobs = anom_localobs.T  # shape (16, 12)
+            anom_sim_era5wtd = anom_sim_era5wtd.T  # shape (16, 12)
+            
+            anom_localobs = anom_localobs.flatten()
+            anom_sim_era5wtd = anom_sim_era5wtd.flatten()
+            
+            #### calculate anomalies for all ensemble members
+            # ens_era5wtd: (n_members, n_timesteps)
+            n_members = sim_era5wtd.shape[0]
+
+            ens_climatology_mean = np.array([
+                np.mean(sim_era5wtd[:, i::12], axis=1)
+                for i in range(12)
+            ])  # (12, n_members)
+
+            ens_climatology_std = np.array([
+                np.std(sim_era5wtd[:, i::12], axis=1)
+                for i in range(12)
+            ])  # (12, n_members)
+
+            ens_anom = np.array([
+                (sim_era5wtd[:, i::12] - ens_climatology_mean[i][:, None])
+                / ens_climatology_std[i][:, None]
+                for i in range(12)
+            ])  # (12, n_members, n_years)
+
+            # Rearrange to (n_members, n_years, 12)
+            ens_anom = np.transpose(ens_anom, (1, 2, 0))
+
+            # Flatten months back into a time series
+            ens_anom = ens_anom.reshape(n_members, -1)
+
+            ###### calculate metrics ########
+            kge = utils.calculate_kge(anom_localobs, anom_sim_era5wtd)
+            rmse = np.sqrt(np.mean((anom_localobs - anom_sim_era5wtd) ** 2))
+            r = np.corrcoef(anom_localobs, anom_sim_era5wtd)[0, 1]
+            bias = np.mean(anom_sim_era5wtd - anom_localobs)
+            nse = 1 - (np.sum((anom_localobs - anom_sim_era5wtd) ** 2) /
+                       np.sum((anom_localobs - np.mean(anom_localobs)) ** 2))
+
+            countrylocation = f"Y{yindex}_X{xindex}"
+            ############## plot timeseries ##############
+            self.era5wtdensemble_localobs_timeseries(countrylocation, ens_anom, anom_sim_era5wtd, None, anom_localobs,
+                                                     kge=kge,
+                                                     rmse=rmse,
+                                                     r=r,
+                                                     bias=bias,
+                                                     nse=nse
+                                                     )
+
+            ############## plot 2D map of pixels with colored accuracy ##############
+            map2d_metrics["r"][int(yindex), int(xindex)] = r
+            map2d_metrics["KGE"][int(yindex), int(xindex)] = kge
+            map2d_metrics["RMSE"][int(yindex), int(xindex)] = rmse
+            map2d_metrics["Bias"][int(yindex), int(xindex)] = bias
+            map2d_metrics["NSE"][int(yindex), int(xindex)] = nse
+
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                "ensemble_mean", "era5wtd_vs_localobs", "r_map_anomalies.npy"), map2d_metrics["r"])
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                "ensemble_mean", "era5wtd_vs_localobs", "KGE_map_anomalies.npy"), map2d_metrics["KGE"])
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map_anomalies.npy"), map2d_metrics["RMSE"])
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                "ensemble_mean", "era5wtd_vs_localobs", "Bias_map_anomalies.npy"), map2d_metrics["Bias"])
+        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
+                "ensemble_mean", "era5wtd_vs_localobs", "NSE_map_anomalies.npy"), map2d_metrics["NSE"])
+
+    def cdf_metrics_era5_vs_tsmp_anomalies(self):
+        utils = utilities()
+        obswtd = pd.read_parquet(os.path.join(os.path.join(
+            INPUTPATH, "localobservations"), "wtd_obsEU_monthly_avgdup.parquet"))
+        obswtd = obswtd.dropna(axis=1)
+        if len(obswtd.columns) == 0:
+            raise ValueError("No observation columns are available for CDF analysis")
+
+        proj_mapping = pd.read_csv(os.path.join(
+            INPUTPATH, "localobservations", "mapping_wtdobsEU_TSMP_avgdup.csv"))
+        proj_mapping = proj_mapping.dropna(subset=["sim_1darrayindex"])
+        proj_mapping.reset_index(drop=True, inplace=True)
+
+        tsmp_daily = np.load(os.path.join(INPUTPATH, "wtd_2000-2015.npy"))
+        time = pd.date_range(start="2000-01-01", periods=tsmp_daily.shape[0], freq="D")
+
+        metrics = {
+            "ERA5": {"KGE": [], "Pearson correlation": [], "RMSE": [], "Bias": [], "NSE": []},
+            "TSMP": {"KGE": [], "Pearson correlation": [], "RMSE": [], "Bias": [], "NSE": []},
+        }
+
+        for pixel in range(len(proj_mapping)):
+            print(f"Processing CDF pixel {pixel+1} of {len(proj_mapping)}", end='\r')
+            country = proj_mapping.iloc[pixel]["country"]
+            lon = proj_mapping.iloc[pixel]["lon"].replace("_", "")
+            lat = proj_mapping.iloc[pixel]["lat"].replace("_", "")
+            countrylocation = f"{country}_LON{lon}LAT{lat}"
+            if countrylocation not in obswtd.columns:
+                print(f"countrylocation {countrylocation} not in obswtd columns, skipping...")
+                continue
+
+            tsmp_xindex = int(proj_mapping.iloc[pixel]["tsmp_xindex"])
+            tsmp_yindex = int(proj_mapping.iloc[pixel]["tsmp_yindex"])
+            target = int(proj_mapping.iloc[pixel]["target_chunk"])
+            sim_1darrayindex = int(proj_mapping.iloc[pixel]["sim_1darrayindex"])
+
+            sim_era5wtd = self.get_era5wtd(target, sim_1darrayindex)
+            sim_era5wtd[sim_era5wtd < 0.0] = 0.0
+            df_era5 = pd.DataFrame(sim_era5wtd.T, index=time)
+            sim_era5wtd_monthly = df_era5.resample("MS").mean().T.to_numpy()
+            ens_mean_era5wtd = np.mean(sim_era5wtd_monthly, axis=0)
+
+            # we don't have LSTM predictions using TSMP inputs for the same time period, so we will use the TSMP observations directly for comparison
+            sim_tsmpwtd = tsmp_daily[:, tsmp_yindex, tsmp_xindex]
+            sim_tsmpwtd[sim_tsmpwtd < 0.0] = 0.0
+            df_tsmp = pd.DataFrame(sim_tsmpwtd, index=time)
+            sim_tsmpwtd_monthly = df_tsmp.resample("MS").mean().to_numpy()
+            ens_mean_tsmpwtd = sim_tsmpwtd_monthly.flatten()
+            # sim_tsmpwtd = self.get_lstmtsmpwtd(target, sim_1darrayindex)
+            # sim_tsmpwtd[sim_tsmpwtd < 0.0] = 0.0
+            # df_tsmp = pd.DataFrame(sim_tsmpwtd.T, index=time)
+            # sim_tsmpwtd_monthly = df_tsmp.resample("MS").mean().T.to_numpy()
+            # ens_mean_tsmpwtd = np.mean(sim_tsmpwtd_monthly, axis=0)
+
+            localobs = np.asarray(obswtd[countrylocation].to_list(), dtype=float)
+            if len(localobs) != sim_era5wtd_monthly.shape[1] or len(localobs) != len(ens_mean_tsmpwtd):
+                print(f"lengths do not match for pixel {countrylocation}, skipping...")
+                continue
+
+            localobs_anom = localobs - np.mean(localobs)
+            ens_mean_era5wtd_anom = ens_mean_era5wtd - np.mean(ens_mean_era5wtd)
+            tsmp_anom = ens_mean_tsmpwtd - np.mean(ens_mean_tsmpwtd)
+
+            for source_name, sim_anom in [("ERA5", ens_mean_era5wtd_anom), ("TSMP", tsmp_anom)]:
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    kge = utils.calculate_kge(localobs_anom, sim_anom)
+                    rmse = np.sqrt(np.mean((localobs_anom - sim_anom) ** 2))
+                    r = np.corrcoef(localobs_anom, sim_anom)[0, 1]
+                    bias = np.mean(sim_anom - localobs_anom)
+                    nse = 1 - (np.sum((localobs_anom - sim_anom) ** 2) /
+                               np.sum((localobs_anom - np.mean(localobs_anom)) ** 2))
+                metrics[source_name]["KGE"].append(kge)
+                metrics[source_name]["Pearson correlation"].append(r)
+                metrics[source_name]["RMSE"].append(rmse)
+                metrics[source_name]["Bias"].append(bias)
+                metrics[source_name]["NSE"].append(nse)
+
+        for source_name in metrics.keys():
+            for metric_name in metrics[source_name].keys():
+                values = np.asarray(metrics[source_name][metric_name], dtype=float)
+                values = values[np.isfinite(values)]
+                metrics[source_name][metric_name] = values
+
+        if len(metrics["ERA5"]["KGE"]) == 0 or len(metrics["TSMP"]["KGE"]) == 0:
+            raise ValueError("No valid anomaly metrics were computed for CDF plotting")
+
+        metric_specs = [
+            ("Pearson correlation", {"xmin": None, "xlim": None, "yfloor": False}),
+            ("RMSE", {"xmin": None, "xlim": None, "yfloor": False, "logscale": True}),
+            ("Bias", {"xmin": None, "xlim": None, "yfloor": False, "logscale": True}),
+            ("KGE", {"xmin": 0.2, "xlim": (0.2, 1), "yfloor": True}),
+            ("NSE", {"xmin": 0.2, "xlim": (0.2, 1), "yfloor": True})
+        ]
+        for metric_name, opts in metric_specs:
+            print(f"Plotting CDF for {metric_name} anomalies...")
+            utils.plot_cdfs(
+                data_dict={
+                    "LSTM vs observations (ERA5 inputs)": metrics["ERA5"][metric_name],
+                    "TSMP-G2A vs observations": metrics["TSMP"][metric_name],
+                },
+                colors=["k", "b"],
+                linestyles=["-", "-"],
+                xlabel=metric_name,
+                title="TSMPvsERA5_against_obs",
+                **opts
+            )
+
+        return metrics
 
     def plot2Dmaps(self):
         plot_functions = plotting_helper()
-        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map.npy")),
-                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map.npy")),
-                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map.npy")),
-                         "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map.npy")),
-                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map.npy"))}
+        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map_anomalies_top10.npy")),
+                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map_anomalies_top10.npy")),
+                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map_anomalies_top10.npy")),
+                         "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map_anomalies_top10.npy")),
+                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map_anomalies_top10.npy"))}
         # plot absolute mean bias instead of mean bias
         map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
         plot_functions.doublefig_EU_2Dmap(
@@ -2147,6 +2903,26 @@ class postprocess_calculations:
             data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias", country="EU")
         plot_functions.doublefig_EU_2Dmap(
             data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE", country="EU")
+    
+    def plot2Dmaps_adaptedtoma(self):
+        plot_functions = plotting_helper()
+        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map_anomalies.npy")),
+                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map_anomalies.npy")),
+                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map_anomalies.npy")),
+                         "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map_anomalies.npy")),
+                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map_anomalies.npy"))}
+        # plot absolute mean bias instead of mean bias
+        map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
+        plot_functions.zoomed2Dmap_adaptedtoma(
+            data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE")
+        # plot_functions.zoomed2Dmap_adaptedtoma(
+        #     data_map=map2d_metrics["r"], logscale=False, minval=0, maxval=1, title="Pearson correlation")
+        # plot_functions.zoomed2Dmap_adaptedtoma(
+        #     data_map=map2d_metrics["RMSE"], logscale=True, minval=0.0, maxval=2.5, title="RMSE")
+        # plot_functions.zoomed2Dmap_adaptedtoma(
+        #     data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias")
+        # plot_functions.zoomed2Dmap_adaptedtoma(
+        #     data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE")
 
     def get_country_mask(self, country):
         mappingfile = pd.read_csv(os.path.join(
@@ -2397,13 +3173,117 @@ class postprocess_calculations:
             print(pixel)
             self.plot_heatmap_scatter(obs_pred_pixels[pixel, :, 0].flatten(),
                                       obs_pred_pixels[pixel, :, 1].flatten(), bins=30, cmap='viridis', i=pixel)
+    
+    def cdf_members_subsets(self):
+        utils = utilities()
+
+        # Pearson column: Pearson correlation
+        # RMSE column: RMSE
+        # load performance metrics for all pixels for anomalies 100 members
+        metrics_100 = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom.csv"))
+
+        # load performance metrics for all pixels for anomalies 50 members
+        metrics_50_r = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom_top50", "performance_metrics_anom_top50.csv"))
+        metrics_50_rmse = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom_top50", "rmse", "performance_metrics_anom_top50.csv"))
+
+        # load performance metrics for all pixels for anomalies 20 members
+        metrics_20_r = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom_top20", "performance_metrics_anom_top20.csv"))
+        metrics_20_rmse = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom_top20", "rmse", "performance_metrics_anom_top20.csv"))
+
+        # load performance metrics for all pixels for anomalies 10 members
+        metrics_10_r = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom_top10", "pearson", "performance_metrics_anom_top10.csv"))
+        metrics_10_rmse = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom_top10", "rmse", "performance_metrics_anom_top10.csv"))
+        metrics_10_ratio = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom_top10", "performance_metrics_anom_top10.csv"))
+
+        def _clean_metric_values(df, metric_name):
+            values = np.asarray(df[metric_name], dtype=float)
+            values = values[np.isfinite(values)]
+            return values
+
+        metric_sets = {
+            "100 members": {
+                "Pearson correlation": _clean_metric_values(metrics_100, "Pearson correlation"),
+                "RMSE": _clean_metric_values(metrics_100, "RMSE"),
+            },
+            "50 members (best RMSE)": {
+                "Pearson correlation": _clean_metric_values(metrics_50_rmse, "Pearson correlation"),
+                "RMSE": _clean_metric_values(metrics_50_rmse, "RMSE"),
+            },
+            "20 members (best RMSE)": {
+                "Pearson correlation": _clean_metric_values(metrics_20_rmse, "Pearson correlation"),
+                "RMSE": _clean_metric_values(metrics_20_rmse, "RMSE"),
+            },
+            "10 members (best RMSE)": {
+                "Pearson correlation": _clean_metric_values(metrics_10_rmse, "Pearson correlation"),
+                "RMSE": _clean_metric_values(metrics_10_rmse, "RMSE"),
+            },
+            "50 members (best Pearson correlation)": {
+                "Pearson correlation": _clean_metric_values(metrics_50_r, "Pearson correlation"),
+                "RMSE": _clean_metric_values(metrics_50_r, "RMSE"),
+            },
+            "20 members (best Pearson correlation)": {
+                "Pearson correlation": _clean_metric_values(metrics_20_r, "Pearson correlation"),
+                "RMSE": _clean_metric_values(metrics_20_r, "RMSE"),
+            },
+            "10 members (best Pearson correlation)": {
+                "Pearson correlation": _clean_metric_values(metrics_10_r, "Pearson correlation"),
+                "RMSE": _clean_metric_values(metrics_10_r, "RMSE"),
+            },
+            "10 members (best RMSE/Pearson correlation)": {
+                "Pearson correlation": _clean_metric_values(metrics_10_ratio, "Pearson correlation"),
+                "RMSE": _clean_metric_values(metrics_10_ratio, "RMSE"),
+            },
+        }
+
+        for metric_name in ["Pearson correlation", "RMSE"]:
+            data_dict = {
+                subset_name: metric_sets[subset_name][metric_name]
+                for subset_name in metric_sets.keys()
+            }
+            plot_kwargs = {
+                "xlabel": metric_name,
+                "title": f"member_subset_{metric_name.lower().replace(' ', '_')}",
+                "colors": ["k", "tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown", "tab:pink"],
+                "linestyles": ["-", ":", ":", ":", ":", ":", ":", ":"],
+            }
+            if metric_name == "Pearson correlation":
+                pass
+                # plot_kwargs.update({"xmin": 0.2, "xlim": (0.2, 1), "yfloor": True})
+            else:
+                plot_kwargs.update({"logscale": True})
+            utils.plot_cdfs(data_dict=data_dict, **plot_kwargs)
+
+    def test_wtd2000(self):
+        # load the tsmp wtd2000-2015.npy
+        tsmp_daily = np.load(os.path.join(INPUTPATH, "wtd_2000-2015.npy"))
+        # plot timeseries for the years 2000 and 2001
+        print(f"tsmp_daily shape: {tsmp_daily.shape}")
+        plt.figure(figsize=(12, 6))
+        plt.plot(tsmp_daily[:365, 222, 219], label="2000")
+        plt.plot(tsmp_daily[365:365*2, 222, 219], label="2001")
+        plt.xlabel("Time")
+        plt.ylabel("Value")
+        plt.title("TSMP WTD 2000-2015")
+        plt.legend()
+        plt.savefig(os.path.join(OUTPUTPATH, "wtd_2000-2015.png"))
+        plt.close()
+
 
     def postprocess_era5wtd_vs_obs(self):
-        # self.ensemble_statvsacc()
+        self.ensemble_statvsacc()
         # self.ensemble_statvsacc_fitting()
+        # self.ensemble_statvsacc_fitting_colored_by_wtd()
         # self.fit_ensvar_rmse_r()
         # self.onepoint_distribution()
-        self.eval_era5wtd_obswtd_tsmpwtd()
+        # self.eval_era5wtd_obswtd_tsmpwtd() # magnitude comparison
+        # self.eval_era5wtd_obswtd_tsmpwtd_anomalies() # anomalies comparison
+        # self.cdf_metrics_era5_vs_tsmp_anomalies()
+        # self.select_best_50_members_rmse(members_filepath=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "sim_members_anomalies.npy"),
+        #                                  obs_filepath=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "obs_anomalies.npy"),
+        #                                  save_dir=None)
+        # self.select_best_50_members_pearson(members_filepath=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "sim_members_anomalies.npy"),
+        #                                  obs_filepath=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "obs_anomalies.npy"),
+        #                                  save_dir=None)
 
         # self.metrics_stat_pdf()
         # this was the last one
@@ -2413,6 +3293,9 @@ class postprocess_calculations:
         # self.plot2dmap_probability()
 
         # self.plot2Dmaps()
+        # self.plot2Dmaps_adaptedtoma()
         # self.plot_cdfs()
         # self.yx_accuracy_plot()
         # self.location_of_localobs()
+        # self.cdf_members_subsets()
+        # self.test_wtd2000()        
