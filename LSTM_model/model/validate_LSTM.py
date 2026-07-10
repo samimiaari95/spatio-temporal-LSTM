@@ -1,6 +1,7 @@
 import numpy as np
 import pickle
 import h5py
+import datetime
 from torch.utils.data import DataLoader, TensorDataset, Dataset
 from LSTM_model.model.config import *
 from LSTM_model.utils.utils import utilities
@@ -17,10 +18,11 @@ class MyDataset(Dataset):
         # all input features in one file of shape (datapoints, lookback, # of features)
         inputs = self.datafile["input_data"][idx]
         outputs = self.datafile["target_data"][idx]
-        return torch.from_numpy(inputs).float().to(self.device), torch.from_numpy(outputs).float().to(self.device)
+        return torch.from_numpy(np.asarray(inputs)).float(), torch.from_numpy(np.asarray(outputs)).float()
 
 class transfer_ensemble_LSTM:
     def transfer_ensemble(self):
+        print(f"time: {datetime.datetime.now().time()}")
         def get_local_rank():
             """Return the local rank of this process."""
             return int(os.getenv('LOCAL_RANK'))
@@ -87,27 +89,32 @@ class transfer_ensemble_LSTM:
         test_o = []
         with torch.no_grad():
             for inputs, y in test_dataloader:
+                inputs = inputs.to(device)
+                #y = y.to(device)
                 y_hat = lstm_model(inputs)
                 test_s.append(y_hat.flatten())
-                test_o.append(y)
-                loss = criterion(y_hat.flatten(), y)
-                print(f"loss={loss.item()}")
-                total_loss += loss.item()
+                #test_o.append(y)
+                # loss = criterion(y_hat.flatten(), y)
+                # print(f"loss={loss.item()}")
+                # total_loss += loss.item()
+                print(f"batch iteration: {total_loss}")
+                total_loss += 1
 
-        test_loss = total_loss / len(test_dataloader)
-        print(f'Test Loss: {test_loss:.4f}')
+        # test_loss = total_loss / len(test_dataloader)
+        # print(f'Test Loss: {test_loss:.4f}')
 
+        # TODO check if the reshaping is correct
         sim_stand = torch.cat(test_s).cpu().numpy().reshape(TEST_PERIOD-LOOKBACK, int(len(torch.cat(test_s).cpu().numpy())/(TEST_PERIOD-LOOKBACK)))
-        obs_stand = torch.cat(test_o).cpu().numpy().reshape(TEST_PERIOD-LOOKBACK, int(len(torch.cat(test_o).cpu().numpy())/(TEST_PERIOD-LOOKBACK)))
+        # obs_stand = torch.cat(test_o).cpu().numpy().reshape(TEST_PERIOD-LOOKBACK, int(len(torch.cat(test_o).cpu().numpy())/(TEST_PERIOD-LOOKBACK)))
 
         # standardization
         # compare it with the original values to confirm the standardization process
-        # TODO battabombabav probably the means_std for target are not found in previous and so calculated based on this period
-        obs_destand = obs_stand*means_stds[f"wtdstd"] + means_stds[f"wtdmean"]
+        # obs_destand = obs_stand*means_stds[f"wtdstd"] + means_stds[f"wtdmean"]
         sim_destand = sim_stand*means_stds[f"wtdstd"] + means_stds[f"wtdmean"]
-        print(f"obs destand shape: {obs_destand.shape}")
+        # print(f"obs destand shape: {obs_destand.shape}")
         print(f"sim destand shape: {sim_destand.shape}")
-        np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{member}", f"obs_localobspixels.npy"), obs_destand)
+        # np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{member}", f"obs_localobspixels.npy"), obs_destand)
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{member}", f"sim_ERA5onlocalobspixels.npy"), sim_destand)
         torch.distributed.destroy_process_group()
+        print(f"time: {datetime.datetime.now().time()}")
         return print("saved destandardized arrays")
