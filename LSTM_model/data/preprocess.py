@@ -18,24 +18,22 @@ class preprocessing_data:
 
     def conc_vars(self):
         dirpath = os.path.join(INPUTPATH, "raw", "ERA5-Land", "npy_regridded_to_EUR11")
-        output_dic = {"tp": np.array([]), "swvl3": np.array([]), "vpd": np.array([])}
+        vars = ["tp", "swvl3", "vpd"]
         months = ["01","02","03","04","05","06","07","08","09","10","11","12"]
         months.sort()
-        for var in output_dic.keys():
+        period = (1995, 2016) #both years included
+        for var in vars:
             print(var)
-            for year in range(1999, 2016):
+            dataarray = np.array([])
+            for year in range(period[0], period[1]+1):
                 for month in months:
                     print(f"year: {year}, month: {month}")
                     data = np.load(os.path.join(dirpath, f"{var}_{year}{month}_EU.npy"))
-                    if len(output_dic[f"{var}"])>=1:
-                        output_dic[f"{var}"] = np.concatenate((output_dic[f"{var}"], data), axis=0)
+                    if len(dataarray)>=1:
+                        dataarray = np.concatenate((dataarray, data), axis=0)
                     else:
-                        output_dic[f"{var}"] = data
-
-        for key in output_dic.keys():
-            print(key)
-            print(output_dic[key].shape)
-            np.save(os.path.join(INPUTPATH, f"{key}_EU.npy"), output_dic[key])
+                        dataarray = data
+            np.save(os.path.join(INPUTPATH, f"{var}_{period[0]}_{period[1]}.npy"), dataarray)
 
     def features_correlation(self):
         plot_functions = plotting_helper()
@@ -60,10 +58,42 @@ class preprocessing_data:
             print(vardata.shape)
             if len(vardata.shape)>2:
                 vardata = vardata[0,:,:]
-            arr3d = np.repeat(vardata[np.newaxis, :, :], 6205, axis=0)
+            arr3d = np.repeat(vardata[np.newaxis, :, :], 365*22, axis=0)
             print(arr3d.shape)
             np.save(os.path.join(INPUTPATH, varname), arr3d)
+    
+    def repeat_wtd_timeseries(self):
+        # Extend the daily WTD timeseries from 2000-2015 to 1996-2016 by repeating the
+        # first available year for 1996-1999 and the last available year for 2016.
+        wtd = np.load(os.path.join(INPUTPATH, TARGETVAR_FILE))
+        print("Loaded WTD shape:", wtd.shape)
 
+        if wtd.ndim != 3:
+            raise ValueError(f"Expected a 3D WTD array, got shape {wtd.shape}")
+
+        if wtd.shape[0] % 365 != 0:
+            raise ValueError(f"Expected daily data in yearly chunks of 365 days, got {wtd.shape[0]} rows")
+
+        n_years = wtd.shape[0] // 365
+        if n_years < 1:
+            raise ValueError("Input WTD array does not contain a full year of data")
+
+        first_year = wtd[:365]
+        last_year = wtd[(n_years - 1) * 365:n_years * 365]
+
+        extended_wtd = np.concatenate(
+            [np.repeat(first_year[None, :, :, :], 4, axis=0).reshape(-1, *first_year.shape[1:]),
+             wtd,
+             np.repeat(last_year[None, :, :, :], 1, axis=0).reshape(-1, *last_year.shape[1:])],
+            axis=0,
+        )
+
+        out_path = os.path.join(INPUTPATH, "wtd_1996-2016.npy")
+        np.save(out_path, extended_wtd)
+        print("Saved extended WTD shape:", extended_wtd.shape)
+        print("Saved to:", out_path)
+        return extended_wtd
+    
     def subset_excl_waterbodies(self):
         wtd = np.load(os.path.join(os.path.dirname(INPUTPATH), "wtd.npy"))
 
@@ -178,33 +208,6 @@ class preprocessing_data:
             mapping = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", f"choices.npy"))
             var = var[:,mapping==1]
             np.save(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", varname), var)
-
-    def distribute_onehotencoding(self, vardata, varname):
-        for i in range(vardata.shape[1]):
-            print(i+1)
-            onedimdata = vardata[:,i]
-            onedimdata = onedimdata.reshape(-1,vardata.shape[0])
-            onedimdata = np.repeat(onedimdata, 365*20, axis=0)
-            np.save(os.path.join(INPUTPATH, f"{varname.replace('.npy',f'_{i+1}.npy')}"), onedimdata)
-
-    def apply_onehotencoding(self):
-        # Load the numpy file (adjust file path as needed)
-        file_path = os.path.join(INPUTPATH,"soilind.npy")  # Replace this with the actual path
-        soilind = np.load(file_path)
-        # Since it's a static feature, select the first timestep (axis=0)
-        static_features = soilind[0, :]  # Taking the first timestep
-        # Reshape to make it compatible with OneHotEncoder
-        static_features_reshaped = static_features.reshape(-1, 1)
-        # Initialize OneHotEncoder
-        encoder = OneHotEncoder(sparse=False, categories='auto')
-        # Fit and transform the data to get one-hot encoded values
-        one_hot_encoded = encoder.fit_transform(static_features_reshaped)
-        # Display the shape of the result and preview the encoded array
-        print(f"Original shape: {static_features.shape}")
-        print(f"One-hot encoded shape: {one_hot_encoded.shape}")
-        print(f"One-hot encoded preview:\n{one_hot_encoded[:5]}")
-        # save a separate file for each hot-encoded dimension
-        self.distribute_onehotencoding(one_hot_encoded, "soilind.npy")
 
     def var_timeseries(self, pixel, varname):
         vardata = np.load(os.path.join(INPUTPATH, varname))
@@ -418,14 +421,14 @@ class preprocessing_data:
                     # make the difference relative to ERA5
                     # avoid division by zero
                     era_sum_m = np.where(era_sum_m==0, 1e-6, era_sum_m)
-                    diff = (tsmp_sum_m - era_sum_m) / era_sum_m
+                    diff = (tsmp_sum_m - era_sum_m) / tsmp_sum_m
                     diffs.append(diff)
                 else:
                     era_avg_m = np.mean(eradata[mask_m, ...], axis=0)
                     tsmp_avg_m = np.mean(tsmpdata[mask_m, ...], axis=0)
                     # avoid division by zero
                     era_avg_m = np.where(era_avg_m==0, 1e-6, era_avg_m)
-                    diffs_m = (tsmp_avg_m - era_avg_m) / era_avg_m
+                    diffs_m = (tsmp_avg_m - era_avg_m) / tsmp_avg_m
                     diffs.append(diffs_m)
 
             # global symmetric color scale
@@ -492,3 +495,156 @@ class preprocessing_data:
             if datashape != (28, 541, 1171) and datashape != (29, 541, 1171) and datashape != (30, 541, 1171) and datashape != (31, 541, 1171):
                 raise ValueError(f"Unexpected shape {datashape} in file {file}")
             print(f"max: {np.max(data)}, min: {np.min(data)}, mean : {np.mean(data)}")
+    
+    def compare_input_datasets(self):
+        # compare the 3 variables for the ERA5 and TSMP datasets (tp, swvl3, vpd) in pearson correlation
+        # load the ERA5 dataset
+        tp = np.load(os.path.join(INPUTPATH, "tp_EU.npy"))
+        swvl3 = np.load(os.path.join(INPUTPATH, "swvl3_EU.npy"))
+        vpd = np.load(os.path.join(INPUTPATH, "vpd_EU.npy"))
+        tp = tp[365*2:,:,:]
+        swvl3 = swvl3[365*2:,:,:]
+        vpd = vpd[365*2:,:,:]
+        print("tp shape:", tp.shape)
+        print("swvl3 shape:", swvl3.shape)
+        print("vpd shape:", vpd.shape)
+        # start='2000-01-01', end='2015-12-31'
+        # load the TSMP dataset
+        dirpath = os.path.join(os.path.dirname(os.path.dirname(get_root_dir())), "spatio-temporal-LSTM", "inputs", "20yrs_ts")
+        tp_tsmp = np.load(os.path.join(dirpath, "TOT_PREC.npy"))[:365*15,:,:]
+        swvl3_tsmp = np.load(os.path.join(dirpath, "soilmoisture.npy"))[:365*15,:,:]
+        vpd_tsmp = np.load(os.path.join(dirpath, "vpd.npy"))[:365*15,:,:]
+        print("tp_tsmp shape:", tp_tsmp.shape)
+        print("swvl3_tsmp shape:", swvl3_tsmp.shape)
+        print("vpd_tsmp shape:", vpd_tsmp.shape)
+        # map to obs
+        mapping = pd.read_csv(os.path.join(INPUTPATH, "localobservations", "mapping_wtdobsEU_TSMP_avgdup.csv"))
+        print(mapping)
+        map2d = np.load(os.path.join(INPUTPATH, "mapping_0stdroll6months.npy"))
+        map2d = np.zeros(map2d.shape) # ignore mapping for now, just compare the full datasets
+        map2d[map2d==0] = np.nan
+        for i in range(len(mapping)):
+            map2d[mapping.loc[i, "tsmp_yindex"], mapping.loc[i, "tsmp_xindex"]] = 1
+        # calculate the pearson correlation between the two datasets for each variable
+        from scipy.stats import pearsonr
+        plot_functions = plotting_helper()
+        for var, var_tsmp, varname in zip([tp, swvl3, vpd], [tp_tsmp, swvl3_tsmp, vpd_tsmp], ["Precipitation", "soil moisture", "vpd"]):
+            corr_map = np.zeros(var.shape[1:])
+            for i in range(var.shape[1]):
+                for j in range(var.shape[2]):
+                    if np.isnan(map2d[i,j]):
+                        corr_map[i,j] = np.nan
+                        continue
+                    corr, _ = pearsonr(var[:,i,j], var_tsmp[:,i,j])
+                    corr_map[i,j] = corr
+            plot_functions.doublefig_EU_2Dmap(corr_map, False, 0,1,f"correlation_{varname}_ERA5vsTSMP","EU")
+            # save the correlation npy
+            np.save(os.path.join(INPUTPATH, "checkinputs", f"correlation_ERA5vsTSMP_{varname}.npy"), corr_map)
+    
+        # highlight the points with high correlation and low correlation in the mapping file to later highlight in the statfitting
+
+    def relativecompare_input_datasets(self):
+        # TODO ask the agent to use the same code as in plot_inputvars to calculate the relative difference between the two datasets (TSMP-ERA5)/TSMP
+        pass
+
+    def mapping_localobs(self):
+        obsfilepath = os.path.join(INPUTPATH, "wtd_obsEU_YMA_1996_2016.npy")
+        obswtda = np.load(obsfilepath)
+        obswtda = np.mean(obswtda, axis=0)
+        # mapping = np.zeros(obswtda.shape)
+        mapping = np.where(np.isnan(obswtda), 0, 1)
+        print(mapping.shape)
+        print(np.sum(mapping))
+        print(np.unique(mapping, return_counts=True))
+        np.save(os.path.join(INPUTPATH, "mapping_wtdobs_YMA.npy"), mapping)
+
+
+    def save_to_hdf5(self, input_data, target_data, filepath, chunk_size=None):
+        """
+        input_data: 3D numpy array (datapoints, lookback, num_features)
+        target_data: 1D numpy array (datapoints,)
+        """
+        assert input_data.shape[0] == target_data.shape[0], "input_data and target_data must have same number of datapoints"
+
+        n_samples, lookback, n_features = input_data.shape
+
+        # Reasonable default chunking: one chunk = one sample's window.
+        # This makes single-item __getitem__ reads fast since each read
+        # pulls exactly one contiguous chunk from disk.
+        if chunk_size is None:
+            chunk_size = (1, lookback, n_features)
+
+        with h5py.File(filepath, 'w') as f:
+            f.create_dataset(
+                'input_data', data=input_data.astype(np.float32),
+                chunks=chunk_size
+            )
+            f.create_dataset(
+                'target_data', data=target_data.astype(np.float32),
+                chunks=(1,)
+            )
+        f.close()
+
+        print(f"Saved {n_samples} samples to {filepath}")
+        print(f"input_data shape: {input_data.shape}, target_data shape: {target_data.shape}")
+    
+    # call here the function to prepare input array and also target array
+    def prepare_input_target_arrays_in_hdf5(self):
+        mapping = np.load(os.path.join(INPUTPATH, "mapping_wtdobs_YMA.npy"))
+        # import training mean and std (saved during training process)
+        for member in range(94,100):
+            print(f"Preparing input and target arrays for member {member}")
+            with open(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{member}", f"meanstd_400px_member_{member}_{MODEL_NAME}.pkl"), 'rb') as f:
+                means_stds = pickle.load(f)
+            f.close()
+
+            featuresnamesintraining = ['TOT_PREC', 'vpd', 'soilmoisture', 'slopex', 'slopey', 'soilind', 'lon2D_ts', 'lat2D_ts', 'wtd']
+            featuresnamesintransfer = FEATURES_FILES + [TARGETVAR_FILE]
+            means_std_mapping = {featuresnamesintransfer[i]: featuresnamesintraining[i] for i in range(len(featuresnamesintransfer))}
+
+            ####### target var #######
+            raw_data = np.load(os.path.join(INPUTPATH, TARGETVAR_FILE)).astype(np.float32)
+            raw_data = np.nan_to_num(raw_data)
+            raw_data[raw_data < 0.0] = 0
+            raw_data = raw_data[:,mapping==1]
+            data = raw_data[:TEST_PERIOD-LOOKBACK, :, :] if len(raw_data.shape)>2 else raw_data[:TEST_PERIOD-LOOKBACK, :]
+            data = (data - means_stds[f"{means_std_mapping[TARGETVAR_FILE]}mean"])/means_stds[f"{means_std_mapping[TARGETVAR_FILE]}std"]
+            data = data.flatten()
+            raw_data = None
+            target_data = data.astype(np.float32)
+
+            ####### input vars #######
+            all_inputs = np.array([])
+            for inputvar in FEATURES_FILES:
+                print(inputvar)
+                raw_data = np.load(os.path.join(INPUTPATH, inputvar)).astype(np.float32)
+                raw_data = raw_data[:,mapping==1]
+                raw_data = raw_data.reshape(raw_data.shape[0], NB_CELLS) if len(raw_data.shape)>2 else raw_data
+                data = raw_data[:TEST_PERIOD, :]
+                data = np.moveaxis(data, 0, -1) # (cells, timeseries)
+                data = (data - means_stds[f"{means_std_mapping[inputvar]}mean"])/means_stds[f"{means_std_mapping[inputvar]}std"]
+
+                lookback_arrays = [data[:, i-LOOKBACK:i] for i in range(LOOKBACK, TEST_PERIOD)]
+                lookback_arrays = np.array(lookback_arrays)
+
+                f1 = lookback_arrays.reshape(-1, LOOKBACK)
+                f1 = np.array([f1])
+                all_inputs = np.concatenate((all_inputs,f1), axis=0) if len(all_inputs)>0 else f1
+
+            all_inputs = np.moveaxis(all_inputs, 0, -1)
+            all_inputs = all_inputs.astype(np.float32)
+            f1 = None
+            lookback_arrays = None
+            data = None
+            raw_data = None
+
+            # save to hdf5
+            self.save_to_hdf5(all_inputs, target_data, os.path.join(INPUTPATH, "validation_ERA5", f"400px_member_{member}", f"standardized3dinput1dtarget_{member}.h5"))
+            target_data = None
+            all_inputs = None
+    
+    def test_hdf5(self):
+        with h5py.File(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_t2m_199604.nc"), "r") as f:
+            inputs = f["t2m"][()]
+        h5py.File.close(f)
+        print(inputs.shape)
