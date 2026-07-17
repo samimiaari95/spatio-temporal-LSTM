@@ -408,20 +408,48 @@ class postprocess_calculations:
         plt.grid()
         plt.savefig(os.path.join(os.path.dirname(os.path.dirname(OUTPUTPATH)), "validation_400_withcriteria_43226", "timeseries_EV_KGElessthan02", f"ensemble_timeseries_{target}_{i}.png"))
 
+    def split_transfersubset_into_fitandvalidate_subsets(self):
+        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "transfer_subset.npy"))
+        utils = utilities()
+        outpath = os.path.join(os.path.dirname(INPUTPATH), "target_pixels")
+        utils.make_dir(outpath)
+
+        transfer_indices = np.where(transfer_subset == 1)
+        transfer_pixels = np.column_stack(transfer_indices)
+        num_transfer_pixels = transfer_pixels.shape[0]
+
+        rng = np.random.default_rng(0)
+        shuffled_indices = rng.permutation(num_transfer_pixels)
+        num_fit_pixels = int(np.floor(0.8 * num_transfer_pixels))
+
+        fit_pixels = transfer_pixels[shuffled_indices[:num_fit_pixels]]
+        validate_pixels = transfer_pixels[shuffled_indices[num_fit_pixels:]]
+
+        fit_subset = np.full(transfer_subset.shape, np.nan)
+        validate_subset = np.full(transfer_subset.shape, np.nan)
+
+        fit_subset[fit_pixels[:, 0], fit_pixels[:, 1]] = 1
+        validate_subset[validate_pixels[:, 0], validate_pixels[:, 1]] = 1
+
+        np.save(os.path.join(outpath, "spreadskill_fit_subset.npy"), fit_subset)
+        np.save(os.path.join(outpath, "spreadskill_heldout_subset.npy"), validate_subset)
+
+        print(f"transfer pixels: {num_transfer_pixels}")
+        print(f"fit pixels: {len(fit_pixels)}")
+        print(f"validation pixels: {len(validate_pixels)}")
+        print(fit_subset.shape)
+        print(validate_subset.shape)
+        print(np.sum(fit_subset==1))
+        print(np.sum(validate_subset==1))
 
     def ensemble_statvsacc(self):
         utils = utilities()
-        EU_validation = "validation_400_withcriteria_43226"
-        EU_trian = "validation_400_withcriteria_43226"
         EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
-        EU_train_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_trian}/inputs/20yrs_ts/ensemble_400px", "target_pixels")
-        transfer_subset = np.load(os.path.join(EU_train_inpath, "transfer_subset.npy"))
+        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "transfer_subset.npy"))
 
         #transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
         df_dic = {"mean_membersobs_RMSE":[], "mean_membersobs_correlation":[], "mean_membersobs_KGE":[], "KGE_nobias":[], "stdsim":[], "stdobs":[], "meansim":[], "meanobs":[], "Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "KGE'":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Ensemble variance":[], "IQR (75-25%)":[], "std":[], "cv":[], "mad":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
-        x_axis = []
-        y_axis = []
         for target in range(100):
             target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
             transfer_indices, ind2d = utils.intersect_subsets(target_map, transfer_subset)
@@ -548,14 +576,11 @@ class postprocess_calculations:
                 nse = 1 - (np.sum((obs[:,pixel] - mean_prediction) ** 2) / np.sum((obs[:,pixel] - np.mean(obs[:,pixel])) ** 2))
                 df_dic["NSE"].append(nse)
                 
-                # x_axis.append(ensemble_variance)
-                # y_axis.append(kgeprime)
-                # if kge<0.2 and ensemble_variance<1:
-                #     self.plot_ensemble_statsvsacc_timeseries(target, pixel, members_sim, mean_prediction, obs[:,pixel], f'{kge:.2f}', f'{math.ceil(ensemble_variance)}')
+                # self.plot_ensemble_statsvsacc_timeseries(target, pixel, members_sim, mean_prediction, obs[:,pixel], f'{kge:.2f}', f'{math.ceil(ensemble_variance)}')
 
         ####### save to csv ########
         df = pd.DataFrame(df_dic)
-        df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"), index=False)
+        df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
 
     def kge_investigation(self):
         df = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
@@ -731,8 +756,9 @@ class postprocess_calculations:
                 # bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
             )
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.eps"), dpi=300)
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.pdf"), dpi=300)
+        # plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.eps"), dpi=300)
+        # plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.pdf"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.png"), dpi=300)
 
     def ensemble_statvsacc_fitting(self):
         ####### old version --- replaced with create_group_figure ##########
@@ -1336,14 +1362,14 @@ class postprocess_calculations:
             ("NSE","Ensemble variance"),
             ("NSE","IQR (75-25%)")
         ]
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
-        # self.create_group_figure(stat, comb8, "figure8", ncols=2)
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
+        self.create_group_figure(stat, comb8, "figure8", ncols=2)
         # self.create_group_figure(stat, comb9, "figure9", ncols=2)
         # self.create_group_figure(stat, comb10, "figure10", ncols=2)
         # self.ensemble_crpsvsstats_fitting()
         # self.create_kge_component_figure(stat, "figureA1")
         # self.create_group_figure(stat, combB2, "figureB3", ncols=2)
-        self.create_pairwise_corr_figure(stat, "figureD1")
+        # self.create_pairwise_corr_figure(stat, "figureD1")
 
     def cdf_EU(self):
         def calc_correlation(obs, sim):
@@ -2112,7 +2138,7 @@ class postprocess_calculations:
     def metrics_2D_EU(self):
         plot_functions = plotting_helper()
         corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU()
-
+        return rmse2d
         # get indices where kge<0.2
         kge2d = np.where(kge2d<0.2, np.nan, kge2d)
         nse2d = np.where(np.isnan(kge2d), np.nan, nse2d)
@@ -2516,7 +2542,7 @@ class postprocess_calculations:
         plot_functions.EU_2Dmap_predictedaccfromstats(
             data_map=rmse2d_statspred,
             logscale=True,
-            minval=0.01,
+            minval=0.1,
             maxval=10,
             title="RMSE",
             ax=axes[0],
@@ -2543,13 +2569,121 @@ class postprocess_calculations:
         )
 
         plt.savefig(
-            os.path.join(OUTPUTPATH, "figure12.eps"),
+            os.path.join(OUTPUTPATH, "figure12.pdf"),
             dpi=300,
             bbox_inches='tight'
         )
 
+        plt.close()
+    
+    def estimate_acc_from_stats_posterversion(self):
+        utils = utilities()
+        plot_functions = plotting_helper()
+        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
+        EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
+        rollsubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months.npy"))
+        iqrmap = np.zeros(rollsubset.shape)
+        iqrmap[iqrmap==0] = np.nan
+        varmap = np.zeros(rollsubset.shape)
+        varmap[varmap==0] = np.nan
+        print("Progress: [" + "." * 100 + "]", flush=True)
+        print("          [", end="", flush=True)
+        for target in range(100):
+            print(".", end="", flush=True)  # Dots without newlines
+            target_mapping = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            #obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            members_sim = np.array(members_sim)
+            members_sim = np.expand_dims(members_sim, axis=0)
+            members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+            mean_iqr = np.zeros((members_sim.shape[2]))
+            mean_var = np.zeros((members_sim.shape[2]))
+            untrained_pixel_mask = np.ones(members_sim.shape[2], dtype=bool)
+            for member in range(100):
+                member_mask = np.ones(100, dtype=bool)
+                member_mask[member] = False
+                pixel_mask = np.zeros(members_sim.shape[2], dtype=bool)
+                # get the 2d mapping file of indices of pixels used in training this member
+                member_mapping = np.load(os.path.join(EU_traininpath, f"400px_member_{member}", "choices.npy"))
+                # call function here to find which pixels of my target chunk were included in the training of this specific member
+                indices1d, indices2d = utils.intersect_subsets(target_mapping, member_mapping)
+                # chunk pixels included in training are set as True
+                pixel_mask[indices1d] = True
+                # keep track of pixels included in training any member
+                untrained_pixel_mask[indices1d] = False
+                # For pixels where pixel_mask=False (pixels included in training this member) 
+                # then get the Mean over SELECTED MEMBERS (member_mask=True) excluding the one False member (the loop member)
+                trained_pixels_ts = members_sim[member_mask, :, :][..., pixel_mask] # select 99 members of training pixel
+                trained_pixels_iqr = np.percentile(trained_pixels_ts, 75, axis=0) - np.percentile(trained_pixels_ts, 25, axis=0)  # IQR
+                trained_pixels_iqr = np.nanmean(trained_pixels_iqr, axis=0)  # Mean IQR over time
+                mean_iqr[pixel_mask] = trained_pixels_iqr
+                
+                trained_pixels_var = np.var(trained_pixels_ts, axis=0)
+                trained_pixels_var = np.nanmean(trained_pixels_var, axis=0)
+                mean_var[pixel_mask] = trained_pixels_var
+                
+            # For other pixels (not included in training any member) get the Mean over ALL MEMBERS (axis=0)
+            untrained_pixels_ts = members_sim[..., untrained_pixel_mask]
+
+            untrained_pixels_iqr = np.percentile(untrained_pixels_ts, 75, axis=0) - np.percentile(untrained_pixels_ts, 25, axis=0)  # IQR
+            untrained_pixels_iqr = np.nanmean(untrained_pixels_iqr, axis=0)  # Mean IQR over time
+            untrained_pixels_var = np.var(untrained_pixels_ts, axis=0)
+            untrained_pixels_var = np.nanmean(untrained_pixels_var, axis=0)
+                
+            mean_iqr[untrained_pixel_mask] = untrained_pixels_iqr
+            mean_var[untrained_pixel_mask] = untrained_pixels_var
+            indices1d, indices2d = utils.intersect_subsets(target_mapping, rollsubset)
+            iqrmap[indices2d] = mean_iqr[indices1d]
+            varmap[indices2d] = mean_var[indices1d]
+            #print(f"saved target {target}")
+
+        print("] Done!", flush=True)
+        bias2d_statspred = 0.45*(iqrmap**1.03)
+        rmse2d_statspred = 0.67*(varmap**0.45)
+        # ----- create combined figure -----
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        fig, axes = plt.subplots(
+            1, 2,
+            figsize=(7.09, 2.76),
+            subplot_kw={'projection': projection}
+        )
+
+        # (a) RMSE
+        plot_functions.EU_2Dmap_predictedaccfromstats(
+            data_map=rmse2d_statspred,
+            logscale=True,
+            minval=0.1,
+            maxval=10,
+            title="RMSE",
+            ax=axes[0],
+            panel_label="(A)"
+        )
+
+        # (b) RMSE from obs
+        rmse2d_predvsobs = self.metrics_2D_EU()
+        plot_functions.EU_2Dmap_predictedaccfromstats(
+            data_map=rmse2d_predvsobs,
+            logscale=True,
+            minval=0.1,
+            maxval=10,
+            title="RMSE",
+            ax=axes[1],
+            panel_label="(B)"
+        )
+
+        plt.subplots_adjust(
+            left=0.03,
+            right=0.97,
+            top=0.95,
+            bottom=0.05,
+            wspace=0.08
+        )
+
+
         plt.savefig(
-            os.path.join(OUTPUTPATH, "figure12.pdf"),
+            os.path.join(OUTPUTPATH, "figure12posterversion.png"),
             dpi=300,
             bbox_inches='tight'
         )
@@ -3155,3 +3289,393 @@ class postprocess_calculations:
             print(f"{metric_name} relative difference test vs transfer 100px: {relative_difference[metric_name]['transfer_vs_test_100px']:.2f} %")
             print(f"{metric_name} relative difference transfer 400px vs 100px: {relative_difference[metric_name]['transfer_400px_vs_100px']:.2f} %")
             print(f"{metric_name} relative difference test 400px vs 100px: {relative_difference[metric_name]['test_400px_vs_100px']:.2f} %")
+
+    def plot2dmap_trainingpixels(self):
+        plot_functions = plotting_helper()
+        dirpath = os.path.join(os.path.dirname(get_root_dir()), "fork", "train_400_withcriteria_43226", "inputs", "20yrs_ts", "ensemble_400px")
+        for i in range(100):
+            print(i)
+            choicespath = os.path.join(dirpath, f"400px_member_{i}", "choices.npy")
+            plot_functions.selectedpixels_in_EU(choicespath, i)
+    
+    def ensemble_statvsacc_anomalies(self):
+        utils = utilities()
+        EU_validation = "validation_400_withcriteria_43226"
+        EU_trian = "validation_400_withcriteria_43226"
+        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
+        EU_train_inpath = os.path.join(f"/p/project1/cslts/miaari1/python_scripts/fork/{EU_trian}/inputs/20yrs_ts/ensemble_400px", "target_pixels")
+        transfer_subset = np.load(os.path.join(EU_train_inpath, "transfer_subset.npy"))
+
+        #transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
+        df_dic = {"mean_membersobs_RMSE":[], "mean_membersobs_correlation":[], "mean_membersobs_KGE":[], "KGE_nobias":[], "stdsim":[], "stdobs":[], "meansim":[], "meanobs":[], "Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "KGE'":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Ensemble variance":[], "IQR (75-25%)":[], "std":[], "cv":[], "mad":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
+        x_axis = []
+        y_axis = []
+        for target in range(100):
+            target_map = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
+            transfer_indices, ind2d = utils.intersect_subsets(target_map, transfer_subset)
+            obs = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            obs = obs[:, transfer_indices] # keep only transfer pixels
+            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            members_sim = np.array(members_sim)
+            members_sim = np.expand_dims(members_sim, axis=0)
+            members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+            # NOTE we do this acc and statistics relationship only for transfer pixels because
+            # 1- this case we plot 3226 points, for all 43226 pixels we will have a black plot with a red fitting line
+            # 2- it doesn't make a difference to take only 3226 or 43226 or even a 100 representative pixels, we should get the same fitting line, it should be representative
+            members_sim = members_sim[:,:,transfer_indices] # keep only transfer pixels
+            obs[obs < 0.0] = 0.0 ############## important to set negatives to zero ##############
+            members_sim[members_sim < 0.0] = 0.0 ############## important to set negatives to zero ##############
+
+            print(f"number of pixels: {members_sim.shape[2]} in target: {target}")
+            for pixel in range(members_sim.shape[2]):
+                ensemble_predictions = members_sim[:,:,pixel]
+                ensemble_predictions = np.moveaxis(ensemble_predictions, 0, -1)   # (timeseries, members)
+                # Calculate the mean prediction for each time step
+                mean_prediction = np.mean(ensemble_predictions, axis=1)
+                obs_pixel = obs[:, pixel]
+
+                def calculate_monthly_anomaly(series):
+                    anomaly = np.zeros_like(series, dtype=float)
+                    for month in range(12):
+                        month_values = series[month::12]
+                        month_mean = np.mean(month_values)
+                        month_std = np.std(month_values)
+                        anomaly[month::12] = np.divide(
+                            month_values - month_mean,
+                            month_std,
+                            out=np.zeros_like(month_values, dtype=float),
+                            where=month_std != 0,
+                        )
+                    return anomaly
+
+                obs_anom = calculate_monthly_anomaly(obs_pixel)
+                mean_prediction_anom = calculate_monthly_anomaly(mean_prediction)
+                ensemble_predictions_anom = np.array(
+                    [calculate_monthly_anomaly(ensemble_predictions[:, m]) for m in range(ensemble_predictions.shape[1])]
+                ).T
+
+                if np.std(obs_anom)==0.0 or np.std(mean_prediction_anom)==0.0 or np.isnan(obs_anom).all() or np.isnan(mean_prediction_anom).all():
+                    continue
+
+                obs_pixel = obs_anom
+                mean_prediction = mean_prediction_anom
+                ensemble_predictions = ensemble_predictions_anom
+                
+                ########### Calculate ensemble statistics ###########
+                # Calculate the variance for each time step
+                ensemble_variance = np.var(ensemble_predictions, axis=1)
+                ensemble_variance = np.mean(ensemble_variance)
+                df_dic["Ensemble variance"].append(ensemble_variance)
+
+                # Calculate ensemble statistics (e.g., diversity, spread, etc.)
+                # Spread interquantile range (IQR) between 75th and 25th percentiles
+                ensemble_iqr = np.percentile(ensemble_predictions, 75, axis=1) - np.percentile(ensemble_predictions, 25, axis=1)  # IQR
+                iqr_mean = np.mean(ensemble_iqr)
+                df_dic["IQR (75-25%)"].append(iqr_mean)
+
+                # calculate MAD
+                mad = utils.calculate_ensemble_mad(ensemble_predictions)
+                df_dic["mad"].append(mad)
+
+                # Calculate the std for each time step
+                ensemble_std = np.std(ensemble_predictions, axis=1)
+                ensemble_std = np.mean(ensemble_std)
+                df_dic["std"].append(ensemble_std)
+
+                # Calculate diversity by Pairwise correlation
+                correlation_matrix = np.corrcoef(ensemble_predictions.T)  # Transpose to get members on rows
+                pairwisecorr = np.mean(correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]) # Compute diversity as 1 - average correlation
+                df_dic["Pairwise correlation"].append(pairwisecorr)
+
+                # calculate coefficient of variation
+                cv = ensemble_std/np.mean(mean_prediction)
+                df_dic["cv"].append(cv)
+                
+                ########### Calculate accuracy metrics ###########
+                # Calculate mean bias
+                bias_mean = np.mean(mean_prediction - obs_pixel)
+                df_dic["Absolute mean bias"].append(bias_mean)
+
+                ### remove bias from mean prediction ###
+                # mean_prediction = mean_prediction - bias_mean
+
+                # Calculate the correlation between the mean prediction and observation
+                correlationobs = np.corrcoef(mean_prediction, obs_pixel)[0, 1]
+                df_dic["Pearson correlation"].append(correlationobs)
+
+                # Calculate the RMSE between the mean prediction and observation
+                rmse = np.sqrt(np.mean((obs_pixel - mean_prediction) ** 2))
+                df_dic["RMSE"].append(rmse)
+
+                # Calculate KGE
+                kge = utils.calculate_kge(obs_pixel, mean_prediction)
+                df_dic["KGE"].append(kge)
+                
+                # members correlation
+                members_correlation = [np.corrcoef(ensemble_predictions[:,m], obs_pixel)[0, 1] for m in range(ensemble_predictions.shape[1])]
+                members_correlation_mean = np.mean(members_correlation)
+                df_dic["mean_membersobs_correlation"].append(members_correlation_mean)
+                if members_correlation_mean==correlationobs:
+                    raise ValueError("members mean correlation is the same as correlationobs, check your code")
+
+                # members RMSE
+                members_rmse = np.mean(np.sqrt(np.mean((ensemble_predictions - obs_pixel[:, None]) ** 2, axis=0)))
+                df_dic["mean_membersobs_RMSE"].append(members_rmse)
+                if members_rmse==rmse:
+                    raise ValueError("members mean RMSE is the same as RMSE, check your code")
+
+                # members KGE
+                members_kge = [utils.calculate_kge(ensemble_predictions[:,m], obs_pixel) for m in range(ensemble_predictions.shape[1])]
+                members_kge_mean = np.mean(members_kge)
+                df_dic["mean_membersobs_KGE"].append(members_kge_mean)
+                if members_kge_mean==kge:
+                    raise ValueError("members mean KGE is the same as KGE, check your code")
+                
+                ### KGE terms analysis ####
+                # Compute mean and standard deviation
+                mu_o, mu_p = np.mean(obs_pixel), np.mean(mean_prediction)
+                sigma_o, sigma_p = np.std(obs_pixel), np.std(mean_prediction)
+
+                ### KGE' ###
+                kgeprime = utils.kge_prime(obs_pixel, mean_prediction)
+                df_dic["KGE'"].append(kgeprime)
+                
+                # Compute bias ratio (β) and variability ratio (γ)
+                beta = mu_p / mu_o
+                alpha = sigma_p / sigma_o
+                kge_nobias = 1 - np.sqrt((correlationobs - 1)**2 + (alpha - 1)**2)
+
+                # Store statistics and accuracy metrics
+                df_dic["KGE_nobias"].append(kge_nobias)
+                df_dic["stdsim"].append(np.std(mean_prediction))
+                df_dic["stdobs"].append(np.std(obs_pixel))
+                df_dic["meansim"].append(np.mean(mean_prediction))
+                df_dic["meanobs"].append(np.mean(obs_pixel))
+                                
+                df_dic["Beta"].append(beta)
+                df_dic["Alpha"].append(alpha)
+                df_dic["(Alpha-1)^2"].append((alpha-1)**2)
+                df_dic["(Beta-1)^2"].append((beta-1)**2)
+                df_dic["(r-1)^2"].append((correlationobs-1)**2)
+
+
+                # Calculate NSE
+                nse = 1 - (np.sum((obs_pixel - mean_prediction) ** 2) / np.sum((obs_pixel - np.mean(obs_pixel)) ** 2))
+                df_dic["NSE"].append(nse)
+                
+        ####### save to csv ########
+        df = pd.DataFrame(df_dic)
+        df.to_csv(os.path.join(OUTPUTPATH, "statistics_anom", "ensemble_statistics.csv"), index=False)
+
+    def ensemble_statvsacc_fitting_anom_colored_by_wtd(self):
+        utils = utilities()
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics_anom", "ensemble_statistics.csv"))
+        xstats = {"std":"exp", "Ensemble variance":"exp", "Pairwise correlation":"lin", "IQR (75-25%)":"exp", "cv":"exp", "mad":"exp"}
+        ystats = {"mean_membersobs_correlation": "lin", "mean_membersobs_RMSE": "exp", "mean_membersobs_KGE": "lin", "RMSE":"exp", "Pearson correlation":"lin", "KGE":"lin", "KGE_nobias":"exp", "Absolute mean bias":"exp", "NSE":"lin", "Beta":"exp", "Alpha":"exp", "(Alpha-1)^2":"exp", "(Beta-1)^2":"exp", "(r-1)^2":"exp"}
+        plotmapping = {
+            "Ensemble variance":r"$\overline{EV}$",
+            "IQR (75-25%)":r"$\overline{IQR}$",
+            "Beta":r"$\beta$",
+            "Alpha":r"$\alpha$",
+            "(Alpha-1)^2":r"$(\alpha-1)^2$",
+            "(Beta-1)^2":r"$(\beta-1)^2$",
+        }
+        meanobswtd = stat["Pearson correlation"].values
+        
+        for xstat in xstats.keys():
+            for ystat in ystats.keys():
+                print(f"fitting {xstat} with {ystat}")
+
+                logarithmicfit = False
+                if xstats[xstat]=="exp" and ystats[ystat]=="exp":
+                    fittype = "powerlaw"
+                elif xstats[xstat]=="exp" or ystats[ystat]=="exp":
+                    fittype = "exponential"
+                    if xstats[xstat]=="exp" and ystats[ystat]=="lin":
+                        logarithmicfit = True
+                else:
+                    fittype = "linear"
+                
+                xval = stat[xstat].values
+                yval = stat[ystat].values if not ystat=="Absolute mean bias" else np.absolute(stat[ystat].values)
+                colorval = meanobswtd.copy()
+
+                if ystat=="Pearson correlation" or ystat=="mean_membersobs_correlation":
+                    mask = ~np.isnan(yval)
+                    xval = xval[~np.isnan(yval)]
+                    yval = yval[~np.isnan(yval)]
+                    colorval = colorval[mask]
+                    #xval = xval[yval>=0.0]
+                    #yval = yval[yval>=0.0]
+                
+                if ystat=="KGE" or ystat=="KGE_nobias" or ystat=="mean_membersobs_KGE":
+                    mask = ~np.isnan(yval)
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+                    mask = yval >= -0.4
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+                
+                if ystat=="NSE":
+                    mask = ~np.isnan(yval)
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+                    mask = yval >= -1
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+
+                if ystat=="Beta" or ystat=="Alpha" or ystat=="(Alpha-1)^2" or ystat=="(Beta-1)^2" or ystat=="(r-1)^2":
+                    mask = ~np.isnan(yval)
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+                
+                if ystat=="Absolute mean bias":
+                    mask = yval >= 0.01
+                    xval = xval[mask]
+                    yval = yval[mask]
+                    colorval = colorval[mask]
+                
+                if xstat=="Pairwise correlation":
+                    mask = xval >= 0.0
+                    yval = yval[mask]
+                    xval = xval[mask]
+                    colorval = colorval[mask]
+
+                
+                logx, logy, xminlim, xmaxlim, yminlim, ymaxlim = None, None, None, None, None, None
+                if xstat=="std" or xstat=="Ensemble variance" or xstat=="IQR (75-25%)" or xstat=="cv" or xstat=="mad":
+                    logx = True
+                if ystat=="RMSE" or ystat=="Absolute mean bias" or ystat=="Alpha" or ystat=="Beta" or ystat=="(Alpha-1)^2" or ystat=="(Beta-1)^2" or ystat=="(r-1)^2" or ystat=="mean_membersobs_RMSE":
+                    logy = True
+                if xstat=="Pairwise correlation":
+                    xminlim = 0
+                    xmaxlim = 1
+                if ystat=="Pearson correlation":
+                    yminlim = -1
+                    ymaxlim = 1
+                if ystat=="KGE":
+                    yminlim = -0.4
+                    ymaxlim = 1
+                if ystat=="NSE":
+                    yminlim = -1
+                    ymaxlim = 1                
+
+                if xstat=="Pairwise correlation" and ystat=="Pearson correlation":
+                    fittype = "exponential"
+                    logarithmicfit = True
+                    logx = True
+
+                try:
+                    if fittype == "linear":
+                        params, covariance = curve_fit(
+                            utils.linear_law, xval, yval)
+                        a_fit, b_fit = params
+                        y_fit = [utils.linear_law(x, a_fit, b_fit)
+                                 for x in xval]
+                        R_square = r2_score(yval, y_fit)
+                        lin_eq = f'$y={b_fit:.2f}x+{a_fit:.2f}$' if a_fit >= 0 else f'$y={b_fit:.2f}x{a_fit:.2f}$'
+                        textstr = '\n'.join((
+                            lin_eq,
+                            f'$R^2$ = {R_square:.3f}'))
+                        x_fit = [min(xval), max(xval)]
+                        y_fit = [utils.linear_law(x, a_fit, b_fit)
+                                 for x in x_fit]
+
+                    if fittype == "powerlaw":
+                        y_lin = np.log(yval)
+                        x_lin = np.log(xval)
+                        params, covariance = curve_fit(
+                            utils.linear_law, x_lin, y_lin)
+                        a_fit, b_fit = params
+                        y_fit = [utils.linear_law(x, a_fit, b_fit)
+                                 for x in x_lin]
+                        R_square = r2_score(y_lin, y_fit)
+                        a_fit = np.exp(a_fit)
+                        textstr = '\n'.join((
+                            f'y={a_fit:.2f}x^{b_fit:.2f}',
+                            f'$R^2$ = {R_square:.3f}'))
+
+                        x_fit = [min(xval), max(xval)]
+                        y_fit = [utils.powerlaw_func(
+                            x, a_fit, b_fit) for x in x_fit]
+
+                    if fittype == "exponential":
+                        def log_func(x, a, b):
+                            return a + b * np.log(x)
+
+                        def exp_func(x, a, b):
+                            return a * np.exp(b * x)
+
+                        if logarithmicfit:
+                            popt, _ = curve_fit(log_func, xval, yval)
+                            a_fit, b_fit = popt
+                            y_pred = log_func(xval, *popt)
+                            r2 = r2_score(yval, y_pred)
+
+                            x_fit = np.linspace(min(xval), max(xval), 100)
+                            y_fit = log_func(x_fit, *popt)
+                            logeq = f'y={a_fit:.2f}+{b_fit:.3f}log(x)' if b_fit >= 0 else f'y={a_fit:.2f}{b_fit:.3f}log(x)'
+                            textstr = '\n'.join((
+                                logeq,
+                                f'$R^2$ = {r2:.3f}'))
+                        else:
+                            popt, _ = curve_fit(exp_func, xval, yval, p0=(
+                                1, -0.1))
+                            a_fit, b_fit = popt
+                            y_pred = exp_func(xval, *popt)
+
+                            r2 = r2_score(yval, y_pred)
+
+                            x_fit = np.linspace(min(xval), max(xval), 100)
+                            y_fit = exp_func(x_fit, *popt)
+
+                            textstr = '\n'.join((
+                                f'y={a_fit:.2f}e^{b_fit:.3f}x',
+                                f'$R^2$ = {r2:.3f}'))
+                except:
+                    print(
+                        f"fitting failed for {xstat} with {ystat}, skipping...")
+                    continue
+
+                plt.figure()
+                plt.plot(x_fit, y_fit, color="r",
+                         label=textstr, linestyle='--')
+                scatter = plt.scatter(
+                    xval,
+                    yval,
+                    # c=colorval,
+                    # cmap="viridis",
+                    marker='.',
+                    edgecolors='none',
+                    # vmin=-1,
+                    # vmax=1,
+                )
+                # plt.colorbar(scatter, label="Pearson correlation")
+                if xstat in plotmapping.keys():
+                    plt.xlabel(plotmapping[xstat])
+                else:
+                    plt.xlabel(xstat)
+                if ystat in plotmapping.keys():
+                    plt.ylabel(plotmapping[ystat])
+                else:
+                    plt.ylabel(ystat)
+                if logx:
+                    plt.xscale("log")
+                if logy:
+                    plt.yscale("log")
+                if xminlim:
+                    plt.xlim(xminlim, xmaxlim)
+                if yminlim:
+                    plt.ylim(yminlim, ymaxlim)
+
+                plt.grid(True, linestyle='--', alpha=0.7)
+                plt.tight_layout()
+                plt.legend(frameon=True)
+                plt.savefig(os.path.join(OUTPUTPATH, "statistics_anom", f"fitted_{ystat}_{xstat}.png"))
+                plt.close()
