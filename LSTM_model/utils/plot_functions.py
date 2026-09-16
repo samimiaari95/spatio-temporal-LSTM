@@ -11,6 +11,7 @@ import cartopy.feature as cfeature
 from shapely.geometry import Polygon
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
+from matplotlib.colors import ListedColormap, BoundaryNorm
 from sklearn.metrics import r2_score
 from LSTM_model.model.config import *
 
@@ -745,7 +746,8 @@ class plotting_helper:
         # figure with 2 panels side-by-side
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 9), subplot_kw={'projection': projection}, constrained_layout=True)
 
-        cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title) else "coolwarm"
+        cmap_colors = "coolwarm"
+        # cmap_colors = "viridis" if ("MSE" in title or "ias" in title or "KGE" in title) else "coolwarm"
         cmap = plt.get_cmap(cmap_colors)
         norm = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
 
@@ -788,8 +790,127 @@ class plotting_helper:
 
         # save figure (ensure directory exists)
         out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs")
+        # out_dir = os.path.join(INPUTPATH, "checkinputs")
         os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, f"double_{country}_2Dmap_{title}.png")
+        out_path = os.path.join(out_dir, f"doubletop10_{title}.png")
+        print(f"saving {os.path.basename(out_path)}")
+        fig.savefig(out_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
+    def zoomed2Dmap_adaptedtoma(self, data_map, logscale, minval, maxval, title):
+        """
+        Create a two-panel figure:
+        - Left: full-domain small-scale map with the region that contains actual data highlighted.
+        - Right: zoomed-in large-scale map showing only the region that contains actual data.
+
+        data_map is a 2D array aligned with lon2D/lat2D; pixels outside the region are np.nan.
+        """
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        # get EU lon lat
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+
+        # determine region that actually contains data
+        valid_idx = np.where(~np.isnan(data_map))
+        if len(valid_idx[0]) == 0:
+            # nothing to plot, fallback to original behavior: full map with no data
+            lon_min, lon_max = np.nanmin(lons), np.nanmax(lons)
+            lat_min, lat_max = np.nanmin(lats), np.nanmax(lats)
+        else:
+            lon_min = float(np.min(lons[valid_idx]))
+            lon_max = float(np.max(lons[valid_idx]))
+            lat_min = float(np.min(lats[valid_idx]))
+            lat_max = float(np.max(lats[valid_idx]))
+
+        # define here zoom extent that only includes France, Netherlands, and Germany
+        # lon_min = -5.0
+        # lon_max = 15.0
+        # lat_min = 45.0
+        lat_max = 55.0
+
+        # small buffer for zoomed inset
+        lon_buffer = 0.05 * (lon_max - lon_min) if (lon_max - lon_min) != 0 else 0.1
+        lat_buffer = 0.05 * (lat_max - lat_min) if (lat_max - lat_min) != 0 else 0.1
+        zoom_extent = [lon_min - lon_buffer, lon_max + lon_buffer, lat_min - lat_buffer, lat_max + lat_buffer]
+
+        # figure with 2 panels side-by-side
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 9), subplot_kw={'projection': projection}, constrained_layout=True)
+
+        # Define interval boundaries
+        if "Pearson" in title:
+            bounds = [-1.0, -0.5, -0.1, 0.1, 0.5, 1.0] # Pearson correlation
+        elif "RMSE" in title:
+            bounds = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5] # RMSE
+        elif "KGE" in title:
+            bounds = [-1.0, -0.4, 0.3, 1.0] # KGE
+        elif "NSE" in title:
+            bounds = [-1.0, 0.0, 0.3, 1.0] # NSE
+
+        if "Pearson" in title:
+            colors = [        # Pearson correlation
+                "#08306B",  # navy
+                "#41B6C4",  # cyan
+                "#BDBDBD",  # gray
+                "#FEC44F",  # yellow-orange
+                "#B30000"   # dark red
+            ]
+        elif "RMSE" in title:
+            colors = [      # RMSE
+                "#FFFFFF",  # white
+                "#FDD0D0",  # light pink
+                "#FC9272",  # salmon
+                "#99000D",  # red
+                "#570008"   # dark red
+            ]
+        elif "KGE" in title or "NSE" in title:
+            colors = ["grey", "red", "blue"] # KGE & NSE
+        
+        cmap = ListedColormap(colors)
+        norm = BoundaryNorm(bounds, cmap.N, clip=True)
+
+        # Left: full domain (small scale)
+        im1 = ax1.pcolormesh(lons, lats, data_map, cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+        ax1.coastlines()
+        ax1.gridlines(draw_labels=True)
+        ax1.set_title(f"{title} — EURO-CORDEX domain")
+        # import shapefile
+        shapefile_path = os.path.join(os.path.dirname(get_root_dir()), "ne_10m_admin_0_countries", "ne_10m_admin_0_countries.shp")
+        shape_feature = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='black')
+        ax1.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        # highlight the data region with a rectangular polygon
+        if len(valid_idx[0]) != 0:
+            region_polygon = Polygon([
+                (lon_min, lat_min),
+                (lon_min, lat_max),
+                (lon_max, lat_max),
+                (lon_max, lat_min)
+            ])
+            # add as geometry border
+            ax1.add_geometries([region_polygon], ccrs.PlateCarree(), facecolor='none', edgecolor='red', linewidth=2, zorder=5)
+
+        # Right: zoomed to region containing data (large scale)
+        im2 = ax2.pcolormesh(lons, lats, data_map, cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+        # ax2.coastlines(resolution='10m')
+        # ax2.add_feature(cfeature.BORDERS, linestyle=':') # Add country borders
+        ax2.gridlines(draw_labels=False)
+        ax2.set_title(f"{title}")
+        if len(valid_idx[0]) != 0:
+            ax2.set_extent(zoom_extent, crs=ccrs.PlateCarree())
+        ax2.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        # Shared colorbar for both panels
+        # prefer to use one of the mappable objects (im2) and attach to both axes
+        cbar = fig.colorbar(im2, ax=[ax1, ax2], orientation='vertical', fraction=0.03, pad=0.02, ticks=bounds)
+        colorbar_label = f"{title}" if title in ("Pearson correlation", "NSE", "KGE") else f"{title} (m)"
+        cbar.set_label(colorbar_label)
+
+        # save figure (ensure directory exists)
+        out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs")
+        # out_dir = os.path.join(INPUTPATH, "checkinputs")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"map2d_{title}_anomalies.png")
         print(f"saving {os.path.basename(out_path)}")
         fig.savefig(out_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
