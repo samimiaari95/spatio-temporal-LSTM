@@ -7,13 +7,68 @@ import matplotlib.dates as mdates
 import pandas as pd
 import torch
 import torch.nn as nn
-from sklearn.metrics import r2_score
+from sklearn.metrics import PredictionErrorDisplay, r2_score
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.model_selection import KFold, cross_val_predict
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
 import cartopy.crs as ccrs
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.utils.utils import utilities
 from LSTM_model.model.config import *
+
+
+class _CrossValidatedCurveFitRegressor(BaseEstimator, RegressorMixin):
+    def __init__(self, fittype="linear", logarithmicfit=False):
+        self.fittype = fittype
+        self.logarithmicfit = logarithmicfit
+
+    @staticmethod
+    def _linear_law(x, a, b):
+        return a + b * x
+
+    @staticmethod
+    def _powerlaw_func(x, a, b):
+        return a * np.power(x, b)
+
+    @staticmethod
+    def _log_func(x, a, b):
+        return a + b * np.log(x)
+
+    @staticmethod
+    def _exp_func(x, a, b):
+        return a * np.exp(b * x)
+
+    def fit(self, X, y):
+        x = np.asarray(X).reshape(-1)
+        y = np.asarray(y).reshape(-1)
+
+        if self.fittype == "powerlaw":
+            params, _ = curve_fit(self._linear_law, np.log(x), np.log(y), maxfev=10000)
+            self.a_fit_ = np.exp(params[0])
+            self.b_fit_ = params[1]
+        elif self.fittype == "linear":
+            params, _ = curve_fit(self._linear_law, x, y, maxfev=10000)
+            self.a_fit_, self.b_fit_ = params
+        elif self.logarithmicfit:
+            params, _ = curve_fit(self._log_func, x, y, maxfev=10000)
+            self.a_fit_, self.b_fit_ = params
+        else:
+            params, _ = curve_fit(self._exp_func, x, y, p0=(1, -0.1), maxfev=10000)
+            self.a_fit_, self.b_fit_ = params
+
+        return self
+
+    def predict(self, X):
+        x = np.asarray(X).reshape(-1)
+
+        if self.fittype == "powerlaw":
+            return self._powerlaw_func(x, self.a_fit_, self.b_fit_)
+        if self.fittype == "linear":
+            return self._linear_law(x, self.a_fit_, self.b_fit_)
+        if self.logarithmicfit:
+            return self._log_func(x, self.a_fit_, self.b_fit_)
+        return self._exp_func(x, self.a_fit_, self.b_fit_)
 
 class postprocess_calculations:
     def __init__(self) -> None:
@@ -446,7 +501,7 @@ class postprocess_calculations:
         utils = utilities()
         EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
-        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "transfer_subset.npy"))
+        transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "spreadskill_fit_subset.npy"))
 
         #transfer_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU_inpath)), "transfer_subset.npy"))
         df_dic = {"mean_membersobs_RMSE":[], "mean_membersobs_correlation":[], "mean_membersobs_KGE":[], "KGE_nobias":[], "stdsim":[], "stdobs":[], "meansim":[], "meanobs":[], "Absolute mean bias":[], "Pearson correlation":[], "RMSE":[], "KGE":[], "KGE'":[], "Beta":[], "Alpha":[], "NSE":[], "Pairwise correlation":[], "Ensemble variance":[], "IQR (75-25%)":[], "std":[], "cv":[], "mad":[],  "(Alpha-1)^2":[], "(Beta-1)^2":[], "(r-1)^2":[]}
@@ -680,11 +735,10 @@ class postprocess_calculations:
         np.save(os.path.join(dirpath, "crps_meants_px.npy"), crps_meants_px)
         np.save(os.path.join(dirpath, "pairwisecorr_crps_transfer.npy"), transferpairwisecorr)
 
-    def ensemble_crpsvsstats_fitting(self):
-        utils = utilities()
+    def ensemble_crpsvsstats_fitting(self, cv_folds=5):
         dirpath = os.path.join(OUTPUTPATH, "statistics")
         stats = ["Ensemble variance", "IQR (75-25%)"]#, "Pairwise correlation"]
-        yval = np.load(os.path.join(dirpath, "crps_transfer.npy"))
+        yval_base = np.load(os.path.join(dirpath, "crps_transfer.npy"))
 
         ncols = 2
         nrows = 1
@@ -708,30 +762,50 @@ class postprocess_calculations:
             if stat=="Pairwise correlation":
                 yval = yval[xval>0.01]
                 xval = xval[xval>0.01]
+            else:
+                yval = yval_base
             
             print(f"fitting {stat} with CRPS")
             mask = ~np.isnan(xval) & ~np.isnan(yval)
             xval = xval[mask]
             yval = yval[mask]
-            # Fit a powerlaw
-            # Fit power law
-            # linearize
-            y_lin = np.log(yval)
-            x_lin = np.log(xval)
-            # Fit the function
-            params, covariance = curve_fit(utils.linear_law, x_lin, y_lin)
-            a_fit, b_fit = params
-            # fitting accuracy
-            y_fit = [utils.linear_law(x, a_fit, b_fit) for x in x_lin]
-            R_square = r2_score(y_lin, y_fit)
-            # back transform to power law
-            a_fit = np.exp(a_fit)
-            legend_text = '\n'.join((
-                f'$y={a_fit:.2f}x$^{b_fit:.2f}',
-                f'$R^2$ = {R_square:.3f}'))
 
-            x_fit = [min(xval), max(xval)]
-            y_fit = [utils.powerlaw_func(x, a_fit, b_fit) for x in x_fit]
+            positive_mask = (xval > 0) & (yval > 0)
+            xval = xval[positive_mask]
+            yval = yval[positive_mask]
+
+            if len(xval) == 0:
+                continue
+
+            model = _CrossValidatedCurveFitRegressor(fittype="powerlaw")
+            model.fit(xval.reshape(-1, 1), yval)
+
+            x_fit = np.linspace(min(xval), max(xval), 100)
+            y_fit = model.predict(x_fit.reshape(-1, 1))
+
+            fit_params = (model.a_fit_, model.b_fit_)
+            legend_text = f'$y={fit_params[0]:.2f}x^{{{fit_params[1]:.2f}}}$'
+
+            r2_cv = np.nan
+            n_splits = min(cv_folds, len(xval))
+            if n_splits >= 2:
+                cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+                cv_predictions = cross_val_predict(
+                    _CrossValidatedCurveFitRegressor(fittype="powerlaw"),
+                    xval.reshape(-1, 1),
+                    yval,
+                    cv=cv,
+                )
+                positive_cv = cv_predictions > 0
+                if np.any(positive_cv):
+                    r2_cv = r2_score(
+                        np.log(yval[positive_cv]),
+                        np.log(cv_predictions[positive_cv]),
+                    )
+
+            legend_text = '\n'.join((
+                legend_text,
+                f'$R^2_{{CV}}$ = {r2_cv:.3f}' if np.isfinite(r2_cv) else '$R^2_{CV}$ = n/a'))
             #plt.figure()
             axes[i].scatter(xval, yval, color='k', s=5)
             axes[i].plot(x_fit, y_fit, 'r--', label=legend_text)
@@ -756,9 +830,9 @@ class postprocess_calculations:
                 # bbox=dict(facecolor='white', edgecolor='none', alpha=0.85)
             )
         plt.tight_layout()
-        # plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.eps"), dpi=300)
-        # plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.pdf"), dpi=300)
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"figure11.png"), dpi=300)
+        # plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"figure11.eps"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"figure11.pdf"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"figure11.png"), dpi=300)
 
     def ensemble_statvsacc_fitting(self):
         ####### old version --- replaced with create_group_figure ##########
@@ -1041,7 +1115,7 @@ class postprocess_calculations:
 
         # -------- plotting --------
         ax.scatter(xval, yval, color='k', s=5)
-        ax.plot(x_fit, y_fit, 'r--', label=legend_text)
+        # ax.plot(x_fit, y_fit, 'r--', label=legend_text)
 
         ax.set_xlabel(plotmapping.get(xstat, xstat))
         ax.set_ylabel(plotmapping.get(ystat, ystat))
@@ -1062,18 +1136,18 @@ class postprocess_calculations:
             ax.set_ylim(-1,1)
 
         if ystat=="KGE": 
-            ax.set_ylim(0.2,1)
-            ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+            ax.set_ylim(-0.41,1)
+            ax.set_yticks([-0.41, 0.0, 0.25, 0.45, 0.7, 1.0])
             
         if ystat=="NSE":
-            ax.set_ylim(0.2,1)
-            ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+            ax.set_ylim(-1,1)
+            ax.set_yticks([-1, -0.5, 0.0, 0.5, 1.0])
         if ystat=="Absolute mean bias":
             ax.set_yscale("log")
             ax.set_yticks([0.01, 0.1, 1, 10])
 
         ax.grid(True, linestyle='--', alpha=0.7)
-        ax.legend(fontsize=12, frameon=True)
+        # ax.legend(fontsize=12, frameon=True)
 
 
     def create_group_figure(self, stat, combinations, filename, ncols=2):
@@ -1103,11 +1177,16 @@ class postprocess_calculations:
                 yval = np.abs(yval)
                 xval = xval[yval>=0.01]
                 yval = yval[yval>=0.01]
-            if ystat=="KGE" or ystat=="NSE":
+            if ystat=="KGE":
                 xval = xval[~np.isnan(yval)]
                 yval = yval[~np.isnan(yval)]
-                xval = xval[yval>=0.2]
-                yval = yval[yval>=0.2]
+                xval = xval[yval>=-0.41]
+                yval = yval[yval>=-0.41]
+            if ystat=="NSE":
+                xval = xval[~np.isnan(yval)]
+                yval = yval[~np.isnan(yval)]
+                xval = xval[yval>=-1]
+                yval = yval[yval>=-1]
 
             mask = ~np.isnan(xval) & ~np.isnan(yval)
             xval = xval[mask]
@@ -1155,8 +1234,354 @@ class postprocess_calculations:
             fig.delaxes(axes[j])
 
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.pdf"), dpi=300)
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.eps"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"{filename}.pdf"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"{filename}.png"), dpi=300)
+        print(f"saved figure: {filename}")
+        plt.close()
+
+    def create_group_figure_cv(self, stat, combinations, filename, ncols=2, cv_folds=5):
+        utils = utilities()
+
+        plotmapping = {
+            "Ensemble variance":r"$\overline{EV}$",
+            "IQR (75-25%)":r"$\overline{IQR}$",
+            "Beta":r"$\beta$",
+            "Alpha":r"$\alpha$"
+        }
+
+        n = len(combinations)
+        nrows = int(np.ceil(n / ncols))
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7.09, 2.5*nrows))
+        axes = np.array(axes).flatten()
+
+        labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+        xstats = {
+            "std":"exp",
+            "Ensemble variance":"exp",
+            "Pairwise correlation":"lin",
+            "IQR (75-25%)":"exp",
+            "cv":"exp",
+            "mad":"exp",
+            "Alpha":"exp",
+            "Beta":"exp",
+            "Pearson correlation":"exp",
+            "stdsim":"exp",
+            "stdobs":"exp",
+            "meansim":"exp",
+            "meanobs":"exp"
+        }
+
+        ystats = {
+            "mean_membersobs_correlation": "lin",
+            "mean_membersobs_RMSE": "exp",
+            "mean_membersobs_KGE": "lin",
+            "RMSE":"exp",
+            "Pearson correlation":"lin",
+            "KGE":"lin",
+            "KGE_nobias":"exp",
+            "Absolute mean bias":"exp",
+            "NSE":"lin",
+            "Beta":"exp",
+            "Alpha":"exp",
+            "(Alpha-1)^2":"exp",
+            "(Beta-1)^2":"exp",
+            "(r-1)^2":"exp"
+        }
+
+        def filter_values(frame, xstat, ystat):
+            xval = frame[xstat].values
+            yval = frame[ystat].values
+
+            if ystat == "Absolute mean bias":
+                yval = np.abs(yval)
+                xval = xval[yval >= 0.01]
+                yval = yval[yval >= 0.01]
+            if ystat == "KGE" or ystat == "NSE":
+                xval = xval[~np.isnan(yval)]
+                yval = yval[~np.isnan(yval)]
+                xval = xval[yval >= 0.2]
+                yval = yval[yval >= 0.2]
+
+            mask = ~np.isnan(xval) & ~np.isnan(yval)
+            return xval[mask], yval[mask]
+
+        for i, (ystat, xstat) in enumerate(combinations):
+            xval, yval = filter_values(stat, xstat, ystat)
+
+            logarithmicfit = False
+
+            if xstats[xstat] == "exp" and ystats[ystat] == "exp":
+                fittype = "powerlaw"
+            elif xstats[xstat] == "exp" or ystats[ystat] == "exp":
+                fittype = "exponential"
+                if xstats[xstat] == "exp" and ystats[ystat] == "lin":
+                    logarithmicfit = True
+            else:
+                fittype = "linear"
+
+            if xstat == "Pairwise correlation" and ystat == "Pearson correlation":
+                fittype = "exponential"
+                logarithmicfit = True
+
+            if fittype == "powerlaw":
+                positive_mask = (xval > 0) & (yval > 0)
+                xval = xval[positive_mask]
+                yval = yval[positive_mask]
+            elif logarithmicfit:
+                positive_mask = xval > 0
+                xval = xval[positive_mask]
+                yval = yval[positive_mask]
+
+            if len(xval) == 0:
+                continue
+
+            model = _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit)
+            model.fit(xval.reshape(-1, 1), yval)
+
+            x_fit = np.linspace(min(xval), max(xval), 100)
+            y_fit = model.predict(x_fit.reshape(-1, 1))
+
+            if fittype == "linear":
+                fit_params = (model.a_fit_, model.b_fit_)
+                eq = f'$y={fit_params[1]:.3f}x+{fit_params[0]:.3f}$' if fit_params[0] >= 0 else f'$y={fit_params[1]:.3f}x{fit_params[0]:.3f}$'
+            elif fittype == "powerlaw":
+                fit_params = (model.a_fit_, model.b_fit_)
+                eq = f'$y={fit_params[0]:.3f}x^{{{fit_params[1]:.3f}}}$'
+            elif logarithmicfit:
+                fit_params = (model.a_fit_, model.b_fit_, logarithmicfit)
+                eq = f'$y={fit_params[0]:.3f}+{fit_params[1]:.3f}\\log(x)$' if fit_params[1] >= 0 else f'$y={fit_params[0]:.3f}{fit_params[1]:.3f}\\log(x)$'
+            else:
+                fit_params = (model.a_fit_, model.b_fit_, logarithmicfit)
+                eq = f'$y={fit_params[0]:.3f}e^{{{fit_params[1]:.3f}x}}$'
+
+            cv_predictions = None
+            r2_cv = np.nan
+            n_splits = min(cv_folds, len(xval))
+            if n_splits >= 2:
+                cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+                cv_predictions = cross_val_predict(
+                    _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit),
+                    xval.reshape(-1, 1),
+                    yval,
+                    cv=cv
+                )
+                if fittype == "powerlaw":
+                    r2_cv = r2_score(np.log(yval), np.log(cv_predictions))
+                else:
+                    r2_cv = r2_score(yval, cv_predictions)
+
+            ax = axes[i]
+            ax.scatter(xval, yval, color='k', s=5, alpha=0.6)
+            # if cv_predictions is not None:
+            #     ax.scatter(xval, cv_predictions, color='orange', s=5, alpha=0.6)#, label=f'$R^2_{{CV}}$ = {r2_cv:.2f}' if np.isfinite(r2_cv) else '$R^2_{CV}$ = n/a')
+            eq = eq + '\n' + f'$R^2_{{CV}}$ = {r2_cv:.3f}' if np.isfinite(r2_cv) else '$R^2_{CV}$ = n/a'
+            ax.plot(x_fit, y_fit, 'r--', label=eq)
+
+            ax.set_xlabel(plotmapping.get(xstat, xstat))
+            ax.set_ylabel(plotmapping.get(ystat, ystat))
+
+            if xstat in ["std", "Ensemble variance", "IQR (75-25%)", "cv", "mad"]:
+                ax.set_xscale("log")
+
+            if ystat in ["RMSE", "Absolute mean bias", "Alpha", "Beta", "(Alpha-1)^2", "(Beta-1)^2", "(r-1)^2", "mean_membersobs_RMSE"]:
+                ax.set_yscale("log")
+
+            if xstat == "Pairwise correlation":
+                ax.set_xlim(0, 1)
+                if ystat == "Pearson correlation":
+                    ax.set_xscale("log")
+                    ax.set_xlim(0.001, 1)
+
+            if ystat == "Pearson correlation":
+                ax.set_ylim(-1, 1)
+
+            if ystat == "KGE":
+                ax.set_ylim(0.2, 1)
+
+            ax.legend(loc='best', fontsize=9)
+
+            row = i // ncols
+            col = i % ncols
+
+            if col != 0:
+                ax.set_ylabel("")
+
+            if row != nrows-1:
+                ax.set_xlabel("")
+
+            ax.text(
+                0.02,
+                1.11,
+                f"({labels[i]})",
+                transform=ax.transAxes,
+                va='top',
+                fontsize=12,
+            )
+            plt.subplots_adjust(hspace=0.0)
+
+        for j in range(i+1, len(axes)):
+            fig.delaxes(axes[j])
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"{filename}.pdf"), dpi=300)
+        print(f"saved figure: {filename}")
+        plt.close()
+
+    def create_group_figure_cv_residuals(self, stat, combinations, filename, ncols=2, cv_folds=5):
+        utils = utilities()
+
+        plotmapping = {
+            "Ensemble variance":r"$\overline{EV}$",
+            "IQR (75-25%)":r"$\overline{IQR}$",
+            "Beta":r"$\beta$",
+            "Alpha":r"$\alpha$"
+        }
+
+        n = len(combinations)
+        nrows = int(np.ceil(n / ncols))
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7.09, 2.5*nrows))
+        axes = np.array(axes).flatten()
+
+        labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+        xstats = {
+            "std":"exp",
+            "Ensemble variance":"exp",
+            "Pairwise correlation":"lin",
+            "IQR (75-25%)":"exp",
+            "cv":"exp",
+            "mad":"exp",
+            "Alpha":"exp",
+            "Beta":"exp",
+            "Pearson correlation":"exp",
+            "stdsim":"exp",
+            "stdobs":"exp",
+            "meansim":"exp",
+            "meanobs":"exp"
+        }
+
+        ystats = {
+            "mean_membersobs_correlation": "lin",
+            "mean_membersobs_RMSE": "exp",
+            "mean_membersobs_KGE": "lin",
+            "RMSE":"exp",
+            "Pearson correlation":"lin",
+            "KGE":"lin",
+            "KGE_nobias":"exp",
+            "Absolute mean bias":"exp",
+            "NSE":"lin",
+            "Beta":"exp",
+            "Alpha":"exp",
+            "(Alpha-1)^2":"exp",
+            "(Beta-1)^2":"exp",
+            "(r-1)^2":"exp"
+        }
+
+        def filter_values(frame, xstat, ystat):
+            xval = frame[xstat].values
+            yval = frame[ystat].values
+
+            if ystat == "Absolute mean bias":
+                yval = np.abs(yval)
+                xval = xval[yval >= 0.01]
+                yval = yval[yval >= 0.01]
+            if ystat == "KGE" or ystat == "NSE":
+                xval = xval[~np.isnan(yval)]
+                yval = yval[~np.isnan(yval)]
+                xval = xval[yval >= 0.2]
+                yval = yval[yval >= 0.2]
+
+            mask = ~np.isnan(xval) & ~np.isnan(yval)
+            return xval[mask], yval[mask]
+
+        for i, (ystat, xstat) in enumerate(combinations):
+            xval, yval = filter_values(stat, xstat, ystat)
+
+            logarithmicfit = False
+
+            if xstats[xstat] == "exp" and ystats[ystat] == "exp":
+                fittype = "powerlaw"
+            elif xstats[xstat] == "exp" or ystats[ystat] == "exp":
+                fittype = "exponential"
+                if xstats[xstat] == "exp" and ystats[ystat] == "lin":
+                    logarithmicfit = True
+            else:
+                fittype = "linear"
+
+            if xstat == "Pairwise correlation" and ystat == "Pearson correlation":
+                fittype = "exponential"
+                logarithmicfit = True
+
+            if fittype == "powerlaw":
+                positive_mask = (xval > 0) & (yval > 0)
+                xval = xval[positive_mask]
+                yval = yval[positive_mask]
+            elif logarithmicfit:
+                positive_mask = xval > 0
+                xval = xval[positive_mask]
+                yval = yval[positive_mask]
+
+            if len(xval) < 2:
+                continue
+
+            model = _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit)
+            model.fit(xval.reshape(-1, 1), yval)
+
+            n_splits = min(cv_folds, len(xval))
+            if n_splits < 2:
+                continue
+
+            cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+            cv_predictions = cross_val_predict(
+                _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit),
+                xval.reshape(-1, 1),
+                yval,
+                cv=cv
+            )
+
+            ax = axes[i]
+            display_yval = np.log(yval) if fittype == "powerlaw" else yval
+            display_cv_predictions = np.log(cv_predictions) if fittype == "powerlaw" else cv_predictions
+            display = PredictionErrorDisplay.from_predictions(
+                display_yval,
+                display_cv_predictions,
+                kind="residual_vs_predicted",
+                ax=ax,
+                scatter_kwargs={"s": 5, "alpha": 0.7},
+            )
+
+            # display.ax_.set_title(f"{ystat} vs {xstat}", fontsize=9)
+            display.ax_.set_xlabel(f"Log-scale predicted values from {plotmapping[xstat]}")
+            display.ax_.set_ylabel(f"{ystat} residuals")
+            # display.ax_.set_xscale("log")
+            # display.ax_.set_yscale("log")
+
+            row = i // ncols
+            col = i % ncols
+
+            if col != 0:
+                display.ax_.set_ylabel("")
+
+            if row != nrows-1:
+                display.ax_.set_xlabel("")
+
+            display.ax_.text(
+                0.02,
+                1.11,
+                f"({labels[i]})",
+                transform=display.ax_.transAxes,
+                va='top',
+                fontsize=12,
+            )
+
+        for j in range(i+1, len(axes)):
+            fig.delaxes(axes[j])
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"{filename}.pdf"), dpi=300)
         print(f"saved figure: {filename}")
         plt.close()
     
@@ -1257,8 +1682,7 @@ class postprocess_calculations:
         print(f"saved figure: {filename}")
         plt.close()
     
-    def create_pairwise_corr_figure(self, stat, filename):
-        utils = utilities()
+    def create_pairwise_corr_figure(self, stat, filename, cv_folds=5):
 
         combinations = [
             ("RMSE","Pairwise correlation"),
@@ -1298,22 +1722,105 @@ class postprocess_calculations:
             if ystat=="KGE":
                 xval = xval[~np.isnan(yval)]
                 yval = yval[~np.isnan(yval)]
-                xval = xval[yval>=0.2]
-                yval = yval[yval>=0.2]
+                xval = xval[yval>=-0.41]
+                yval = yval[yval>=-0.41]
 
             mask = ~np.isnan(xval) & ~np.isnan(yval)
             xval = xval[mask]
             yval = yval[mask]
 
-            self.plot_single_fit(
-                axes[i],
-                xval,
-                yval,
-                xstat,
-                ystat,
-                utils,
-                plotmapping
-            )
+            logarithmicfit = False
+
+            if xstat=="Pairwise correlation" and ystat=="Pearson correlation":
+                fittype = "exponential"
+                logarithmicfit = True
+            elif xstat in ["Ensemble variance", "IQR (75-25%)", "cv", "mad", "std", "Alpha", "Beta", "Pearson correlation", "stdsim", "stdobs", "meansim", "meanobs"] and ystat in ["RMSE", "Absolute mean bias", "Alpha", "Beta", "(Alpha-1)^2", "(Beta-1)^2", "(r-1)^2", "mean_membersobs_RMSE"]:
+                fittype = "powerlaw"
+            elif ystat in ["RMSE", "Absolute mean bias", "Alpha", "Beta", "(Alpha-1)^2", "(Beta-1)^2", "(r-1)^2", "mean_membersobs_RMSE"]:
+                fittype = "exponential"
+            elif ystat in ["Pearson correlation", "KGE", "NSE", "KGE_nobias", "mean_membersobs_correlation", "mean_membersobs_KGE"]:
+                fittype = "linear"
+            else:
+                fittype = "linear"
+
+            if fittype == "powerlaw":
+                positive_mask = (xval > 0) & (yval > 0)
+                xval = xval[positive_mask]
+                yval = yval[positive_mask]
+            elif logarithmicfit:
+                positive_mask = xval > 0
+                xval = xval[positive_mask]
+                yval = yval[positive_mask]
+
+            if len(xval) < 2:
+                continue
+
+            model = _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit)
+            model.fit(xval.reshape(-1, 1), yval)
+
+            x_fit = np.linspace(min(xval), max(xval), 100)
+            y_fit = model.predict(x_fit.reshape(-1, 1))
+
+            if fittype == "linear":
+                fit_params = (model.a_fit_, model.b_fit_)
+                eq = f'$y={fit_params[1]:.2f}x+{fit_params[0]:.2f}$' if fit_params[0] >= 0 else f'$y={fit_params[1]:.2f}x{fit_params[0]:.2f}$'
+            elif fittype == "powerlaw":
+                fit_params = (model.a_fit_, model.b_fit_)
+                eq = f'$y={fit_params[0]:.2f}x^{{{fit_params[1]:.2f}}}$'
+            elif logarithmicfit:
+                fit_params = (model.a_fit_, model.b_fit_, logarithmicfit)
+                eq = f'$y={fit_params[0]:.2f}+{fit_params[1]:.2f}\\log(x)$' if fit_params[1] >= 0 else f'$y={fit_params[0]:.2f}{fit_params[1]:.2f}\\log(x)$'
+            else:
+                fit_params = (model.a_fit_, model.b_fit_, logarithmicfit)
+                eq = f'$y={fit_params[0]:.2f}e^{{{fit_params[1]:.2f}x}}$'
+
+            r2_cv = np.nan
+            n_splits = min(cv_folds, len(xval))
+            if n_splits >= 2:
+                cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+                cv_predictions = cross_val_predict(
+                    _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit),
+                    xval.reshape(-1, 1),
+                    yval,
+                    cv=cv,
+                )
+                if fittype == "powerlaw":
+                    positive_cv = (yval > 0) & (cv_predictions > 0)
+                    if np.any(positive_cv):
+                        r2_cv = r2_score(
+                            np.log(yval[positive_cv]),
+                            np.log(cv_predictions[positive_cv]),
+                        )
+                else:
+                    r2_cv = r2_score(yval, cv_predictions)
+
+            legend_text = '\n'.join((
+                eq,
+                f'$R^2_{{CV}}$ = {r2_cv:.3f}' if np.isfinite(r2_cv) else '$R^2_{CV}$ = n/a'))
+
+            axes[i].scatter(xval, yval, color='k', s=5)
+            axes[i].plot(x_fit, y_fit, 'r--', label=legend_text)
+
+            axes[i].set_xlabel(plotmapping.get(xstat, xstat))
+            axes[i].set_ylabel(plotmapping.get(ystat, ystat))
+
+            if ystat in ["RMSE", "Absolute mean bias", "Alpha", "Beta", "(Alpha-1)^2", "(Beta-1)^2", "(r-1)^2", "mean_membersobs_RMSE"]:
+                axes[i].set_yscale("log")
+
+            if xstat == "Pairwise correlation":
+                axes[i].set_xlim(0, 1)
+                if ystat == "Pearson correlation":
+                    axes[i].set_xscale("log")
+                    axes[i].set_xlim(0.001, 1)
+
+            if ystat == "Pearson correlation":
+                axes[i].set_ylim(-1, 1)
+
+            if ystat == "KGE":
+                axes[i].set_ylim(-0.41, 1)
+                axes[i].set_yticks([-0.41, 0.0, 0.25, 0.45, 0.7, 1.0])
+
+            axes[i].legend(fontsize=9, frameon=True)
 
             # row = i // ncols
 
@@ -1334,8 +1841,8 @@ class postprocess_calculations:
             )
 
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.pdf"), dpi=300)
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad", f"{filename}.eps"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"{filename}.pdf"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc", f"{filename}.png"), dpi=300)
         print(f"saved figure: {filename}")
         plt.close()
     
@@ -1363,13 +1870,64 @@ class postprocess_calculations:
             ("NSE","IQR (75-25%)")
         ]
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
-        self.create_group_figure(stat, comb8, "figure8", ncols=2)
-        # self.create_group_figure(stat, comb9, "figure9", ncols=2)
+        # self.create_group_figure(stat, comb8, "figure8", ncols=2)
+        self.create_group_figure(stat, comb9, "figure9", ncols=2)
         # self.create_group_figure(stat, comb10, "figure10", ncols=2)
-        # self.ensemble_crpsvsstats_fitting()
-        # self.create_kge_component_figure(stat, "figureA1")
-        # self.create_group_figure(stat, combB2, "figureB3", ncols=2)
-        # self.create_pairwise_corr_figure(stat, "figureD1")
+        # self.ensemble_crpsvsstats_fitting() # figure 11
+        # self.create_kge_component_figure(stat, "figureS1")
+        self.create_group_figure(stat, combB2, "figureS5", ncols=2)
+        # self.create_pairwise_corr_figure(stat, "figureS8")
+
+    def run_statvsacc_fitting_cv(self):
+        comb8 = [
+            ("RMSE","Ensemble variance"),
+            ("RMSE","IQR (75-25%)"),
+            ("Absolute mean bias","Ensemble variance"),
+            ("Absolute mean bias","IQR (75-25%)"),
+            ("Pearson correlation","Ensemble variance"),
+            ("Pearson correlation","IQR (75-25%)")
+        ]
+        comb9 = [
+            ("KGE","Ensemble variance"),
+            ("KGE","IQR (75-25%)")
+        ]
+        comb10 = [
+            ("Alpha","Ensemble variance"),
+            ("Alpha","IQR (75-25%)"),
+            ("Beta","Ensemble variance"),
+            ("Beta","IQR (75-25%)")
+        ]
+        combB2 = [
+            ("NSE","Ensemble variance"),
+            ("NSE","IQR (75-25%)")
+        ]
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        # self.create_group_figure_cv(stat, comb8, "figure8", ncols=2)
+        # self.ensemble_crpsvsstats_fitting() # figure 11
+        self.create_pairwise_corr_figure(stat, "figureS8")
+
+    def run_statvsacc_fitting_cv_residuals(self):
+        comb8 = [
+            ("RMSE","Ensemble variance"),
+            ("RMSE","IQR (75-25%)"),
+            ("Absolute mean bias","Ensemble variance"),
+            ("Absolute mean bias","IQR (75-25%)"),
+            # ("Pearson correlation","Ensemble variance"),
+            # ("Pearson correlation","IQR (75-25%)")
+        ]
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        self.create_group_figure_cv_residuals(stat, comb8, "figure8residuals", ncols=2)
+
+    def count_pearson_higher06(self):
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        stat = stat.dropna(subset=["Pearson correlation"])
+        stat = stat[stat["Ensemble variance"] >= 100]
+        count_higher06 = (stat["Pearson correlation"] > 0.6).sum()
+        total_count = len(stat)
+        percentage_higher06 = (count_higher06 / total_count) * 100
+        print(f"Count of Pearson correlation > 0.6: {count_higher06}")
+        print(f"Total count: {total_count}")
+        print(f"Percentage of Pearson correlation > 0.6: {percentage_higher06:.2f}%")
 
     def cdf_EU(self):
         def calc_correlation(obs, sim):
@@ -1422,8 +1980,8 @@ class postprocess_calculations:
             sims = np.load(os.path.join(os.path.dirname(dirpath), f"target_pixels_{target}", simname))
             obs = np.nan_to_num(obs)
             sims = np.nan_to_num(sims)
-            obs[obs < 0.0] = 0.0
-            sims[sims < 0.0] = 0.0
+            # obs[obs < 0.0] = 0.0
+            # sims[sims < 0.0] = 0.0
             return obs, sims
 
         utils = utilities()
@@ -1575,7 +2133,7 @@ class postprocess_calculations:
                 'KGE',
                 '(D)',
                 axes[1, 1],
-                dict(xmin=0.2, xlim=(0.2, 1), yfloor=True)
+                dict(xmin=-0.41, xlim=(-0.41, 1), yfloor=True)
             )
         ]
 
@@ -1583,10 +2141,10 @@ class postprocess_calculations:
 
             utils.plot_cdfs(
                 data_dict={
-                    'Transfer (n=400)': metric_dict["transfer_400px"],
-                    'Test (n=400)': metric_dict["test_400px"],
-                    'Transfer (n=100)': metric_dict["transfer_100px"],
-                    'Test (n=100)': metric_dict["test_100px"]
+                    r'Transfer ($n$=400)': metric_dict["transfer_400px"],
+                    r'Test ($n$=400)': metric_dict["test_400px"],
+                    r'Transfer ($n$=100)': metric_dict["transfer_100px"],
+                    r'Test ($n$=100)': metric_dict["test_100px"]
                 },
                 ax=ax,
                 colors=common_colors,
@@ -1637,7 +2195,7 @@ class postprocess_calculations:
         )
 
         plt.savefig(
-            os.path.join(OUTPUTPATH, "statistics", "figure5.eps"),
+            os.path.join(OUTPUTPATH, "statistics", "figure5.png"),
             dpi=300,
             bbox_inches='tight'
         )
@@ -1654,18 +2212,18 @@ class postprocess_calculations:
 
         utils.plot_cdfs(
             data_dict={
-                'Transfer (n=400)': nse["transfer_400px"],
-                'Test (n=400)': nse["test_400px"],
-                'Transfer (n=100)': nse["transfer_100px"],
-                'Test (n=100)': nse["test_100px"]
+                r'Transfer ($n$=400)': nse["transfer_400px"],
+                r'Test ($n$=400)': nse["test_400px"],
+                r'Transfer ($n$=100)': nse["transfer_100px"],
+                r'Test ($n$=100)': nse["test_100px"]
             },
             ax=ax,
             colors=common_colors,
             linestyles=common_styles,
             xlabel='NSE',
             ylabel='Cumulative probability',
-            xmin=0.2,
-            xlim=(0.2, 1),
+            xmin=-1,
+            xlim=(-1, 1),
             yfloor=True
         )
 
@@ -1674,7 +2232,7 @@ class postprocess_calculations:
         ax.yaxis.label.set_size(12)
 
         plt.savefig(
-            os.path.join(OUTPUTPATH, "statistics", "figureB1.eps"),
+            os.path.join(OUTPUTPATH, "statistics", "figureB1.png"),
             dpi=300,
             bbox_inches='tight'
         )
@@ -2138,18 +2696,18 @@ class postprocess_calculations:
     def metrics_2D_EU(self):
         plot_functions = plotting_helper()
         corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU()
-        return rmse2d
-        # get indices where kge<0.2
-        kge2d = np.where(kge2d<0.2, np.nan, kge2d)
-        nse2d = np.where(np.isnan(kge2d), np.nan, nse2d)
-        corr2d = np.where(np.isnan(kge2d), np.nan, corr2d)
-        rmse2d = np.where(np.isnan(kge2d), np.nan, rmse2d)
-        bias2d = np.where(np.isnan(kge2d), np.nan, bias2d)
-        bias2d = np.where(kge2d<0.2, np.nan, bias2d)
+
+        # get indices where kge<-0.41
+        # kge2d = np.where(kge2d<-0.41, np.nan, kge2d)
+        # nse2d = np.where(np.isnan(kge2d), np.nan, nse2d)
+        # corr2d = np.where(np.isnan(kge2d), np.nan, corr2d)
+        # rmse2d = np.where(np.isnan(kge2d), np.nan, rmse2d)
+        # bias2d = np.where(np.isnan(kge2d), np.nan, bias2d)
+        # bias2d = np.where(kge2d<-0.41, np.nan, bias2d)
         
         fig, axes = plt.subplots(
             2, 2,
-            figsize=(7.09, 5.31),
+            figsize=(7.09, 6.5),
             subplot_kw={'projection': ccrs.LambertAzimuthalEqualArea(
                 central_longitude=19,
                 central_latitude=53
@@ -2169,7 +2727,7 @@ class postprocess_calculations:
         plot_functions.combinedfigs_EU_2Dmap(
             data_map=rmse2d,
             logscale=True,
-            minval=0.01,
+            minval=0.1,
             maxval=10,
             title="RMSE",
             ax=axes[0, 1],
@@ -2189,7 +2747,7 @@ class postprocess_calculations:
         plot_functions.combinedfigs_EU_2Dmap(
             data_map=kge2d,
             logscale=False,
-            minval=0.2,
+            minval=-0.41,
             maxval=1,
             title="KGE",
             ax=axes[1, 1],
@@ -2205,17 +2763,17 @@ class postprocess_calculations:
             hspace=0.08
         )
 
-        plt.savefig(
-            os.path.join(OUTPUTPATH, "figure7.eps"),
-            dpi=300,
-            bbox_inches='tight'
-        )
+        # plt.savefig(
+        #     os.path.join(OUTPUTPATH, "figure7.png"),
+        #     dpi=300,
+        #     bbox_inches='tight'
+        # )
 
-        plt.savefig(
-            os.path.join(OUTPUTPATH, "figure7.pdf"),
-            dpi=300,
-            bbox_inches='tight'
-        )
+        # plt.savefig(
+        #     os.path.join(OUTPUTPATH, "figure7.pdf"),
+        #     dpi=300,
+        #     bbox_inches='tight'
+        # )
 
         plt.close()
 
@@ -2237,7 +2795,7 @@ class postprocess_calculations:
         )
 
         plt.savefig(
-            os.path.join(OUTPUTPATH, "figureB2.eps"),
+            os.path.join(OUTPUTPATH, "figureB2.png"),
             dpi=300,
             bbox_inches='tight'
         )
@@ -2250,6 +2808,53 @@ class postprocess_calculations:
 
         plt.close()
     
+    def RMSE_vs_05obsstd(self):
+        plot_functions = plotting_helper()
+        corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU()
+
+        wtdstd_testperiod = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtdstd_testperiod.npy"))
+        wtdmax_testperiod = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtdmax_testperiod.npy"))
+        wtdmin_testperiod = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtdmin_testperiod.npy"))
+        wtdstd_testperiod = np.where(np.isnan(rmse2d), np.nan, wtdstd_testperiod)
+        wtdmax_testperiod = np.where(np.isnan(rmse2d), np.nan, wtdmax_testperiod)
+        wtdmin_testperiod = np.where(np.isnan(rmse2d), np.nan, wtdmin_testperiod)
+        rmse2d_indices = np.where(~np.isnan(rmse2d))
+        print(len(rmse2d_indices[0]))
+        rmse_stdobs_2d = np.zeros(rmse2d.shape)
+        rmse_stdobs_2d[rmse_stdobs_2d==0] = np.nan
+ 
+        # rmse_stdobs_2d = np.where(rmse2d < 0.5*np.nanmean(wtdstd_testperiod), 0.01, 1)
+        rmse_stdobs_2d = np.where(rmse2d < 0.5*wtdstd_testperiod, 0.01, 1)
+        rmse_stdobs_2d = np.where(np.isnan(rmse2d), np.nan, rmse_stdobs_2d)
+
+        print(rmse_stdobs_2d)
+        print(rmse_stdobs_2d.shape)
+        print(np.unique(rmse_stdobs_2d, return_counts=True))
+        print(np.nanmean(wtdstd_testperiod), np.nanmax(wtdstd_testperiod), np.nanmin(wtdstd_testperiod))
+        print(np.nanmean(wtdmax_testperiod), np.nanmax(wtdmax_testperiod), np.nanmin(wtdmax_testperiod))
+        print(np.nanmean(wtdmin_testperiod), np.nanmax(wtdmin_testperiod), np.nanmin(wtdmin_testperiod))
+        plot_functions.EU_2Dmap_binary(rmse_stdobs_2d, "RMSE/0.5*ObsStd", threshold=0.1)
+
+    def NRMSE_map(self):
+        plot_functions = plotting_helper()
+        corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU()
+
+        wtdmin_testperiod = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtdmin_testperiod.npy"))
+        wtdmax_testperiod = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtdmax_testperiod.npy"))
+        rmse2d_indices = np.where(~np.isnan(rmse2d))
+        print(len(rmse2d_indices[0]))
+        nrmse2d = np.zeros(rmse2d.shape)
+        nrmse2d[nrmse2d==0] = np.nan
+        for i in range(len(rmse2d_indices[0])):
+            print(i)
+            y = rmse2d_indices[0][i]
+            x = rmse2d_indices[1][i]
+            nrmse2d[y,x] = rmse2d[y,x] / (wtdmax_testperiod[y,x] - wtdmin_testperiod[y,x])
+        
+        print(nrmse2d)
+        print(nrmse2d.shape)
+        plot_functions.EU_2Dmap_binary(nrmse2d, "NRMSE", threshold=0.1)
+
     def metrics_vs_topo_combined(self):
         # --- data ---
         corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU_onlytransfer()
@@ -2553,7 +3158,7 @@ class postprocess_calculations:
         plot_functions.EU_2Dmap_predictedaccfromstats(
             data_map=bias2d_statspred,
             logscale=True,
-            minval=0.01,
+            minval=0.1,
             maxval=10,
             title="Absolute mean bias",
             ax=axes[1],
@@ -2568,6 +3173,11 @@ class postprocess_calculations:
             wspace=0.08
         )
 
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figure12.png"),
+            dpi=300,
+            bbox_inches='tight'
+        )
         plt.savefig(
             os.path.join(OUTPUTPATH, "figure12.pdf"),
             dpi=300,
@@ -2897,17 +3507,17 @@ class postprocess_calculations:
         )
 
         plt.savefig(
-            os.path.join(OUTPUTPATH, "figureC2.eps"),
+            os.path.join(OUTPUTPATH, "figureS7.eps"),
             dpi=300,
             bbox_inches='tight'
         )
         plt.savefig(
-            os.path.join(OUTPUTPATH, "figureC2.pdf"),
+            os.path.join(OUTPUTPATH, "figureS7.pdf"),
             dpi=300,
             bbox_inches='tight'
         )
         plt.savefig(
-            os.path.join(OUTPUTPATH, "figureC2.png"),
+            os.path.join(OUTPUTPATH, "figureS7.png"),
             dpi=300,
             bbox_inches='tight'
         )
