@@ -292,8 +292,10 @@ def _fit_variogram_and_group_blocks(
     os.makedirs(plot_directory, exist_ok=True)
     plot_path = os.path.join(plot_directory, "spatially_blocked_cv_variogram.png")
 
+    bin_centers_km = bin_centers / 1000.0
+
     plt.figure(figsize=(6.0, 4.0))
-    plt.scatter(bin_centers, semivariance_bins, s=25, color="k", label="Empirical variogram")
+    plt.scatter(bin_centers_km, semivariance_bins, s=25, color="k", label="Empirical variogram")
     print(f"Fitted variogram parameters: nugget={nugget:.4f}, sill={sill:.4f}, range={variogram_range_m:.2f} m")
     print(f"Block size for spatially blocked CV: {block_size_m:.2f} m")
     print(f"Number of unique spatial blocks: {len(unique_groups)}")
@@ -308,17 +310,17 @@ def _fit_variogram_and_group_blocks(
         }
         fitted_model = model_map[selected_model]
         model_y = fitted_model(model_x, nugget, sill, fitted_range)
-        plt.plot(
-            model_x,
-            model_y,
-            "r--",
-            label=f"{selected_model.title()} fit (range={variogram_range_m/1000.0:.1f} km)",
-        )
-    plt.xlabel("Distance (m)")
+        # plt.plot(
+        #     model_x / 1000.0,
+        #     model_y,
+        #     "r--",
+        #     label=f"{selected_model.title()} fit (range={variogram_range_m/1000.0:.1f} km)",
+        # )
+    plt.xlabel("Distance (km)")
     plt.ylabel("Semivariance")
     plt.title("Spatially blocked CV variogram")
     plt.grid(True, linestyle="--", alpha=0.5)
-    plt.legend(fontsize=8)
+    # plt.legend(fontsize=8)
     plt.tight_layout()
     plt.savefig(plot_path, dpi=300)
     plt.close()
