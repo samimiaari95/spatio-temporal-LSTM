@@ -267,9 +267,11 @@ def _fit_variogram_and_group_blocks(
         variogram_range_m = float(np.nanmax(pairwise_distances))
 
     print(f"Final variogram parameters: nugget={nugget:.4f}, sill={sill:.4f}, range={variogram_range_m:.2f} m")
-    # visually inspected variogram range
-    variogram_range_m = 2700000.0
+    ############## visually inspected variogram range ##################
+    variogram_range_m = 1500000.0
+    ####################################################################
     block_size_m = max(variogram_range_m * float(block_size_multiplier), 1.0)
+    print(f"Block size for spatially blocked CV: {block_size_m:.2f} m")
 
     x_blocks = np.floor((x_m - np.nanmin(x_m)) / block_size_m).astype(int)
     y_blocks = np.floor((y_m - np.nanmin(y_m)) / block_size_m).astype(int)
@@ -279,6 +281,7 @@ def _fit_variogram_and_group_blocks(
     unique_groups = np.unique(groups)
     while len(unique_groups) < cv_folds and block_size_m > 1.0:
         block_size_m *= 0.5
+        print(f"Reducing block size to {block_size_m:.2f} m to achieve at least {cv_folds} unique spatial blocks.")
         x_blocks = np.floor((x_m - np.nanmin(x_m)) / block_size_m).astype(int)
         y_blocks = np.floor((y_m - np.nanmin(y_m)) / block_size_m).astype(int)
         block_pairs = np.column_stack((x_blocks, y_blocks))
