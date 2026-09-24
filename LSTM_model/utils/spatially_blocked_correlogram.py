@@ -128,17 +128,20 @@ def compute_empirical_correlogram(max_distance_m: float, n_bins: int = 30) -> Em
     os.makedirs(plot_directory, exist_ok=True)
     plot_path = os.path.join(plot_directory, "spatially_blocked_cv_correlogram.png")
 
+    bin_centers_km = bin_centers / 1000.0
+    bin_width_km = (bin_edges[1] - bin_edges[0]) / 1000.0
+
     fig, ax1 = plt.subplots(figsize=(6.5, 4.2))
     ax1.axhline(0.0, color="0.45", linestyle="--", linewidth=1)
-    ax1.plot(bin_centers, correlogram, marker="o", color="black", linewidth=1.5, label="Empirical correlogram")
-    ax1.set_xlabel("Distance (m)")
+    ax1.plot(bin_centers_km, correlogram, marker="o", color="black", linewidth=1.5, label="Empirical correlogram")
+    ax1.set_xlabel("Distance (km)")
     ax1.set_ylabel("Correlogram")
     ax1.set_title("Spatial correlogram for manual range inspection")
     ax1.grid(True, linestyle="--", alpha=0.5)
     ax1.set_ylim(-1.05, 1.05)
 
     ax2 = ax1.twinx()
-    ax2.bar(bin_centers, pair_counts, width=(bin_edges[1] - bin_edges[0]) * 0.9, color="tab:blue", alpha=0.12, label="Pair count")
+    ax2.bar(bin_centers_km, pair_counts, width=bin_width_km * 0.9, color="tab:blue", alpha=0.12, label="Pair count")
     ax2.set_ylabel("Pair count")
     ax2.set_ylim(0, max(1, int(np.nanmax(pair_counts) * 1.1)))
 
