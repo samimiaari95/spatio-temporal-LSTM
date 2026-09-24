@@ -20,6 +20,7 @@ class SpatiallyBlockedCVInfo:
     latitudes: np.ndarray
     longitudes: np.ndarray
     residuals: np.ndarray
+    variogram_model: str
     variogram_range_m: float
     block_size_m: float
     variogram_plot_path: str
@@ -45,6 +46,58 @@ def _spherical_variogram(h: np.ndarray, nugget: float, sill: float, range_m: flo
     ratio = h[within_range] / range_m
     gamma[within_range] = nugget + (sill - nugget) * (1.5 * ratio - 0.5 * ratio**3)
     return gamma
+
+
+def _exponential_variogram(h: np.ndarray, nugget: float, sill: float, range_m: float) -> np.ndarray:
+    h = np.asarray(h, dtype=float)
+    if range_m <= 0:
+        return np.full_like(h, sill, dtype=float)
+
+    return nugget + (sill - nugget) * (1.0 - np.exp(-h / range_m))
+
+
+def _gaussian_variogram(h: np.ndarray, nugget: float, sill: float, range_m: float) -> np.ndarray:
+    h = np.asarray(h, dtype=float)
+    if range_m <= 0:
+        return np.full_like(h, sill, dtype=float)
+
+    return nugget + (sill - nugget) * (1.0 - np.exp(-((h / range_m) ** 2)))
+
+
+def _practical_range(model_name: str, fitted_range_m: float) -> float:
+    if model_name == "exponential":
+        return 3.0 * fitted_range_m
+    if model_name == "gaussian":
+        return np.sqrt(3.0) * fitted_range_m
+    return fitted_range_m
+
+
+def _fit_variogram_model(
+    model_name: str,
+    x_fit: np.ndarray,
+    y_fit: np.ndarray,
+    nugget_guess: float,
+    sill_guess: float,
+    range_guess: float,
+) -> tuple[np.ndarray, float, np.ndarray, float]:
+    model_map = {
+        "spherical": _spherical_variogram,
+        "exponential": _exponential_variogram,
+        "gaussian": _gaussian_variogram,
+    }
+    model = model_map[model_name]
+
+    params, _ = curve_fit(
+        model,
+        x_fit,
+        y_fit,
+        p0=(nugget_guess, sill_guess, range_guess),
+        bounds=((0.0, 0.0, 1.0), (np.inf, np.inf, np.inf)),
+        maxfev=20000,
+    )
+    predictions = model(x_fit, *params)
+    sse = float(np.sum((y_fit - predictions) ** 2))
+    return params, sse, predictions, _practical_range(model_name, float(params[2]))
 
 
 def _haversine_distances(latitudes: np.ndarray, longitudes: np.ndarray) -> np.ndarray:
@@ -131,12 +184,12 @@ def _fit_variogram_and_group_blocks(
     if len(pairwise_distances) == 0:
         raise ValueError("Not enough pixels to estimate a variogram.")
 
-    max_distance = (1/3) * float(np.max(pairwise_distances)) # calculating the max lag
+    max_distance = (1/2) * float(np.max(pairwise_distances)) # calculating the max lag
     if not np.isfinite(max_distance) or max_distance <= 0:
         max_distance = float(np.max(pairwise_distances))
     print(f"Max distance for variogram estimation: {max_distance:.2f} m")
 
-    n_bins = 200
+    n_bins = 30
     bin_edges = np.linspace(0.0, max_distance, n_bins + 1)
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     semivariance_bins = np.full(n_bins, np.nan)
@@ -155,6 +208,7 @@ def _fit_variogram_and_group_blocks(
     print(f"pair_counts: {pair_counts}")
     print(f"semivariance_bins: {semivariance_bins}")
     valid_bins = np.isfinite(semivariance_bins) & (pair_counts >= 30)
+    selected_model = "spherical"
     if np.count_nonzero(valid_bins) >= 3:
         x_fit = bin_centers[valid_bins]
         y_fit = semivariance_bins[valid_bins]
@@ -165,24 +219,47 @@ def _fit_variogram_and_group_blocks(
         range_guess = float(np.nanmedian(x_fit)) if np.nanmedian(x_fit) > 0 else float(np.nanmax(x_fit))
         print(f"Initial variogram parameter guesses: nugget={nugget_guess:.4f}, sill={sill_guess:.4f}, range={range_guess:.2f} m")
 
-        try:
-            params, _ = curve_fit(
-                _spherical_variogram,
-                x_fit,
-                y_fit,
-                p0=(nugget_guess, sill_guess, range_guess),
-                bounds=((0.0, 0.0, 1.0), (np.inf, np.inf, np.inf)),
-                maxfev=20000,
+        model_results = []
+        for model_name in ("spherical", "exponential", "gaussian"):
+            try:
+                params, sse, _, practical_range_m = _fit_variogram_model(
+                    model_name,
+                    x_fit,
+                    y_fit,
+                    nugget_guess,
+                    sill_guess,
+                    range_guess,
+                )
+                model_results.append((model_name, params, sse, practical_range_m))
+            except Exception as exc:
+                print(f"Variogram fit failed for {model_name}: {exc}")
+
+        if model_results:
+            print("Variogram fitting results:")
+            print("Model\tSSE\tNugget\tSill\tFitted Range (m)\tPractical Range (m)")
+            for model_name, params, sse, practical_range_m in model_results:
+                nugget, sill, fitted_range = map(float, params)
+                print(f"{model_name}\t{sse:.6f}\t{nugget:.4f}\t{sill:.4f}\t{fitted_range:.2f}\t{practical_range_m:.2f}")
+            selected_model, best_params, best_sse, variogram_range_m = min(
+                model_results,
+                key=lambda item: item[2],
             )
-            nugget, sill, variogram_range_m = map(float, params)
-        except Exception:
+            nugget, sill, fitted_range = map(float, best_params)
+            variogram_range_m = float(variogram_range_m)
+            print(
+                f"Selected variogram model: {selected_model} "
+                f"(SSE={best_sse:.6f}, nugget={nugget:.4f}, sill={sill:.4f}, range={fitted_range:.2f} m)"
+            )
+        else:
             nugget = nugget_guess
             sill = sill_guess
-            variogram_range_m = range_guess
+            fitted_range = range_guess
+            variogram_range_m = _practical_range(selected_model, fitted_range)
     else:
         nugget = float(np.nanmin(semivariance_bins[np.isfinite(semivariance_bins)]))
         sill = float(np.nanmax(semivariance_bins[np.isfinite(semivariance_bins)]))
         variogram_range_m = float(np.nanmax(bin_centers))
+        fitted_range = variogram_range_m
         print("Not enough valid bins for variogram fitting. Using default parameters.#############################")
         print(f"Default variogram parameters: nugget={nugget:.4f}, sill={sill:.4f}, range={variogram_range_m:.2f} m")
 
@@ -190,6 +267,8 @@ def _fit_variogram_and_group_blocks(
         variogram_range_m = float(np.nanmax(pairwise_distances))
 
     print(f"Final variogram parameters: nugget={nugget:.4f}, sill={sill:.4f}, range={variogram_range_m:.2f} m")
+    # visually inspected variogram range
+    variogram_range_m = 2700000.0
     block_size_m = max(variogram_range_m * float(block_size_multiplier), 1.0)
 
     x_blocks = np.floor((x_m - np.nanmin(x_m)) / block_size_m).astype(int)
@@ -218,9 +297,20 @@ def _fit_variogram_and_group_blocks(
     print(bin_centers)
     print(semivariance_bins)
     if np.isfinite(variogram_range_m):
-        model_x = np.linspace(0.0, max(bin_centers[-1], variogram_range_m), 200)
-        model_y = _spherical_variogram(model_x, nugget, sill, variogram_range_m)
-        #plt.plot(model_x, model_y, "r--", label=f"Spherical fit (range={variogram_range_m/1000.0:.1f} km)")
+        model_x = np.linspace(0.0, min(bin_centers[-1], variogram_range_m), 200)
+        model_map = {
+            "spherical": _spherical_variogram,
+            "exponential": _exponential_variogram,
+            "gaussian": _gaussian_variogram,
+        }
+        fitted_model = model_map[selected_model]
+        model_y = fitted_model(model_x, nugget, sill, fitted_range)
+        plt.plot(
+            model_x,
+            model_y,
+            "r--",
+            label=f"{selected_model.title()} fit (range={variogram_range_m/1000.0:.1f} km)",
+        )
     plt.xlabel("Distance (m)")
     plt.ylabel("Semivariance")
     plt.title("Spatially blocked CV variogram")
@@ -235,6 +325,7 @@ def _fit_variogram_and_group_blocks(
         latitudes=latitudes,
         longitudes=longitudes,
         residuals=residuals,
+        variogram_model=selected_model,
         variogram_range_m=variogram_range_m,
         block_size_m=block_size_m,
         variogram_plot_path=plot_path,
