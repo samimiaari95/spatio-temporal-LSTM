@@ -9,11 +9,12 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import PredictionErrorDisplay, r2_score
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.model_selection import KFold, cross_val_predict
+from sklearn.model_selection import GroupKFold, cross_val_predict
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
 import cartopy.crs as ccrs
 from LSTM_model.utils.plot_functions import plotting_helper
+from LSTM_model.utils.spatially_blocked_crossvalidation import get_spatially_blocked_groups
 from LSTM_model.utils.utils import utilities
 from LSTM_model.model.config import *
 
@@ -739,6 +740,7 @@ class postprocess_calculations:
         dirpath = os.path.join(OUTPUTPATH, "statistics")
         stats = ["Ensemble variance", "IQR (75-25%)"]#, "Pairwise correlation"]
         yval_base = np.load(os.path.join(dirpath, "crps_transfer.npy"))
+        groups_base = get_spatially_blocked_groups(cv_folds=cv_folds)
 
         ncols = 2
         nrows = 1
@@ -760,19 +762,23 @@ class postprocess_calculations:
 
             xval = np.load(os.path.join(dirpath, filename))
             if stat=="Pairwise correlation":
+                groups = groups_base[xval>0.01]
                 yval = yval[xval>0.01]
                 xval = xval[xval>0.01]
             else:
+                groups = groups_base
                 yval = yval_base
             
             print(f"fitting {stat} with CRPS")
             mask = ~np.isnan(xval) & ~np.isnan(yval)
             xval = xval[mask]
             yval = yval[mask]
+            groups = groups[mask]
 
             positive_mask = (xval > 0) & (yval > 0)
             xval = xval[positive_mask]
             yval = yval[positive_mask]
+            groups = groups[positive_mask]
 
             if len(xval) == 0:
                 continue
@@ -787,14 +793,15 @@ class postprocess_calculations:
             legend_text = f'$y={fit_params[0]:.2f}x^{{{fit_params[1]:.2f}}}$'
 
             r2_cv = np.nan
-            n_splits = min(cv_folds, len(xval))
+            n_splits = min(cv_folds, len(xval), len(np.unique(groups)))
             if n_splits >= 2:
-                cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+                cv = GroupKFold(n_splits=n_splits)
                 cv_predictions = cross_val_predict(
                     _CrossValidatedCurveFitRegressor(fittype="powerlaw"),
                     xval.reshape(-1, 1),
                     yval,
                     cv=cv,
+                    groups=groups,
                 )
                 positive_cv = cv_predictions > 0
                 if np.any(positive_cv):
@@ -1241,6 +1248,7 @@ class postprocess_calculations:
 
     def create_group_figure_cv(self, stat, combinations, filename, ncols=2, cv_folds=5):
         utils = utilities()
+        groups_base = get_spatially_blocked_groups(cv_folds=cv_folds)
 
         plotmapping = {
             "Ensemble variance":r"$\overline{EV}$",
@@ -1290,25 +1298,32 @@ class postprocess_calculations:
             "(r-1)^2":"exp"
         }
 
-        def filter_values(frame, xstat, ystat):
+        def filter_values(frame, xstat, ystat, groups):
             xval = frame[xstat].values
             yval = frame[ystat].values
+            group_values = groups
 
             if ystat == "Absolute mean bias":
                 yval = np.abs(yval)
-                xval = xval[yval >= 0.01]
-                yval = yval[yval >= 0.01]
+                keep = yval >= 0.01
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
             if ystat == "KGE" or ystat == "NSE":
-                xval = xval[~np.isnan(yval)]
-                yval = yval[~np.isnan(yval)]
-                xval = xval[yval >= 0.2]
-                yval = yval[yval >= 0.2]
+                keep = ~np.isnan(yval)
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
+                keep = yval >= 0.2
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
 
             mask = ~np.isnan(xval) & ~np.isnan(yval)
-            return xval[mask], yval[mask]
+            return xval[mask], yval[mask], group_values[mask]
 
         for i, (ystat, xstat) in enumerate(combinations):
-            xval, yval = filter_values(stat, xstat, ystat)
+            xval, yval, groups = filter_values(stat, xstat, ystat, groups_base)
 
             logarithmicfit = False
 
@@ -1329,10 +1344,12 @@ class postprocess_calculations:
                 positive_mask = (xval > 0) & (yval > 0)
                 xval = xval[positive_mask]
                 yval = yval[positive_mask]
+                groups = groups[positive_mask]
             elif logarithmicfit:
                 positive_mask = xval > 0
                 xval = xval[positive_mask]
                 yval = yval[positive_mask]
+                groups = groups[positive_mask]
 
             if len(xval) == 0:
                 continue
@@ -1358,17 +1375,20 @@ class postprocess_calculations:
 
             cv_predictions = None
             r2_cv = np.nan
-            n_splits = min(cv_folds, len(xval))
+            n_splits = min(cv_folds, len(xval), len(np.unique(groups)))
             if n_splits >= 2:
-                cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+                cv = GroupKFold(n_splits=n_splits)
                 cv_predictions = cross_val_predict(
                     _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit),
                     xval.reshape(-1, 1),
                     yval,
-                    cv=cv
+                    cv=cv,
+                    groups=groups,
                 )
                 if fittype == "powerlaw":
-                    r2_cv = r2_score(np.log(yval), np.log(cv_predictions))
+                    positive_cv = (yval > 0) & (cv_predictions > 0)
+                    if np.any(positive_cv):
+                        r2_cv = r2_score(np.log(yval[positive_cv]), np.log(cv_predictions[positive_cv]))
                 else:
                     r2_cv = r2_score(yval, cv_predictions)
 
@@ -1431,6 +1451,7 @@ class postprocess_calculations:
 
     def create_group_figure_cv_residuals(self, stat, combinations, filename, ncols=2, cv_folds=5):
         utils = utilities()
+        groups_base = get_spatially_blocked_groups(cv_folds=cv_folds)
 
         plotmapping = {
             "Ensemble variance":r"$\overline{EV}$",
@@ -1480,25 +1501,32 @@ class postprocess_calculations:
             "(r-1)^2":"exp"
         }
 
-        def filter_values(frame, xstat, ystat):
+        def filter_values(frame, xstat, ystat, groups):
             xval = frame[xstat].values
             yval = frame[ystat].values
+            group_values = groups
 
             if ystat == "Absolute mean bias":
                 yval = np.abs(yval)
-                xval = xval[yval >= 0.01]
-                yval = yval[yval >= 0.01]
+                keep = yval >= 0.01
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
             if ystat == "KGE" or ystat == "NSE":
-                xval = xval[~np.isnan(yval)]
-                yval = yval[~np.isnan(yval)]
-                xval = xval[yval >= 0.2]
-                yval = yval[yval >= 0.2]
+                keep = ~np.isnan(yval)
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
+                keep = yval >= 0.2
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
 
             mask = ~np.isnan(xval) & ~np.isnan(yval)
-            return xval[mask], yval[mask]
+            return xval[mask], yval[mask], group_values[mask]
 
         for i, (ystat, xstat) in enumerate(combinations):
-            xval, yval = filter_values(stat, xstat, ystat)
+            xval, yval, groups = filter_values(stat, xstat, ystat, groups_base)
 
             logarithmicfit = False
 
@@ -1519,10 +1547,12 @@ class postprocess_calculations:
                 positive_mask = (xval > 0) & (yval > 0)
                 xval = xval[positive_mask]
                 yval = yval[positive_mask]
+                groups = groups[positive_mask]
             elif logarithmicfit:
                 positive_mask = xval > 0
                 xval = xval[positive_mask]
                 yval = yval[positive_mask]
+                groups = groups[positive_mask]
 
             if len(xval) < 2:
                 continue
@@ -1530,16 +1560,17 @@ class postprocess_calculations:
             model = _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit)
             model.fit(xval.reshape(-1, 1), yval)
 
-            n_splits = min(cv_folds, len(xval))
+            n_splits = min(cv_folds, len(xval), len(np.unique(groups)))
             if n_splits < 2:
                 continue
 
-            cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+            cv = GroupKFold(n_splits=n_splits)
             cv_predictions = cross_val_predict(
                 _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit),
                 xval.reshape(-1, 1),
                 yval,
-                cv=cv
+                cv=cv,
+                groups=groups,
             )
 
             ax = axes[i]
@@ -1683,6 +1714,7 @@ class postprocess_calculations:
         plt.close()
     
     def create_pairwise_corr_figure(self, stat, filename, cv_folds=5):
+        groups_base = get_spatially_blocked_groups(cv_folds=cv_folds)
 
         combinations = [
             ("RMSE","Pairwise correlation"),
@@ -1713,21 +1745,29 @@ class postprocess_calculations:
 
             xval = stat[xstat].values
             yval = stat[ystat].values
+            group_values = groups_base
 
             if ystat == "Absolute mean bias":
                 yval = np.abs(yval)
-                xval = xval[yval>=0.01]
-                yval = yval[yval>=0.01]
+                keep = yval >= 0.01
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
             
             if ystat=="KGE":
-                xval = xval[~np.isnan(yval)]
-                yval = yval[~np.isnan(yval)]
-                xval = xval[yval>=-0.41]
-                yval = yval[yval>=-0.41]
+                keep = ~np.isnan(yval)
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
+                keep = yval >= -0.41
+                xval = xval[keep]
+                yval = yval[keep]
+                group_values = group_values[keep]
 
             mask = ~np.isnan(xval) & ~np.isnan(yval)
             xval = xval[mask]
             yval = yval[mask]
+            groups = group_values[mask]
 
             logarithmicfit = False
 
@@ -1747,10 +1787,12 @@ class postprocess_calculations:
                 positive_mask = (xval > 0) & (yval > 0)
                 xval = xval[positive_mask]
                 yval = yval[positive_mask]
+                groups = groups[positive_mask]
             elif logarithmicfit:
                 positive_mask = xval > 0
                 xval = xval[positive_mask]
                 yval = yval[positive_mask]
+                groups = groups[positive_mask]
 
             if len(xval) < 2:
                 continue
@@ -1775,14 +1817,15 @@ class postprocess_calculations:
                 eq = f'$y={fit_params[0]:.2f}e^{{{fit_params[1]:.2f}x}}$'
 
             r2_cv = np.nan
-            n_splits = min(cv_folds, len(xval))
+            n_splits = min(cv_folds, len(xval), len(np.unique(groups)))
             if n_splits >= 2:
-                cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+                cv = GroupKFold(n_splits=n_splits)
                 cv_predictions = cross_val_predict(
                     _CrossValidatedCurveFitRegressor(fittype=fittype, logarithmicfit=logarithmicfit),
                     xval.reshape(-1, 1),
                     yval,
                     cv=cv,
+                    groups=groups,
                 )
                 if fittype == "powerlaw":
                     positive_cv = (yval > 0) & (cv_predictions > 0)
@@ -1875,7 +1918,7 @@ class postprocess_calculations:
         # self.create_group_figure(stat, comb10, "figure10", ncols=2)
         # self.ensemble_crpsvsstats_fitting() # figure 11
         # self.create_kge_component_figure(stat, "figureS1")
-        self.create_group_figure(stat, combB2, "figureS5", ncols=2)
+        # self.create_group_figure(stat, combB2, "figureS5", ncols=2)
         # self.create_pairwise_corr_figure(stat, "figureS8")
 
     def run_statvsacc_fitting_cv(self):
@@ -1902,9 +1945,9 @@ class postprocess_calculations:
             ("NSE","IQR (75-25%)")
         ]
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
-        # self.create_group_figure_cv(stat, comb8, "figure8", ncols=2)
+        self.create_group_figure_cv(stat, comb8, "figure8", ncols=2)
         # self.ensemble_crpsvsstats_fitting() # figure 11
-        self.create_pairwise_corr_figure(stat, "figureS8")
+        # self.create_pairwise_corr_figure(stat, "figureS8")
 
     def run_statvsacc_fitting_cv_residuals(self):
         comb8 = [
