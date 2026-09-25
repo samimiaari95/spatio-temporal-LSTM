@@ -15,6 +15,7 @@ from scipy.stats import gaussian_kde
 import cartopy.crs as ccrs
 from LSTM_model.utils.plot_functions import plotting_helper
 from LSTM_model.utils.spatially_blocked_crossvalidation import get_spatially_blocked_groups
+from LSTM_model.utils.spatially_blocked_correlogram import compute_empirical_correlogram
 from LSTM_model.utils.utils import utilities
 from LSTM_model.model.config import *
 
@@ -742,6 +743,16 @@ class postprocess_calculations:
         yval_base = np.load(os.path.join(dirpath, "crps_transfer.npy"))
         groups_base = get_spatially_blocked_groups(cv_folds=cv_folds)
 
+        def expand_groups_to_match(values, groups):
+            if len(values) == len(groups):
+                return groups
+            if len(values) % len(groups) != 0:
+                raise ValueError(
+                    f"Cannot expand {len(groups)} spatial groups to match {len(values)} samples."
+                )
+            repeat_factor = len(values) // len(groups)
+            return np.tile(groups, repeat_factor)
+
         ncols = 2
         nrows = 1
         fig, axes = plt.subplots(nrows, ncols, figsize=(7.09, 2.84))
@@ -766,7 +777,7 @@ class postprocess_calculations:
                 yval = yval[xval>0.01]
                 xval = xval[xval>0.01]
             else:
-                groups = groups_base
+                groups = expand_groups_to_match(xval, groups_base)
                 yval = yval_base
             
             print(f"fitting {stat} with CRPS")
@@ -1248,6 +1259,7 @@ class postprocess_calculations:
 
     def create_group_figure_cv(self, stat, combinations, filename, ncols=2, cv_folds=5):
         utils = utilities()
+        groups_base_correlogram = compute_empirical_correlogram(max_distance_m=3164110.03) # hard coded value obtained from variogram functions
         groups_base = get_spatially_blocked_groups(cv_folds=cv_folds)
 
         plotmapping = {
@@ -1945,9 +1957,9 @@ class postprocess_calculations:
             ("NSE","IQR (75-25%)")
         ]
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
-        self.create_group_figure_cv(stat, comb8, "figure8", ncols=2)
-        # self.ensemble_crpsvsstats_fitting() # figure 11
-        # self.create_pairwise_corr_figure(stat, "figureS8")
+        # self.create_group_figure_cv(stat, comb8, "figure8", ncols=2)
+        self.ensemble_crpsvsstats_fitting() # figure 11
+        # self.create_pairwise_corr_figure(stat, "figureS9")
 
     def run_statvsacc_fitting_cv_residuals(self):
         comb8 = [
@@ -1959,7 +1971,7 @@ class postprocess_calculations:
             # ("Pearson correlation","IQR (75-25%)")
         ]
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
-        self.create_group_figure_cv_residuals(stat, comb8, "figure8residuals", ncols=2)
+        self.create_group_figure_cv_residuals(stat, comb8, "figureS10", ncols=2)
 
     def count_pearson_higher06(self):
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
