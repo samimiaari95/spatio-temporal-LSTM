@@ -3131,22 +3131,26 @@ class postprocess_calculations:
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
         EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
         rollsubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months.npy"))
+        training_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "training_subset.npy"))
         iqrmap = np.zeros(rollsubset.shape)
         iqrmap[iqrmap==0] = np.nan
         varmap = np.zeros(rollsubset.shape)
         varmap[varmap==0] = np.nan
+        rmse2d_predvsobs = np.full(rollsubset.shape, np.nan)
+        bias2d_predvsobs = np.full(rollsubset.shape, np.nan)
         print("Progress: [" + "." * 100 + "]", flush=True)
         print("          [", end="", flush=True)
         for target in range(100):
             print(".", end="", flush=True)  # Dots without newlines
             target_mapping = np.load(os.path.join(os.path.dirname(EU_inpath), f"target_pixels_{target}", f"mappingindices_{target}.npy"))
-            #obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            obs_destand_EU = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
             members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
             members_sim = np.array(members_sim)
             members_sim = np.expand_dims(members_sim, axis=0)
             members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
             mean_iqr = np.zeros((members_sim.shape[2]))
             mean_var = np.zeros((members_sim.shape[2]))
+            mean_prediction = np.zeros((members_sim.shape[1], members_sim.shape[2]))
             untrained_pixel_mask = np.ones(members_sim.shape[2], dtype=bool)
             for member in range(100):
                 member_mask = np.ones(100, dtype=bool)
@@ -3170,6 +3174,7 @@ class postprocess_calculations:
                 trained_pixels_var = np.var(trained_pixels_ts, axis=0)
                 trained_pixels_var = np.nanmean(trained_pixels_var, axis=0)
                 mean_var[pixel_mask] = trained_pixels_var
+                mean_prediction[:, pixel_mask] = np.mean(trained_pixels_ts, axis=0)
                 
             # For other pixels (not included in training any member) get the Mean over ALL MEMBERS (axis=0)
             untrained_pixels_ts = members_sim[..., untrained_pixel_mask]
@@ -3181,14 +3186,40 @@ class postprocess_calculations:
                 
             mean_iqr[untrained_pixel_mask] = untrained_pixels_iqr
             mean_var[untrained_pixel_mask] = untrained_pixels_var
+            mean_prediction[:, untrained_pixel_mask] = np.mean(untrained_pixels_ts, axis=0)
+
+            rmse_1d = np.full(members_sim.shape[2], np.nan)
+            absbias_1d = np.full(members_sim.shape[2], np.nan)
+            obs_std = np.nanstd(obs_destand_EU, axis=0)
+            sim_std = np.nanstd(mean_prediction, axis=0)
+            valid_ts = (obs_std > 0) & (sim_std > 0)
+            residual = mean_prediction[:, valid_ts] - obs_destand_EU[:, valid_ts]
+            rmse_1d[valid_ts] = np.sqrt(np.mean(residual ** 2, axis=0))
+            absbias_1d[valid_ts] = np.abs(np.mean(residual, axis=0))
+
             indices1d, indices2d = utils.intersect_subsets(target_mapping, rollsubset)
             iqrmap[indices2d] = mean_iqr[indices1d]
             varmap[indices2d] = mean_var[indices1d]
+            rmse2d_predvsobs[indices2d] = rmse_1d[indices1d]
+            bias2d_predvsobs[indices2d] = absbias_1d[indices1d]
             #print(f"saved target {target}")
 
         print("] Done!", flush=True)
-        bias2d_statspred = 0.45*(iqrmap**1.03)
-        rmse2d_statspred = 0.67*(varmap**0.45)
+        bias2d_statspred = 0.446*(iqrmap**1.033)
+        rmse2d_statspred = 0.671*(varmap**0.454)
+
+        train_mask = training_subset == 1
+        valid_rmse = train_mask & np.isfinite(rmse2d_statspred) & np.isfinite(rmse2d_predvsobs)
+        valid_bias = train_mask & np.isfinite(bias2d_statspred) & np.isfinite(bias2d_predvsobs)
+        r2_rmse = r2_score(rmse2d_predvsobs[valid_rmse], rmse2d_statspred[valid_rmse])
+        r2_bias = r2_score(bias2d_predvsobs[valid_bias], bias2d_statspred[valid_bias])
+        print(
+            f"Training-subset R2: RMSE statspred vs pred-obs RMSE = {r2_rmse:.3f} "
+            f"(n={np.count_nonzero(valid_rmse)}); "
+            f"bias statspred vs absolute mean bias = {r2_bias:.3f} "
+            f"(n={np.count_nonzero(valid_bias)})",
+            flush=True,
+        )
         # ----- create combined figure -----
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
