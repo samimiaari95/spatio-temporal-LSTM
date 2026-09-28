@@ -2,10 +2,16 @@ import os
 import glob
 import math
 import numpy as np
+import xarray as xr
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
 import seaborn as sns
+import cartopy.crs as ccrs
+from cartopy.feature import ShapelyFeature
+from cartopy.io.shapereader import Reader
+import cartopy.feature as cfeature
+from shapely.geometry import Polygon
 from scipy import stats
 from LSTM_model.utils import utils
 import torch
@@ -85,6 +91,438 @@ class postprocess_calculations:
                 "Bias": bias
             })
         return results
+
+    def ensemble_spread_rmse_ratio(
+        self,
+        fc,
+        obs,
+        reduce_dims=None,
+        groupby=None,
+        member_dim="member",
+    ):
+        """Compute ECMWF-style ensemble spread/RMSE ratio.
+
+        Parameters
+        ----------
+        fc : xarray.DataArray or numpy.ndarray
+            Forecast ensemble with dimensions (member, time, lat, lon). If a NumPy array
+            is passed, it is interpreted as (member, time, lat, lon).
+        obs : xarray.DataArray or numpy.ndarray
+            Verifying observations with dimensions (time, lat, lon). If a NumPy array is
+            passed, it is interpreted as (time, lat, lon).
+        reduce_dims : str or sequence of str, optional
+            Dimensions to average over for RMSE and spread. By default, all non-member
+            dimensions are used. For a map over latitude/longitude, pass
+            reduce_dims=("time",) so lat/lon remain in the output.
+        groupby : str or sequence of str, optional
+            Optional dimension(s) used to compute the statistics per group (for example
+            per pixel when lat/lon are preserved). If given, the function returns a
+            grouped xarray Dataset.
+        member_dim : str
+            Name of the ensemble member dimension.
+
+        Returns
+        -------
+        xarray.Dataset or xarray.DataArray
+            Dataset containing spread, rmse, ratio, and fair_ratio. If `groupby` is used,
+            the result is grouped and returned as a Dataset with one entry per group.
+
+        Notes
+        -----
+        The spread is computed as the square root of the mean ensemble variance,
+        where variance uses ddof=1. This follows the ECMWF convention, i.e. the
+        variance is averaged first and only then square-rooted; the standard
+        deviations are not averaged.
+        """
+        if isinstance(fc, np.ndarray):
+            fc = xr.DataArray(fc, dims=(member_dim, "time", "lat", "lon"))
+        if not isinstance(fc, xr.DataArray):
+            raise TypeError("fc must be an xarray.DataArray or a NumPy array.")
+
+        if isinstance(obs, np.ndarray):
+            obs = xr.DataArray(obs, dims=("time", "lat", "lon"))
+        if not isinstance(obs, xr.DataArray):
+            raise TypeError("obs must be an xarray.DataArray or a NumPy array.")
+
+        if member_dim not in fc.dims:
+            raise ValueError(f"Forecast array must contain the member dimension '{member_dim}'.")
+
+        obs_dims = set(obs.dims)
+        fc_dims_no_member = set(fc.dims) - {member_dim}
+        if not obs_dims.issubset(fc_dims_no_member):
+            raise ValueError(
+                f"Observation dimensions {sorted(obs_dims)} must be a subset of the forecast "
+                f"non-member dimensions {sorted(fc_dims_no_member)}."
+            )
+
+        obs = obs.broadcast_like(fc.isel({member_dim: 0}))
+
+        if reduce_dims is None:
+            reduce_dims = tuple(d for d in fc.dims if d != member_dim and d in obs.dims)
+        elif isinstance(reduce_dims, str):
+            reduce_dims = (reduce_dims,)
+        reduce_dims = tuple(d for d in reduce_dims if d != member_dim and d in set(fc.dims) | set(obs.dims))
+        if not reduce_dims:
+            raise ValueError("No valid reduction dimensions were supplied for the RMSE/spread calculation.")
+        print(f"Using reduction dimensions: {reduce_dims}")
+        def _compute_for_block(fc_block, obs_block):
+            ens_mean = fc_block.mean(dim=member_dim)
+            error = ens_mean - obs_block
+
+            rmse = np.sqrt((error ** 2).mean(dim=reduce_dims, skipna=True))
+            spread = np.sqrt(
+                fc_block.var(dim=member_dim, ddof=1).mean(dim=reduce_dims, skipna=True)
+            )
+            m = fc_block.sizes[member_dim]
+            fair_spread = spread * np.sqrt((m + 1.0) / m)
+
+            ratio = spread / rmse
+            fair_ratio = fair_spread / rmse
+
+            return xr.Dataset(
+                {
+                    "spread": spread,
+                    "rmse": rmse,
+                    "ratio": ratio,
+                    "fair_ratio": fair_ratio,
+                }
+            )
+        print(f"Computing ensemble spread/RMSE ratio with groupby={groupby}")
+        if groupby is None:
+            return _compute_for_block(fc, obs)
+
+        if isinstance(groupby, str):
+            groupby = (groupby,)
+
+        groupby = tuple(groupby)
+        for dim in groupby:
+            if dim not in set(fc.dims) and dim not in set(obs.dims):
+                raise ValueError(f"Grouping dimension '{dim}' is not present in fc or obs.")
+        print(f"Grouping by dimensions: {groupby}")
+        ds = xr.Dataset({"fc": fc, "obs": obs})
+        grouped = ds.groupby(groupby)
+        print(f"Number of groups: {len(grouped)}")
+        return grouped.map(lambda block: _compute_for_block(block["fc"], block["obs"]))
+
+    def run_ensemble_spread_rmse_ratio(
+        self,
+        fc=None,
+        obs=None,
+        fc_filepath=None,
+        obs_filepath=None,
+        member_dim="member",
+        time_dim="time",
+        lat_dim="lat",
+        lon_dim="lon",
+        reduce_dims=None,
+        groupby=None,
+    ):
+        """Ready-to-run wrapper around the ECMWF-style spread/RMSE-ratio diagnostic.
+
+        This function accepts either explicit arrays or file paths, converts them to
+        xarray objects with the required dimensions, and calls
+        ``ensemble_spread_rmse_ratio``.
+
+        Parameters
+        ----------
+        fc, obs : xarray.DataArray or np.ndarray, optional
+            Forecast ensemble and verifying observations. If omitted, the values are
+            loaded from ``fc_filepath`` and ``obs_filepath``.
+        fc_filepath, obs_filepath : str, optional
+            Paths to ``.npy`` arrays. For the project workflow these are typically the
+            ensemble-member file and local-observation array.
+        member_dim, time_dim, lat_dim, lon_dim : str
+            Dimension names for the arrays when converted to xarray.
+        reduce_dims : tuple or str, optional
+            Dimensions over which to average for the RMSE and spread. By default it is
+            the time dimension only, so the output remains a map over latitude/longitude.
+        groupby : str or tuple, optional
+            Optional grouping dimension(s) such as ``('lat', 'lon')`` to compute the ratio
+            per pixel.
+
+        Returns
+        -------
+        xarray.Dataset
+            Dataset containing ``spread``, ``rmse``, ``ratio``, and ``fair_ratio``.
+        """
+        if fc is None:
+            if fc_filepath is None:
+                raise ValueError("Provide either fc or fc_filepath.")
+            fc = np.load(fc_filepath)
+        if obs is None:
+            if obs_filepath is None:
+                raise ValueError("Provide either obs or obs_filepath.")
+            obs = np.load(obs_filepath)
+
+        if isinstance(fc, np.ndarray):
+            if fc.ndim != 4:
+                raise ValueError(
+                    f"fc array must have 4 dimensions (member, time, lat, lon), got shape {fc.shape}."
+                )
+            fc = xr.DataArray(fc, dims=(member_dim, time_dim, lat_dim, lon_dim))
+        if isinstance(obs, np.ndarray):
+            if obs.ndim != 3:
+                raise ValueError(
+                    f"obs array must have 3 dimensions (time, lat, lon), got shape {obs.shape}."
+                )
+            obs = xr.DataArray(obs, dims=(time_dim, lat_dim, lon_dim))
+
+        if reduce_dims is None:
+            reduce_dims = (time_dim,)
+        print(f"Running ensemble spread/RMSE ratio with reduce_dims={reduce_dims} and groupby={groupby}")
+
+        return self.ensemble_spread_rmse_ratio(
+            fc=fc,
+            obs=obs,
+            reduce_dims=reduce_dims,
+            groupby=groupby,
+            member_dim=member_dim,
+        )
+
+    def plot_ensemble_spread_rmse_ratio_map(
+        self,
+        fc=None,
+        obs=None,
+        fc_filepath=None,
+        obs_filepath=None,
+        title="ensemble_spread_rmse_ratio_map",
+        savepath=None,
+        member_dim="member",
+        time_dim="time",
+        lat_dim="lat",
+        lon_dim="lon",
+        reduce_dims=None,
+        vmin=0.25,
+        vmax=1.75,
+        cmap="RdYlBu_r",
+    ):
+        """Compute and plot the per-pixel spread/RMSE ratio map.
+
+        This keeps the time dimension as the reduction axis and leaves latitude/longitude
+        in the output, producing a 2D map of the ECMWF spread/RMSE ratio.
+
+        Parameters
+        ----------
+        fc, obs : xarray.DataArray or np.ndarray, optional
+            Forecast ensemble and verifying observations.
+        fc_filepath, obs_filepath : str, optional
+            Paths to `.npy` arrays with dims ``(member, time, lat, lon)`` and
+            ``(time, lat, lon)``.
+        title : str
+            Plot title and output filename stem.
+        savepath : str, optional
+            Directory where the figure is saved. If None, it is saved to the project output.
+        member_dim, time_dim, lat_dim, lon_dim : str
+            Dimension names used when converting arrays to xarray.
+        reduce_dims : tuple or str, optional
+            Dimensions to average over. For a per-pixel map, this should typically be
+            ``(time_dim,)`` so the lat/lon dimensions remain.
+        vmin, vmax : float
+            Color limits for the ratio map.
+        cmap : str
+            Matplotlib colormap name.
+
+        Returns
+        -------
+        ratio_map : xarray.DataArray
+            Per-pixel ratio map.
+        fig : matplotlib.figure.Figure
+            The plotted figure.
+        """
+        if fc is None:
+            if fc_filepath is None:
+                raise ValueError("Provide either fc or fc_filepath.")
+            fc = np.load(fc_filepath)
+        if obs is None:
+            if obs_filepath is None:
+                raise ValueError("Provide either obs or obs_filepath.")
+            obs = np.load(obs_filepath)
+
+        if reduce_dims is None:
+            reduce_dims = (time_dim,)
+
+        stats = self.run_ensemble_spread_rmse_ratio(
+            fc=fc,
+            obs=obs,
+            member_dim=member_dim,
+            time_dim=time_dim,
+            lat_dim=lat_dim,
+            lon_dim=lon_dim,
+            reduce_dims=reduce_dims,
+            groupby=None,
+        )
+        print("Computed ensemble spread/RMSE ratio map.")
+
+        ratio_map = stats["ratio"]
+        if hasattr(ratio_map, "squeeze"):
+            ratio_map = ratio_map.squeeze(drop=True)
+        print("plotting ratio map with shape:", ratio_map.shape)
+        if savepath is None:
+            savepath = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs")
+        os.makedirs(savepath, exist_ok=True)
+
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        valid = np.where(~np.isnan(np.asarray(ratio_map)))
+        if len(valid[0]) == 0:
+            lon_min, lon_max = float(np.nanmin(lons)), float(np.nanmax(lons))
+            lat_min, lat_max = float(np.nanmin(lats)), float(np.nanmax(lats))
+        else:
+            lon_min = float(np.min(lons[valid]))
+            lon_max = float(np.max(lons[valid]))
+            lat_min = float(np.min(lats[valid]))
+            lat_max = float(np.max(lats[valid]))
+
+        lon_buffer = 0.05 * (lon_max - lon_min) if (lon_max - lon_min) != 0 else 0.1
+        lat_buffer = 0.05 * (lat_max - lat_min) if (lat_max - lat_min) != 0 else 0.1
+        zoom_extent = [lon_min - lon_buffer, lon_max + lon_buffer, lat_min - lat_buffer, lat_max + lat_buffer]
+
+        fig, (ax1, ax2) = plt.subplots(
+            1,
+            2,
+            figsize=(20, 9),
+            subplot_kw={"projection": projection},
+            constrained_layout=True,
+        )
+
+        step = 0.2
+        if vmin is None:
+            vmin = float(np.nanmin(np.asarray(ratio_map)))
+        if vmax is None:
+            vmax = float(np.nanmax(np.asarray(ratio_map)))
+        bounds = np.arange(np.floor(vmin / step) * step, np.ceil(vmax / step) * step + step, step)
+        bounds = np.round(bounds, 3)
+        cmap_obj = plt.get_cmap(cmap)
+        if len(bounds) > 1:
+            # build a discrete colormap with one color per interval
+            discrete_cmap = cmap_obj(np.linspace(0, 1, len(bounds) - 1))
+            discrete_cmap = plt.matplotlib.colors.ListedColormap(discrete_cmap)
+        else:
+            discrete_cmap = cmap_obj
+        norm = plt.matplotlib.colors.BoundaryNorm(bounds, discrete_cmap.N)
+
+        if set(ratio_map.dims) >= {lat_dim, lon_dim}:
+            data = np.asarray(ratio_map)
+            if data.shape != lons.shape:
+                data = np.asarray(ratio_map.values)
+            np.save(os.path.join(savepath, f"{title}_spread-rmse_data.npy"), data)
+            print(data.shape)
+            data = np.clip(data, vmin, vmax)
+            im1 = ax1.pcolormesh(
+                lons,
+                lats,
+                data,
+                cmap=discrete_cmap,
+                norm=norm,
+                transform=ccrs.PlateCarree(),
+                shading="auto",
+            )
+            im2 = ax2.pcolormesh(
+                lons,
+                lats,
+                data,
+                cmap=discrete_cmap,
+                norm=norm,
+                transform=ccrs.PlateCarree(),
+                shading="auto",
+            )
+
+            ax1.gridlines(draw_labels=True)
+            ax1.set_title(f"{title} — full domain")
+            ax2.gridlines(draw_labels=True)
+            ax2.set_title(f"{title} — focus")
+            ax2.set_extent(zoom_extent, crs=ccrs.PlateCarree())
+
+            shapefile_path = os.path.join(os.path.dirname(get_root_dir()), "ne_10m_admin_0_countries", "ne_10m_admin_0_countries.shp")
+            shape_feature = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor="black")
+            ax1.add_feature(shape_feature, facecolor="none", edgecolor="black", linewidth=1)
+            ax2.add_feature(shape_feature, facecolor="none", edgecolor="black", linewidth=1)
+
+            region_polygon = Polygon([
+                (lon_min, lat_min),
+                (lon_min, lat_max),
+                (lon_max, lat_max),
+                (lon_max, lat_min),
+            ])
+            ax1.add_geometries([region_polygon], ccrs.PlateCarree(), facecolor="none", edgecolor="red", linewidth=2, zorder=5)
+
+            cbar = fig.colorbar(im2, ax=[ax1, ax2], orientation="vertical", fraction=0.03, pad=0.02, ticks=bounds)
+            cbar.set_label("Spread / RMSE")
+        else:
+            arr = np.clip(np.asarray(ratio_map), vmin, vmax)
+            im = ax1.imshow(
+                arr,
+                cmap=discrete_cmap,
+                norm=norm,
+                origin="lower",
+                aspect="auto",
+            )
+            fig.colorbar(im, ax=ax1, label="Spread / RMSE", ticks=bounds)
+            ax1.set_title(f"{title} — full domain")
+            ax2.set_title(f"{title} — focus")
+            ax2.axis("off")
+
+        fig.savefig(os.path.join(savepath, f"{title}.png"), dpi=300, bbox_inches="tight")
+
+        return ratio_map, fig
+
+    def prepare_and_plot_ensemble_spread_rmse_ratio_map(
+        self,
+        fc=None,
+        obs=None,
+        fc_filepath=None,
+        obs_filepath=None,
+        title="ensemble_spread_rmse_ratio_map",
+        savepath=None,
+        member_dim="member",
+        time_dim="time",
+        lat_dim="lat",
+        lon_dim="lon",
+        reduce_dims=None,
+        vmin=0.25,
+        vmax=1.75,
+        cmap="RdYlBu_r",
+    ):
+        """Prepare inputs and call the per-pixel spread/RMSE ratio map plotting helper.
+
+        This is a convenience wrapper for the project workflow: it accepts either explicit
+        arrays or file paths, then calls ``plot_ensemble_spread_rmse_ratio_map`` with the
+        required inputs.
+        """
+        if fc is None:
+            if fc_filepath is None:
+                raise ValueError("Provide either fc or fc_filepath.")
+            fc = np.load(fc_filepath)
+        if obs is None:
+            if obs_filepath is None:
+                raise ValueError("Provide either obs or obs_filepath.")
+            obs = np.load(obs_filepath)
+
+        if isinstance(fc, np.ndarray) and fc.ndim == 4:
+            fc = xr.DataArray(fc, dims=(member_dim, time_dim, lat_dim, lon_dim))
+        if isinstance(obs, np.ndarray) and obs.ndim == 3:
+            obs = xr.DataArray(obs, dims=(time_dim, lat_dim, lon_dim))
+
+        if reduce_dims is None:
+            reduce_dims = (time_dim,)
+        print("inputs loaded")
+
+        return self.plot_ensemble_spread_rmse_ratio_map(
+            fc=fc,
+            obs=obs,
+            title=title,
+            savepath=savepath,
+            member_dim=member_dim,
+            time_dim=time_dim,
+            lat_dim=lat_dim,
+            lon_dim=lon_dim,
+            reduce_dims=reduce_dims,
+            vmin=vmin,
+            vmax=vmax,
+            cmap=cmap,
+        )
 
     def debug_pixel(self):
         # pixels with errors:
@@ -1281,6 +1719,310 @@ class postprocess_calculations:
         sim_members = sim_members[:, :, obspixels[0], obspixels[1]]
         print(obs.shape, sim_members.shape)
         return obs, sim_members
+
+    def plot_rank_histograms(
+        self,
+        members_filepath=None,
+        obs_filepath=None,
+        title="ensemble_anomalies_rank_histogram",
+        save_dir=None,
+        figsize=(10, 6),
+        show_uniform_reference=True,
+        return_stats=True,
+    ):
+        """Plot rank histograms for ensemble anomaly forecasts against observations.
+
+        Parameters
+        ----------
+        members_filepath : str, optional
+            Path to member anomalies array. Expected shape is (n_members, n_time, y, x)
+            or (n_members, n_time, n_pixels).
+        obs_filepath : str, optional
+            Path to observation anomalies array. Expected shape is (n_time, y, x)
+            or (n_time, n_pixels).
+        title : str
+            Base title used in the saved figure filename.
+        save_dir : str, optional
+            Directory where the plot is saved. If None, it falls back to the project
+            validation output folder for ERA5-vs-localobs plots.
+        figsize : tuple
+            Figure size passed to matplotlib.
+        show_uniform_reference : bool
+            If True, draw a horizontal reference line at the expected uniform count.
+        return_stats : bool
+            If True, also return the rank counts and all valid ranks.
+        """
+        if members_filepath is None:
+            members_filepath = os.path.join(
+                OUTPUTPATH,
+                "validation_ERA5",
+                "ensemble_400px",
+                "ensemble_mean",
+                "era5wtd_vs_localobs",
+                "sim_members_anomalies.npy",
+            )
+        if obs_filepath is None:
+            obs_filepath = os.path.join(
+                INPUTPATH,
+                "wtd_obsEU_YMA_1996_2016.npy",
+            )
+
+        if not os.path.exists(members_filepath):
+            raise FileNotFoundError(f"Member predictions file not found: {members_filepath}")
+        if not os.path.exists(obs_filepath):
+            raise FileNotFoundError(f"Observation file not found: {obs_filepath}")
+
+        sim_members = np.load(members_filepath)
+        obs = np.load(obs_filepath)
+
+        # Handle array shapes used in this project: (members, time, y, x) vs (time, y, x)
+        if sim_members.ndim == 4 and obs.ndim == 3:
+            valid_obs_pixels = np.where(~np.isnan(np.nanmean(obs, axis=0)))
+            valid_sim_pixels = np.where(~np.isnan(np.nanmean(sim_members[0], axis=0)))
+            if not (np.array_equal(valid_obs_pixels[0], valid_sim_pixels[0]) and np.array_equal(valid_obs_pixels[1], valid_sim_pixels[1])):
+                raise ValueError("Observation and ensemble pixel masks do not match.")
+            obs = obs[:, valid_obs_pixels[0], valid_obs_pixels[1]]
+            sim_members = sim_members[:, :, valid_obs_pixels[0], valid_obs_pixels[1]]
+        elif sim_members.ndim == 3 and obs.ndim == 2:
+            pass
+        else:
+            raise ValueError(
+                "Expected ensemble and observations in shapes (members, time, y, x)/(time, y, x) "
+                "or (members, time, pixels)/(time, pixels)."
+            )
+
+        if obs.ndim == 2:
+            obs = obs.reshape(obs.shape[0], -1)
+        if sim_members.ndim == 3:
+            sim_members = sim_members.reshape(sim_members.shape[0], sim_members.shape[1], -1)
+        elif sim_members.ndim == 4:
+            sim_members = sim_members.reshape(sim_members.shape[0], sim_members.shape[1], -1)
+
+        obs_flat = obs.reshape(-1)
+        ens_flat = sim_members.reshape(sim_members.shape[0], -1)
+
+        if obs_flat.size != ens_flat.shape[1]:
+            raise ValueError(
+                f"Observation and ensemble sample counts do not match: obs={obs_flat.size}, "
+                f"ensemble={ens_flat.shape[1]}."
+            )
+
+        valid_mask = np.isfinite(obs_flat) & np.all(np.isfinite(ens_flat), axis=0)
+        if not np.any(valid_mask):
+            raise ValueError("No valid observation/ensemble pairs remain for rank histogram plotting.")
+
+        ranks = np.empty(ens_flat.shape[1], dtype=int)
+        ranks[:] = -1
+        for sample_idx in np.where(valid_mask)[0]:
+            member_values = ens_flat[:, sample_idx]
+            obs_value = obs_flat[sample_idx]
+            sorted_members = np.sort(member_values)
+            rank = np.searchsorted(sorted_members, obs_value, side="left")
+            ranks[sample_idx] = rank
+
+        valid_ranks = ranks[valid_mask]
+        n_members = ens_flat.shape[0]
+        rank_counts, _ = np.histogram(valid_ranks, bins=np.arange(0, n_members + 2), range=(0, n_members + 1))
+
+        if save_dir is None:
+            save_dir = os.path.join(
+                OUTPUTPATH,
+                "validation_ERA5",
+                "ensemble_400px",
+                "ensemble_mean",
+                "era5wtd_vs_localobs",
+                "rank_histograms",
+            )
+        os.makedirs(save_dir, exist_ok=True)
+
+        fig, ax = plt.subplots(figsize=figsize)
+        x_positions = np.arange(len(rank_counts))
+        ax.bar(x_positions, rank_counts, width=1.0, color="steelblue", edgecolor="black")
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels([str(i) for i in x_positions])
+        ax.set_xlabel("Rank")
+        ax.set_ylabel("Count")
+        ax.set_title(title)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+        if show_uniform_reference:
+            uniform_count = valid_ranks.size / (n_members + 1)
+            ax.axhline(uniform_count, color="crimson", linestyle="--", linewidth=2, label="Uniform reference")
+            ax.legend()
+
+        plt.tight_layout()
+        fig.savefig(os.path.join(save_dir, f"{title}.png"), dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+        if return_stats:
+            return fig, rank_counts, valid_ranks
+        return fig
+
+    def plot_rank_histograms_by_pixel(
+        self,
+        members_filepath=None,
+        obs_filepath=None,
+        title="pixel_rank_histogram",
+        save_dir=None,
+        figsize=(8, 5),
+        show_uniform_reference=True,
+        return_stats=True,
+    ):
+        """Plot one rank histogram per pixel for the ensemble-anomaly forecast.
+
+        This keeps the existing aggregate rank histogram and adds a pixel-by-pixel version,
+        where each valid pixel gets its own histogram of observation ranks across time.
+
+        Parameters
+        ----------
+        members_filepath : str, optional
+            Ensemble anomaly file with shape (n_members, n_time, y, x) or
+            (n_members, n_time, n_pixels).
+        obs_filepath : str, optional
+            Observation anomaly file with shape (n_time, y, x) or (n_time, n_pixels).
+        title : str
+            Base title used in saved filenames.
+        save_dir : str, optional
+            Directory for the saved per-pixel plots. Defaults to the validation folder.
+        figsize : tuple
+            Matplotlib figure size.
+        show_uniform_reference : bool
+            Draw a uniform-reference line for each per-pixel histogram.
+        return_stats : bool
+            If True, also return per-pixel rank counts and coordinates.
+        """
+        if members_filepath is None:
+            members_filepath = os.path.join(
+                OUTPUTPATH,
+                "validation_ERA5",
+                "ensemble_400px",
+                "ensemble_mean",
+                "era5wtd_vs_localobs",
+                "sim_members_anomalies.npy",
+            )
+        if obs_filepath is None:
+            obs_filepath = os.path.join(
+                INPUTPATH,
+                "wtd_obsEU_YMA_1996_2016.npy",
+            )
+
+        if not os.path.exists(members_filepath):
+            raise FileNotFoundError(f"Member predictions file not found: {members_filepath}")
+        if not os.path.exists(obs_filepath):
+            raise FileNotFoundError(f"Observation file not found: {obs_filepath}")
+
+        sim_members = np.load(members_filepath)
+        obs = np.load(obs_filepath)
+
+        valid_pixels = None
+        if sim_members.ndim == 4 and obs.ndim == 3:
+            valid_obs_pixels = np.where(~np.isnan(np.nanmean(obs, axis=0)))
+            valid_sim_pixels = np.where(~np.isnan(np.nanmean(sim_members[0], axis=0)))
+            if not (np.array_equal(valid_obs_pixels[0], valid_sim_pixels[0]) and np.array_equal(valid_obs_pixels[1], valid_sim_pixels[1])):
+                raise ValueError("Observation and ensemble pixel masks do not match.")
+            valid_pixels = valid_obs_pixels
+            obs = obs[:, valid_obs_pixels[0], valid_obs_pixels[1]]
+            sim_members = sim_members[:, :, valid_obs_pixels[0], valid_obs_pixels[1]]
+        elif sim_members.ndim == 3 and obs.ndim == 2:
+            valid_pixels = (np.arange(obs.shape[1]), np.arange(obs.shape[1]))
+        else:
+            raise ValueError(
+                "Expected ensemble and observations in shapes (members, time, y, x)/(time, y, x) "
+                "or (members, time, pixels)/(time, pixels)."
+            )
+
+        if obs.ndim == 2:
+            obs = obs.reshape(obs.shape[0], -1)
+        if sim_members.ndim == 3:
+            sim_members = sim_members.reshape(sim_members.shape[0], sim_members.shape[1], -1)
+        elif sim_members.ndim == 4:
+            sim_members = sim_members.reshape(sim_members.shape[0], sim_members.shape[1], -1)
+
+        n_members = sim_members.shape[0]
+        n_times, n_pixels = obs.shape
+
+        if sim_members.shape[1] != n_times:
+            raise ValueError(
+                f"Time dimension mismatch: ensemble has {sim_members.shape[1]} steps, "
+                f"observations have {n_times} steps."
+            )
+        if sim_members.shape[2] != n_pixels:
+            raise ValueError(
+                f"Pixel dimension mismatch: ensemble has {sim_members.shape[2]} pixels, "
+                f"observations have {n_pixels} pixels."
+            )
+
+        if save_dir is None:
+            save_dir = os.path.join(
+                OUTPUTPATH,
+                "validation_ERA5",
+                "ensemble_400px",
+                "ensemble_mean",
+                "era5wtd_vs_localobs",
+                "rank_histograms_by_pixel",
+            )
+        os.makedirs(save_dir, exist_ok=True)
+
+        per_pixel_counts = {}
+        per_pixel_coords = {}
+
+        for pixel in range(n_pixels):
+            print(f"Processing pixel {pixel + 1}/{n_pixels}...", end="\r")
+            valid_time_mask = np.isfinite(obs[:, pixel]) & np.all(np.isfinite(sim_members[:, :, pixel]), axis=0)
+            if not np.any(valid_time_mask):
+                continue
+
+            obs_series = obs[valid_time_mask, pixel]
+            ens_series = sim_members[:, valid_time_mask, pixel]
+
+            ranks = np.empty(obs_series.size, dtype=int)
+            for t_idx, obs_value in enumerate(obs_series):
+                sorted_members = np.sort(ens_series[:, t_idx])
+                ranks[t_idx] = np.searchsorted(sorted_members, obs_value, side="left")
+
+            rank_counts, _ = np.histogram(
+                ranks,
+                bins=np.arange(0, n_members + 2),
+                range=(0, n_members + 1),
+            )
+
+            if valid_pixels is not None:
+                y_idx, x_idx = valid_pixels[0][pixel], valid_pixels[1][pixel]
+                coord_key = (int(y_idx), int(x_idx))
+            else:
+                coord_key = (None, pixel)
+            per_pixel_counts[coord_key] = rank_counts
+            per_pixel_coords[coord_key] = (y_idx, x_idx) if valid_pixels is not None else (None, pixel)
+
+            fig, ax = plt.subplots(figsize=figsize)
+            x_positions = np.arange(len(rank_counts))
+            ax.bar(x_positions, rank_counts, width=1.0, color="steelblue", edgecolor="black")
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels([str(i) for i in x_positions])
+            ax.set_xlabel("Rank")
+            ax.set_ylabel("Count")
+            if valid_pixels is not None:
+                ax.set_title(f"{title} | pixel y={y_idx}, x={x_idx}")
+            else:
+                ax.set_title(f"{title} | pixel {pixel}")
+            ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+            if show_uniform_reference:
+                uniform_count = obs_series.size / (n_members + 1)
+                ax.axhline(uniform_count, color="crimson", linestyle="--", linewidth=2, label="Uniform reference")
+                ax.legend()
+
+            plt.tight_layout()
+            if valid_pixels is not None:
+                filename = os.path.join(save_dir, f"{title}_y{y_idx}_x{x_idx}.png")
+            else:
+                filename = os.path.join(save_dir, f"{title}_pixel{pixel}.png")
+            fig.savefig(filename, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+
+        if return_stats:
+            return per_pixel_counts, per_pixel_coords
+        return None
 
     def evaluate_members_rmse_pearson(self, members_filepath=None, obs_filepath=None):
         """Evaluate each ensemble member using pixel-averaged RMSE and Pearson correlation.
@@ -4422,7 +5164,84 @@ class postprocess_calculations:
         # self.plot_cdfs()
         # self.yx_accuracy_plot()
         # self.location_of_localobs()
-        self.cdf_members_subsets()
+        # self.cdf_members_subsets()
         # self.debug_pixel()
         # self.plot_mean_obs_vs_member_mean()
         # self.best1member_statvsacc()
+        
+        # self.plot_rank_histograms(
+        # self.plot_rank_histograms_by_pixel(
+        #     members_filepath=os.path.join(
+        #         OUTPUTPATH,
+        #         "validation_ERA5",
+        #         "ensemble_400px",
+        #         "ensemble_mean",
+        #         "era5wtd_vs_localobs",
+        #         "sim_members_anomalies.npy",
+        #     ),
+        #     obs_filepath=os.path.join(
+        #         INPUTPATH,
+        #         "wtd_obsEU_YMA_1996_2016.npy",
+        #     ),
+        #     title="ERA5_anomaly_rank_histogram",
+        # )
+        
+        
+        # global scalar result
+        # res = self.ensemble_spread_rmse_ratio(fc, obs)
+
+        # # map over lat/lon (keep lat/lon in output)
+        # res_map = self.ensemble_spread_rmse_ratio(
+        #     fc,
+        #     obs,
+        #     reduce_dims=("time",),
+        # )
+
+        # # per-pixel grouped result
+        # res_grouped = self.ensemble_spread_rmse_ratio(
+        #     fc,
+        #     obs,
+        #     reduce_dims=("time",),
+        #     groupby=("lat", "lon"),
+        # )
+
+        # result = self.run_ensemble_spread_rmse_ratio(
+        #     fc_filepath=os.path.join(
+        #         OUTPUTPATH,
+        #         "validation_ERA5",
+        #         "ensemble_400px",
+        #         "ensemble_mean",
+        #         "era5wtd_vs_localobs",
+        #         "sim_members_anomalies.npy",
+        #     ),
+        #     obs_filepath=os.path.join(
+        #         INPUTPATH,
+        #         "wtd_obsEU_YMA_1996_2016.npy",
+        #     ),
+        #     reduce_dims=("time",),   # keep lat/lon as map output
+        #     groupby=("lat", "lon"),  # optional per-pixel map
+        # )
+        # print(result)
+        ratio_map, fig = self.prepare_and_plot_ensemble_spread_rmse_ratio_map(
+        fc_filepath=os.path.join(
+            OUTPUTPATH,
+            "validation_ERA5",
+            "ensemble_400px",
+            "ensemble_mean",
+            "era5wtd_vs_localobs",
+            "sim_members_anomalies.npy",
+        ),
+        obs_filepath=os.path.join(
+            INPUTPATH,
+            "wtd_obsEU_YMA_1996_2016.npy",
+        ),
+        title="ensemble_spread_rmse_ratio_map_anomalies_vs_obs",
+        savepath=os.path.join(
+            OUTPUTPATH,
+            "validation_ERA5",
+            "ensemble_400px",
+            "ensemble_mean",
+            "era5wtd_vs_localobs",
+        ),
+        reduce_dims=("time",),
+    )
