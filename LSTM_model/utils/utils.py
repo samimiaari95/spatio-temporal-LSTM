@@ -1,11 +1,13 @@
 import os
 import numpy as np
 import netCDF4 as nc
+import xarray as xr
+import h5py
 from typing import Dict, Union, List, Optional
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.stats import gaussian_kde
-from properscoring import crps_ensemble
+# from properscoring import crps_ensemble
 from LSTM_model.model.config import *
 
 class utilities:
@@ -70,9 +72,7 @@ class utilities:
         
         if np.isnan(observed).all() or np.isnan(predicted).all():
             return np.nan
-        # if np.std(observed) < 0.1: # if the std is close to zero, exclude pixel kge
-        #     return np.nan
-            
+        
         # Compute correlation coefficient (r)
         r = np.corrcoef(observed, predicted)[0, 1]
 
@@ -82,6 +82,7 @@ class utilities:
 
         # Compute bias ratio (β) and variability ratio (γ)
         beta = mu_p / mu_o
+        beta = 1 # for anomalies the mean is zero, so we set beta to 1 to avoid undetermined devision of 0/0
         gamma = sigma_p / sigma_o
 
         # Compute KGE
@@ -140,6 +141,7 @@ class utilities:
 
         # 3. Calculate the mean of those differences across the members
         mad = np.mean(abs_diff)
+        # mad = np.mean(abs_diff, axis=1)  # Result is a 1D array of MAD values for each time step
         
         return mad
 
@@ -420,7 +422,7 @@ class utilities:
         if grid:
             ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", f"cdf_{xlabel}_{title}.png"))
+        plt.savefig(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "cdf_ERA5_TSMP_vs_obs", f"cdf_{xlabel}_{title}_anomalies.png"))
         return print(f"plotted cdfs of {xlabel}")
 
     def plot_pdfs(self,
