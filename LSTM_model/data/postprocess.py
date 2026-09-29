@@ -705,14 +705,13 @@ class postprocess_calculations:
                          "Members correlation std": [], "Members RMSE std": [], "Members KGE std": [],
                          "KGE_nobias": [], "stdobs": [], "meanobs": [], "Absolute mean bias": [], "MAE": [],
                          "Pearson correlation": [], "RMSE": [], "KGE": [], "KGE'": [], "Beta": [], "Alpha": [], "NSE": [],
-                         "(Alpha-1)^2": [], "(Beta-1)^2": [], "(r-1)^2": []}
+                         "(Alpha-1)^2": [], "(Beta-1)^2": [], "(r-1)^2": [], "spread-RMSE ratio": []}
         df_statdict = {"pearson_wtda_tsmpvsobs": [], "Pairwise correlation": [], "Ensemble variance": [], "IQR (75-25%)": [], "std": [], "cv": [], "mad": [], "meansim": [], "stdsim": [], 
                        "Ensemble mean": [], "Ensemble median": [], "Skewness": [], "Kurtosis": [], "Mean 5th quantile": [], "Mean 95th quantile": [], "Mean 50th quantile": []}
         for yindex, xindex in zip(yindices, xindices):
             print(f"Processing pixel {yindex}_{xindex} with {yindices.tolist().index(yindex) + 1} of {len(yindices)}")#, end='\r')  
 
-            sim_members_pixel = sim_members_anomalies[:, yindex, xindex]
-            # sim_members_pixel = sim_members_anomalies[:, :, yindex, xindex]
+            sim_members_pixel = sim_members_anomalies[:, :, yindex, xindex]
             ens_mean_era5wtd = np.mean(sim_members_pixel, axis=0)
             anom_localobs = obswtda[:, yindex, xindex]
 
@@ -721,16 +720,16 @@ class postprocess_calculations:
                 len_obs = len(anom_localobs)
                 len_sim = ens_mean_era5wtd.shape[0]
                 print(f"lengths do not match for pixel {yindex}_{xindex}: obs={len_obs}, sim={len_sim}. Attempting to align by trimming the longer series.")
-                if len_sim > len_obs:
-                    # trim simulation to match observations (assume trailing alignment)
-                    ens_mean_era5wtd = ens_mean_era5wtd[-len_obs:]
-                    # sim_era5wtd has shape (members, time)
-                    sim_era5wtd = sim_era5wtd[:, -len_obs:]
-                    print(f"Trimmed simulation to last {len_obs} timesteps.")
-                elif len_obs > len_sim:
-                    # trim observations to match simulation (assume trailing alignment)
-                    anom_localobs = anom_localobs[-len_sim:]
-                    print(f"Trimmed observations to last {len_sim} timesteps.")
+                # if len_sim > len_obs:
+                #     # trim simulation to match observations (assume trailing alignment)
+                #     ens_mean_era5wtd = ens_mean_era5wtd[-len_obs:]
+                #     # sim_era5wtd has shape (members, time)
+                #     sim_era5wtd = sim_era5wtd[:, -len_obs:]
+                #     print(f"Trimmed simulation to last {len_obs} timesteps.")
+                # elif len_obs > len_sim:
+                #     # trim observations to match simulation (assume trailing alignment)
+                #     anom_localobs = anom_localobs[-len_sim:]
+                #     print(f"Trimmed observations to last {len_sim} timesteps.")
                 # final check
                 if len(anom_localobs) != ens_mean_era5wtd.shape[0]:
                     raise ValueError("Lengths still do not match after trimming")
@@ -828,6 +827,12 @@ class postprocess_calculations:
             df_statdict["cv"].append(cv)
 
             ########### Calculate accuracy metrics ###########
+            # spread/RMSE ratio
+
+            spread_rmse_ratio_data = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "ensemble_spread_rmse_ratio_map_anomalies_vs_obs_spread-rmse_data.npy"))
+            spread_rmse_ratio = spread_rmse_ratio_data[yindex, xindex]
+            df_metricdict["spread-RMSE ratio"].append(spread_rmse_ratio)
+
             # Calculate mean bias
             bias_mean = np.mean(ens_mean_era5wtd - localobs)
             df_metricdict["Absolute mean bias"].append(bias_mean)
@@ -1008,7 +1013,7 @@ class postprocess_calculations:
         df_metric = pd.DataFrame(df_metricdict)
         df_stat = pd.DataFrame(df_statdict)
         df_metric.to_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
-                         "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom_top1member.csv"), index=False)
+                         "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom.csv"), index=False)
         df_stat.to_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
                        "era5wtd_vs_localobs", "statistics_anom", "ensemble_statistics_anom.csv"), index=False)
 
@@ -1018,14 +1023,14 @@ class postprocess_calculations:
                            "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom", "ensemble_statistics_anom.csv"))
         metric = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
                              "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom.csv"))
-        xstats = {"VPD variance": "lin", "Precipitation variance": "lin", "Soil moisture variance": "lin", "Ensemble mean": "lin", "Ensemble median": "lin", "Skewness": "lin", "Kurtosis": "lin",
-                  "Mean 5th quantile": "lin", "Mean 95th quantile": "lin", "Mean 50th quantile": "lin", "Topography": "lin", "std": "exp", "Ensemble variance": "exp", "Pairwise correlation": "lin", "IQR (75-25%)": "exp", "cv": "exp", "mad": "exp"}
+        xstats = {"Ensemble mean": "lin", "Ensemble median": "lin", "Skewness": "lin", "Kurtosis": "lin",
+                  "Mean 5th quantile": "lin", "Mean 95th quantile": "lin", "Mean 50th quantile": "lin", "std": "exp", "Ensemble variance": "exp", "Pairwise correlation": "lin", "IQR (75-25%)": "exp", "cv": "exp", "mad": "exp"}
         ymetrics = {"Spearman correlation": "lin", "Kendall's tau": "lin", "Pearson p-value": "exp", "CCC": "exp", "Median AE": "exp",
                     "MAPE": "lin", "SMAPE": "lin", "Murphy Skill Score": "lin", "Bias Slope": "lin", "Conditional Bias": "lin", "Unconditional Bias": "lin",
                     "MSE Skill Score": "lin", "NMSE": "exp", "NRMSE": "exp", "NMAE": "exp", "Unbiased Anomaly Correlation Coefficient": "lin",
                     "Multiplicative Bias": "lin", "LESS": "lin", "Bias_std": "exp", "Members correlation": "lin", "Members RMSE": "exp", "Members KGE": "lin",
                     "Members correlation std": "exp", "Members RMSE std": "exp", "Members KGE std": "exp",
-                    "RMSE": "exp", "Pearson correlation": "lin", "KGE": "lin", "KGE_nobias": "exp", "Absolute mean bias": "exp", "NSE": "lin", "Beta": "exp",
+                    "spread-RMSE ratio": "lin", "RMSE": "exp", "Pearson correlation": "lin", "KGE": "lin", "KGE_nobias": "exp", "Absolute mean bias": "exp", "NSE": "lin", "Beta": "exp",
                     "Alpha": "exp", "(Alpha-1)^2": "exp", "(Beta-1)^2": "exp", "(r-1)^2": "exp"}
         plotmapping = {
             "Ensemble variance": r"$\overline{EV}$",
@@ -1034,6 +1039,7 @@ class postprocess_calculations:
             "Alpha": r"$\alpha$",
             "(Alpha-1)^2": r"$(\alpha-1)^2$",
             "(Beta-1)^2": r"$(\beta-1)^2$",
+            "spread-RMSE ratio": r"$\frac{Spread}{RMSE}$",
         }
         for xstat in xstats.keys():
             for ymetric in ymetrics.keys():
@@ -1838,8 +1844,12 @@ class postprocess_calculations:
         fig, ax = plt.subplots(figsize=figsize)
         x_positions = np.arange(len(rank_counts))
         ax.bar(x_positions, rank_counts, width=1.0, color="steelblue", edgecolor="black")
-        ax.set_xticks(x_positions)
-        ax.set_xticklabels([str(i) for i in x_positions])
+
+        tick_positions = np.arange(0, len(rank_counts), 10)
+        if tick_positions.size == 0 or tick_positions[-1] != len(rank_counts) - 1:
+            tick_positions = np.append(tick_positions, len(rank_counts) - 1)
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels([str(int(i)) for i in tick_positions])
         ax.set_xlabel("Rank")
         ax.set_ylabel("Count")
         ax.set_title(title)
@@ -1997,8 +2007,12 @@ class postprocess_calculations:
             fig, ax = plt.subplots(figsize=figsize)
             x_positions = np.arange(len(rank_counts))
             ax.bar(x_positions, rank_counts, width=1.0, color="steelblue", edgecolor="black")
-            ax.set_xticks(x_positions)
-            ax.set_xticklabels([str(i) for i in x_positions])
+
+            tick_positions = np.arange(0, len(rank_counts), 10)
+            if tick_positions.size == 0 or tick_positions[-1] != len(rank_counts) - 1:
+                tick_positions = np.append(tick_positions, len(rank_counts) - 1)
+            ax.set_xticks(tick_positions)
+            ax.set_xticklabels([str(int(i)) for i in tick_positions])
             ax.set_xlabel("Rank")
             ax.set_ylabel("Count")
             if valid_pixels is not None:
@@ -3554,21 +3568,6 @@ class postprocess_calculations:
         tsmpobs = tsmpobs[:, sim_1darrayindex]
         return tsmpobs
 
-    def load_obs_and_all_member_sims_plot_mean_obs_vs_member_mean(self):
-        simulations = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "sim_members_anomalies.npy"))
-        obsfilepath = os.path.join(INPUTPATH, "wtd_obsEU_YMA_1996_2016.npy")
-        observations = np.load(obsfilepath)
-
-        for i in range(100):
-            sim_member = simulations[i, :, :, :]
-
-        return self.plot_mean_obs_vs_member_mean(
-            observations=observations,
-            simulations=simulations,
-            savepath=savepath,
-            title=title,
-        )
-
     def eval_era5wtd_obswtd_tsmpwtd(self):
         utils = utilities()
         map2d = np.load(os.path.join(INPUTPATH, "mapping_0stdroll6months.npy"))
@@ -4289,40 +4288,13 @@ class postprocess_calculations:
         #             "era5wtd_vs_localobs", f"obsvspred_r2_3d.png"), dpi=300, bbox_inches='tight')
         return r2
 
-    def plot_mean_obs_vs_member_mean(
-        self,
-        # observations,
-        # simulations,
-        # savepath=None,
-        # title=None,
-        # xlabel="Mean observed",
-        # ylabel="Mean simulated (per ensemble member)",
-        ):
+    def plot_mean_obs_vs_member_mean(self):
         xlabel="Mean observed"
         ylabel="Mean simulated (per ensemble member)"
         members_filepath=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "sim_members_anomalies.npy")
         obs_filepath=os.path.join(INPUTPATH, "wtd_obsEU_YMA_1996_2016.npy")
         observations, simulations = self.flatten_sim_members_and_obs(members_filepath, obs_filepath)
         print(f"observations shape: {observations.shape}, simulations shape: {simulations.shape}")
-        # observations = np.asarray(observations)
-        # simulations = np.asarray(simulations)
-        # observations shape: (252, 698) 
-        # simulations shape: (100, 252, 698)
-
-        # if simulations.ndim == 2:
-        #     simulations = simulations[np.newaxis, :, :]
-        # elif simulations.ndim != 3:
-        #     raise ValueError(
-        #         "simulations must have shape (n_members, n_time) or (n_samples, n_members, n_time)"
-        #     )
-
-        # if observations.ndim == 1:
-        #     observations = observations[np.newaxis, :]
-        # elif observations.ndim != 2:
-        #     raise ValueError(
-        #         "observations must have shape (n_time,) or (n_samples, n_time)"
-        #     )
-
         if observations.shape[1] != simulations.shape[2]:
             raise ValueError(
                 "observations and simulations must have the same number of samples"
@@ -4331,14 +4303,6 @@ class postprocess_calculations:
         mean_obs = np.nanmean(observations, axis=0)
         mean_sim_members = np.nanmean(simulations, axis=1)
 
-        # x_values = np.repeat(mean_obs, mean_sim_members.shape[0])
-        # y_values = mean_sim_members.reshape(-1)
-        # member_ids = np.tile(np.arange(mean_sim_members.shape[0]), mean_obs.shape[0])
-
-        # valid_mask = np.isfinite(x_values) & np.isfinite(y_values)
-        # x_values = x_values[valid_mask]
-        # y_values = y_values[valid_mask]
-        # member_ids = member_ids[valid_mask]
         for m in range(100):
             print(m)
             membersims = mean_sim_members[m, :]
@@ -5170,78 +5134,43 @@ class postprocess_calculations:
         # self.best1member_statvsacc()
         
         # self.plot_rank_histograms(
-        # self.plot_rank_histograms_by_pixel(
-        #     members_filepath=os.path.join(
-        #         OUTPUTPATH,
-        #         "validation_ERA5",
-        #         "ensemble_400px",
-        #         "ensemble_mean",
-        #         "era5wtd_vs_localobs",
-        #         "sim_members_anomalies.npy",
-        #     ),
-        #     obs_filepath=os.path.join(
-        #         INPUTPATH,
-        #         "wtd_obsEU_YMA_1996_2016.npy",
-        #     ),
-        #     title="ERA5_anomaly_rank_histogram",
-        # )
+        self.plot_rank_histograms_by_pixel(
+            members_filepath=os.path.join(
+                OUTPUTPATH,
+                "validation_ERA5",
+                "ensemble_400px",
+                "ensemble_mean",
+                "era5wtd_vs_localobs",
+                "sim_members_anomalies.npy",
+            ),
+            obs_filepath=os.path.join(
+                INPUTPATH,
+                "wtd_obsEU_YMA_1996_2016.npy",
+            ),
+            title="ERA5_anomaly_rank_histogram",
+        )
         
-        
-        # global scalar result
-        # res = self.ensemble_spread_rmse_ratio(fc, obs)
-
-        # # map over lat/lon (keep lat/lon in output)
-        # res_map = self.ensemble_spread_rmse_ratio(
-        #     fc,
-        #     obs,
-        #     reduce_dims=("time",),
+        ######### plot the spread/RMSE ratio map for the ensemble mean vs obs ##########
+        # ratio_map, fig = self.prepare_and_plot_ensemble_spread_rmse_ratio_map(
+        # fc_filepath=os.path.join(
+        #     OUTPUTPATH,
+        #     "validation_ERA5",
+        #     "ensemble_400px",
+        #     "ensemble_mean",
+        #     "era5wtd_vs_localobs",
+        #     "sim_members_anomalies.npy",
+        # ),
+        # obs_filepath=os.path.join(
+        #     INPUTPATH,
+        #     "wtd_obsEU_YMA_1996_2016.npy",
+        # ),
+        # title="ensemble_spread_rmse_ratio_map_anomalies_vs_obs",
+        # savepath=os.path.join(
+        #     OUTPUTPATH,
+        #     "validation_ERA5",
+        #     "ensemble_400px",
+        #     "ensemble_mean",
+        #     "era5wtd_vs_localobs",
+        # ),
+        # reduce_dims=("time",),
         # )
-
-        # # per-pixel grouped result
-        # res_grouped = self.ensemble_spread_rmse_ratio(
-        #     fc,
-        #     obs,
-        #     reduce_dims=("time",),
-        #     groupby=("lat", "lon"),
-        # )
-
-        # result = self.run_ensemble_spread_rmse_ratio(
-        #     fc_filepath=os.path.join(
-        #         OUTPUTPATH,
-        #         "validation_ERA5",
-        #         "ensemble_400px",
-        #         "ensemble_mean",
-        #         "era5wtd_vs_localobs",
-        #         "sim_members_anomalies.npy",
-        #     ),
-        #     obs_filepath=os.path.join(
-        #         INPUTPATH,
-        #         "wtd_obsEU_YMA_1996_2016.npy",
-        #     ),
-        #     reduce_dims=("time",),   # keep lat/lon as map output
-        #     groupby=("lat", "lon"),  # optional per-pixel map
-        # )
-        # print(result)
-        ratio_map, fig = self.prepare_and_plot_ensemble_spread_rmse_ratio_map(
-        fc_filepath=os.path.join(
-            OUTPUTPATH,
-            "validation_ERA5",
-            "ensemble_400px",
-            "ensemble_mean",
-            "era5wtd_vs_localobs",
-            "sim_members_anomalies.npy",
-        ),
-        obs_filepath=os.path.join(
-            INPUTPATH,
-            "wtd_obsEU_YMA_1996_2016.npy",
-        ),
-        title="ensemble_spread_rmse_ratio_map_anomalies_vs_obs",
-        savepath=os.path.join(
-            OUTPUTPATH,
-            "validation_ERA5",
-            "ensemble_400px",
-            "ensemble_mean",
-            "era5wtd_vs_localobs",
-        ),
-        reduce_dims=("time",),
-    )
