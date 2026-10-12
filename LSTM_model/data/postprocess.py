@@ -4422,6 +4422,7 @@ class postprocess_calculations:
         figsize=(10, 6),
         show_uniform_reference=True,
         return_stats=True,
+        save_dir=None,
     ):
         """Plot rank histograms for ensemble anomaly forecasts against observations.
 
@@ -4436,13 +4437,13 @@ class postprocess_calculations:
         return_stats : bool
             If True, also return the rank counts and all valid ranks.
         """
-        utils = utilities()
         #### load data here manually ####
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
 
-        obs_list = []  # (timeseries, pixels) for all targets
-        sim_members_list = []  # (members, timeseries, pixels) for all targets
+        obs_list = []  # (time, pixels) for all targets
+        sim_members_list = []  # (members, time, pixels) for all targets
         for target in range(100):
+            print(target, flush=True)
             obs_target = np.load(
                 os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy")
             )
@@ -4455,31 +4456,25 @@ class postprocess_calculations:
             obs_list.append(obs_target)
             sim_members_list.append(members_sim)
 
-        obs = np.concatenate(obs_list, axis=-1)
-        sim_members = np.concatenate(sim_members_list, axis=-1)
-        
-        # Handle array shapes used in this project: (members, time, y, x) vs (time, y, x)
-        if sim_members.ndim == 4 and obs.ndim == 3:
-            valid_obs_pixels = np.where(~np.isnan(np.nanmean(obs, axis=0)))
-            valid_sim_pixels = np.where(~np.isnan(np.nanmean(sim_members[0], axis=0)))
-            if not (np.array_equal(valid_obs_pixels[0], valid_sim_pixels[0]) and np.array_equal(valid_obs_pixels[1], valid_sim_pixels[1])):
-                raise ValueError("Observation and ensemble pixel masks do not match.")
-            obs = obs[:, valid_obs_pixels[0], valid_obs_pixels[1]]
-            sim_members = sim_members[:, :, valid_obs_pixels[0], valid_obs_pixels[1]]
-        elif sim_members.ndim == 3 and obs.ndim == 2:
-            pass
-        else:
-            raise ValueError(
-                "Expected ensemble and observations in shapes (members, time, y, x)/(time, y, x) "
-                "or (members, time, pixels)/(time, pixels)."
-            )
+        obs = np.concatenate(obs_list, axis=-1) # (timeseries, pixels)
+        sim_members = np.concatenate(sim_members_list, axis=-1) # (members, timeseries, pixels)
+        print(f"obs shape: {obs.shape}, sim_members shape: {sim_members.shape}")
 
-        if obs.ndim == 2:
-            obs = obs.reshape(obs.shape[0], -1)
-        if sim_members.ndim == 3:
-            sim_members = sim_members.reshape(sim_members.shape[0], sim_members.shape[1], -1)
-        elif sim_members.ndim == 4:
-            sim_members = sim_members.reshape(sim_members.shape[0], sim_members.shape[1], -1)
+        if obs.ndim != 2 or sim_members.ndim != 3:
+            raise ValueError(
+                "Expected concatenated observations in shape (time, pixels) and ensemble members in "
+                "shape (members, time, pixels)."
+            )
+        if obs.shape[0] != sim_members.shape[1]:
+            raise ValueError(
+                f"Observation and ensemble time dimensions do not match: obs={obs.shape[0]}, "
+                f"ensemble={sim_members.shape[1]}."
+            )
+        if obs.shape[1] != sim_members.shape[2]:
+            raise ValueError(
+                f"Observation and ensemble pixel dimensions do not match: obs={obs.shape[1]}, "
+                f"ensemble={sim_members.shape[2]}."
+            )
 
         obs_flat = obs.reshape(-1)
         ens_flat = sim_members.reshape(sim_members.shape[0], -1)
@@ -4493,7 +4488,7 @@ class postprocess_calculations:
         valid_mask = np.isfinite(obs_flat) & np.all(np.isfinite(ens_flat), axis=0)
         if not np.any(valid_mask):
             raise ValueError("No valid observation/ensemble pairs remain for rank histogram plotting.")
-
+        print(f"Number of valid samples for rank histogram: {np.sum(valid_mask)}")
         ranks = np.empty(ens_flat.shape[1], dtype=int)
         ranks[:] = -1
         for sample_idx in np.where(valid_mask)[0]:
@@ -4506,12 +4501,9 @@ class postprocess_calculations:
         valid_ranks = ranks[valid_mask]
         n_members = ens_flat.shape[0]
         rank_counts, _ = np.histogram(valid_ranks, bins=np.arange(0, n_members + 2), range=(0, n_members + 1))
-
+        print("plotting")
         if save_dir is None:
-            save_dir = os.path.join(
-                OUTPUTPATH,
-                "rank_histograms",
-            )
+            save_dir = os.path.join(OUTPUTPATH, "rank_histograms")
         os.makedirs(save_dir, exist_ok=True)
 
         fig, ax = plt.subplots(figsize=figsize)
