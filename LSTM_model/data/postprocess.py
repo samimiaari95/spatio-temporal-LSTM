@@ -4437,38 +4437,27 @@ class postprocess_calculations:
             If True, also return the rank counts and all valid ranks.
         """
         utils = utilities()
-        members_filepath = os.path.join(
-                os.path.dirname(INPUTPATH),
-                "ensemble_100px",
-                "100px_member_*",
-                "wtd.npy",
-            )
-        obs_filepath = os.path.join(
-                os.path.dirname(INPUTPATH),
-                "ensemble_100px",
-                "target_pixels_0",
-                "wtd.npy",
-            )
-
-        
         #### load data here manually ####
-        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
 
-        obs = np.zeros((1, 1)) #(timeseries, pixels)
-        sim_members = np.zeros((1, 1, 1)) #(members, timeseries, pixels)
+        obs_list = []  # (timeseries, pixels) for all targets
+        sim_members_list = []  # (members, timeseries, pixels) for all targets
         for target in range(100):
-            obs = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
-            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
-            members_sim = np.array(members_sim)
-            members_sim = np.expand_dims(members_sim, axis=0)
-            members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+            obs_target = np.load(
+                os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy")
+            )
+            members_sim = [
+                np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy"))
+                for m in range(100)
+            ]
+            members_sim = np.array(members_sim)  # (members, timeseries, pixels)
+
+            obs_list.append(obs_target)
+            sim_members_list.append(members_sim)
+
+        obs = np.concatenate(obs_list, axis=-1)
+        sim_members = np.concatenate(sim_members_list, axis=-1)
         
-
-
-        sim_members = np.stack([np.load(member_path) for member_path in member_paths], axis=0)
-        obs = np.load(obs_filepath)
-
         # Handle array shapes used in this project: (members, time, y, x) vs (time, y, x)
         if sim_members.ndim == 4 and obs.ndim == 3:
             valid_obs_pixels = np.where(~np.isnan(np.nanmean(obs, axis=0)))
