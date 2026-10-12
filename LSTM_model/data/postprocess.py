@@ -387,21 +387,28 @@ class postprocess_calculations:
             constrained_layout=True,
         )
 
-        step = 0.2
+        # Use a three-class diagnostic scale aligned to the ECMWF interpretation:
+        # 1) below 0.8, 2) between 0.8 and 1.2, 3) above 1.2.
         if vmin is None:
             vmin = float(np.nanmin(np.asarray(ratio_map)))
         if vmax is None:
             vmax = float(np.nanmax(np.asarray(ratio_map)))
-        bounds = np.arange(np.floor(vmin / step) * step, np.ceil(vmax / step) * step + step, step)
+
+        lower_cut = 0.8
+        upper_cut = 1.2
+        vmin = min(float(vmin), lower_cut)
+        vmax = max(float(vmax), upper_cut)
+
+        bounds = np.array([vmin, lower_cut, upper_cut, vmax], dtype=float)
         bounds = np.round(bounds, 3)
-        cmap_obj = plt.get_cmap(cmap)
-        if len(bounds) > 1:
-            # build a discrete colormap with one color per interval
-            discrete_cmap = cmap_obj(np.linspace(0, 1, len(bounds) - 1))
-            discrete_cmap = plt.matplotlib.colors.ListedColormap(discrete_cmap)
-        else:
-            discrete_cmap = cmap_obj
-        norm = plt.matplotlib.colors.BoundaryNorm(bounds, discrete_cmap.N)
+
+        palette = plt.matplotlib.colors.ListedColormap([
+            "#1f77b4",  # blue: below 0.8
+            "#FEC44F",  # yellow-orange: 0.8 to 1.2
+            "#d62728",  # red: above 1.2
+        ])
+        norm = plt.matplotlib.colors.BoundaryNorm(bounds, palette.N)
+        discrete_cmap = palette
 
         if set(ratio_map.dims) >= {lat_dim, lon_dim}:
             data = np.asarray(ratio_map)
@@ -1024,7 +1031,7 @@ class postprocess_calculations:
         metric = pd.read_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
                              "ensemble_mean", "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom.csv"))
         xstats = {"Ensemble mean": "lin", "Ensemble median": "lin", "Skewness": "lin", "Kurtosis": "lin",
-                  "Mean 5th quantile": "lin", "Mean 95th quantile": "lin", "Mean 50th quantile": "lin", "std": "exp", "Ensemble variance": "exp", "Pairwise correlation": "lin", "IQR (75-25%)": "exp", "cv": "exp", "mad": "exp"}
+                  "Mean 5th quantile": "lin", "Mean 95th quantile": "lin", "Mean 50th quantile": "lin", "std": "lin", "Ensemble variance": "lin", "Pairwise correlation": "lin", "IQR (75-25%)": "lin", "cv": "exp", "mad": "lin"}
         ymetrics = {"Spearman correlation": "lin", "Kendall's tau": "lin", "Pearson p-value": "exp", "CCC": "exp", "Median AE": "exp",
                     "MAPE": "lin", "SMAPE": "lin", "Murphy Skill Score": "lin", "Bias Slope": "lin", "Conditional Bias": "lin", "Unconditional Bias": "lin",
                     "MSE Skill Score": "lin", "NMSE": "exp", "NRMSE": "exp", "NMAE": "exp", "Unbiased Anomaly Correlation Coefficient": "lin",
@@ -5104,7 +5111,7 @@ class postprocess_calculations:
     def postprocess_era5wtd_vs_obs(self):
         # self.calc_anomalies_from_sim_claude()
         # self.ensemble_statvsacc()
-        # self.ensemble_statvsacc_fitting()
+        self.ensemble_statvsacc_fitting()
         # self.ensemble_statvsacc_fitting_colored_by_wtd()
         # self.fit_ensvar_rmse_r()
         # self.onepoint_distribution()
@@ -5134,21 +5141,21 @@ class postprocess_calculations:
         # self.best1member_statvsacc()
         
         # self.plot_rank_histograms(
-        self.plot_rank_histograms_by_pixel(
-            members_filepath=os.path.join(
-                OUTPUTPATH,
-                "validation_ERA5",
-                "ensemble_400px",
-                "ensemble_mean",
-                "era5wtd_vs_localobs",
-                "sim_members_anomalies.npy",
-            ),
-            obs_filepath=os.path.join(
-                INPUTPATH,
-                "wtd_obsEU_YMA_1996_2016.npy",
-            ),
-            title="ERA5_anomaly_rank_histogram",
-        )
+        # self.plot_rank_histograms_by_pixel(
+        #     members_filepath=os.path.join(
+        #         OUTPUTPATH,
+        #         "validation_ERA5",
+        #         "ensemble_400px",
+        #         "ensemble_mean",
+        #         "era5wtd_vs_localobs",
+        #         "sim_members_anomalies.npy",
+        #     ),
+        #     obs_filepath=os.path.join(
+        #         INPUTPATH,
+        #         "wtd_obsEU_YMA_1996_2016.npy",
+        #     ),
+        #     title="ERA5_anomaly_rank_histogram",
+        # )
         
         ######### plot the spread/RMSE ratio map for the ensemble mean vs obs ##########
         # ratio_map, fig = self.prepare_and_plot_ensemble_spread_rmse_ratio_map(
