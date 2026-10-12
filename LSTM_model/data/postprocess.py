@@ -1,6 +1,7 @@
 from fileinput import filename
 import os
 import math
+import glob
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -1259,8 +1260,9 @@ class postprocess_calculations:
 
     def create_group_figure_cv(self, stat, combinations, filename, ncols=2, cv_folds=5):
         utils = utilities()
-        groups_base_correlogram = compute_empirical_correlogram(max_distance_m=3164110.03) # hard coded value obtained from variogram functions
+        groups_base_correlogram = compute_empirical_correlogram(max_distance_m=3164110.03) # hard coded value of max distance obtained from variogram functions
         groups_base = get_spatially_blocked_groups(cv_folds=cv_folds)
+        # return here if only to plot variogram and correlogram
 
         plotmapping = {
             "Ensemble variance":r"$\overline{EV}$",
@@ -1957,9 +1959,9 @@ class postprocess_calculations:
             ("NSE","IQR (75-25%)")
         ]
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
-        # self.create_group_figure_cv(stat, comb8, "figure8", ncols=2)
+        self.create_group_figure_cv(stat, comb8, "figure8", ncols=2)
         self.ensemble_crpsvsstats_fitting() # figure 11
-        # self.create_pairwise_corr_figure(stat, "figureS9")
+        self.create_pairwise_corr_figure(stat, "figureS9")
 
     def run_statvsacc_fitting_cv_residuals(self):
         comb8 = [
@@ -3271,6 +3273,44 @@ class postprocess_calculations:
         )
 
         plt.close()
+
+        # ----- error maps: predicted minus observed -----
+        rmse_error = rmse2d_statspred - rmse2d_predvsobs
+        bias_error = bias2d_statspred - bias2d_predvsobs
+        rmse_err_lim = np.nanpercentile(np.abs(rmse_error[np.isfinite(rmse_error)]), 95)
+        bias_err_lim = np.nanpercentile(np.abs(bias_error[np.isfinite(bias_error)]), 95)
+        rmse_err_lim = max(float(rmse_err_lim), 0.1)
+        bias_err_lim = max(float(bias_err_lim), 0.1)
+
+        fig, axes = plt.subplots(
+            1, 2,
+            figsize=(7.09, 2.76),
+            subplot_kw={'projection': projection}
+        )
+        plot_functions.EU_2Dmap_predictedaccfromstats(
+            data_map=rmse_error,
+            logscale=False,
+            minval=-rmse_err_lim,
+            maxval=rmse_err_lim,
+            title="RMSE",
+            ax=axes[0],
+            panel_label="(A)",
+            cmap_name="coolwarm",
+        )
+        plot_functions.EU_2Dmap_predictedaccfromstats(
+            data_map=bias_error,
+            logscale=False,
+            minval=-bias_err_lim,
+            maxval=bias_err_lim,
+            title="Absolute mean bias",
+            ax=axes[1],
+            panel_label="(B)",
+            cmap_name="coolwarm",
+        )
+        plt.subplots_adjust(left=0.03, right=0.97, top=0.95, bottom=0.05, wspace=0.08)
+        plt.savefig(os.path.join(OUTPUTPATH, "figure13.png"), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(OUTPUTPATH, "figure13.pdf"), dpi=300, bbox_inches='tight')
+        plt.close()
     
     def estimate_acc_from_stats_posterversion(self):
         utils = utilities()
@@ -4375,3 +4415,139 @@ class postprocess_calculations:
                 plt.legend(frameon=True)
                 plt.savefig(os.path.join(OUTPUTPATH, "statistics_anom", f"fitted_{ystat}_{xstat}.png"))
                 plt.close()
+
+    def plot_rank_histograms(
+        self,
+        title="ensemble_rank_histogram",
+        figsize=(10, 6),
+        show_uniform_reference=True,
+        return_stats=True,
+    ):
+        """Plot rank histograms for ensemble anomaly forecasts against observations.
+
+        Parameters
+        ----------
+        title : str
+            Base title used in the saved figure filename.
+        figsize : tuple
+            Figure size passed to matplotlib.
+        show_uniform_reference : bool
+            If True, draw a horizontal reference line at the expected uniform count.
+        return_stats : bool
+            If True, also return the rank counts and all valid ranks.
+        """
+        utils = utilities()
+        members_filepath = os.path.join(
+                os.path.dirname(INPUTPATH),
+                "ensemble_100px",
+                "100px_member_*",
+                "wtd.npy",
+            )
+        obs_filepath = os.path.join(
+                os.path.dirname(INPUTPATH),
+                "ensemble_100px",
+                "target_pixels_0",
+                "wtd.npy",
+            )
+
+        
+        #### load data here manually ####
+        EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
+        EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
+
+        obs = np.zeros((1, 1)) #(timeseries, pixels)
+        sim_members = np.zeros((1, 1, 1)) #(members, timeseries, pixels)
+        for target in range(100):
+            obs = np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_1", f"obs_destand_{MODEL_NAME}_{target}.npy"))
+            members_sim = [np.load(os.path.join(os.path.dirname(EU_outpath), f"400px_member_{m}", f"sim_destand_{MODEL_NAME}_{target}.npy")) for m in range(100)]
+            members_sim = np.array(members_sim)
+            members_sim = np.expand_dims(members_sim, axis=0)
+            members_sim = np.concatenate((members_sim), axis=0) #(members, timeseries, pixels)
+        
+
+
+        sim_members = np.stack([np.load(member_path) for member_path in member_paths], axis=0)
+        obs = np.load(obs_filepath)
+
+        # Handle array shapes used in this project: (members, time, y, x) vs (time, y, x)
+        if sim_members.ndim == 4 and obs.ndim == 3:
+            valid_obs_pixels = np.where(~np.isnan(np.nanmean(obs, axis=0)))
+            valid_sim_pixels = np.where(~np.isnan(np.nanmean(sim_members[0], axis=0)))
+            if not (np.array_equal(valid_obs_pixels[0], valid_sim_pixels[0]) and np.array_equal(valid_obs_pixels[1], valid_sim_pixels[1])):
+                raise ValueError("Observation and ensemble pixel masks do not match.")
+            obs = obs[:, valid_obs_pixels[0], valid_obs_pixels[1]]
+            sim_members = sim_members[:, :, valid_obs_pixels[0], valid_obs_pixels[1]]
+        elif sim_members.ndim == 3 and obs.ndim == 2:
+            pass
+        else:
+            raise ValueError(
+                "Expected ensemble and observations in shapes (members, time, y, x)/(time, y, x) "
+                "or (members, time, pixels)/(time, pixels)."
+            )
+
+        if obs.ndim == 2:
+            obs = obs.reshape(obs.shape[0], -1)
+        if sim_members.ndim == 3:
+            sim_members = sim_members.reshape(sim_members.shape[0], sim_members.shape[1], -1)
+        elif sim_members.ndim == 4:
+            sim_members = sim_members.reshape(sim_members.shape[0], sim_members.shape[1], -1)
+
+        obs_flat = obs.reshape(-1)
+        ens_flat = sim_members.reshape(sim_members.shape[0], -1)
+
+        if obs_flat.size != ens_flat.shape[1]:
+            raise ValueError(
+                f"Observation and ensemble sample counts do not match: obs={obs_flat.size}, "
+                f"ensemble={ens_flat.shape[1]}."
+            )
+
+        valid_mask = np.isfinite(obs_flat) & np.all(np.isfinite(ens_flat), axis=0)
+        if not np.any(valid_mask):
+            raise ValueError("No valid observation/ensemble pairs remain for rank histogram plotting.")
+
+        ranks = np.empty(ens_flat.shape[1], dtype=int)
+        ranks[:] = -1
+        for sample_idx in np.where(valid_mask)[0]:
+            member_values = ens_flat[:, sample_idx]
+            obs_value = obs_flat[sample_idx]
+            sorted_members = np.sort(member_values)
+            rank = np.searchsorted(sorted_members, obs_value, side="left")
+            ranks[sample_idx] = rank
+
+        valid_ranks = ranks[valid_mask]
+        n_members = ens_flat.shape[0]
+        rank_counts, _ = np.histogram(valid_ranks, bins=np.arange(0, n_members + 2), range=(0, n_members + 1))
+
+        if save_dir is None:
+            save_dir = os.path.join(
+                OUTPUTPATH,
+                "rank_histograms",
+            )
+        os.makedirs(save_dir, exist_ok=True)
+
+        fig, ax = plt.subplots(figsize=figsize)
+        x_positions = np.arange(len(rank_counts))
+        ax.bar(x_positions, rank_counts, width=1.0, color="steelblue", edgecolor="black")
+
+        tick_positions = np.arange(0, len(rank_counts), 10)
+        if tick_positions.size == 0 or tick_positions[-1] != len(rank_counts) - 1:
+            tick_positions = np.append(tick_positions, len(rank_counts) - 1)
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels([str(int(i)) for i in tick_positions])
+        ax.set_xlabel("Rank")
+        ax.set_ylabel("Count")
+        ax.set_title(title)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+        if show_uniform_reference:
+            uniform_count = valid_ranks.size / (n_members + 1)
+            ax.axhline(uniform_count, color="crimson", linestyle="--", linewidth=2, label="Uniform reference")
+            ax.legend()
+
+        plt.tight_layout()
+        fig.savefig(os.path.join(save_dir, f"{title}.png"), dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+        if return_stats:
+            return fig, rank_counts, valid_ranks
+        return fig
