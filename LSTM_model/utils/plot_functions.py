@@ -19,6 +19,28 @@ class plotting_helper:
     def __init__(self) -> None:
         pass
 
+    def _zoom_extent_for_data(self, data_map):
+        """Return the shared zoom extent used by the zoomed map helpers."""
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+
+        valid_idx = np.where(~np.isnan(data_map))
+        if len(valid_idx[0]) == 0:
+            lon_min, lon_max = float(np.nanmin(lons)), float(np.nanmax(lons))
+            lat_min, lat_max = float(np.nanmin(lats)), float(np.nanmax(lats))
+        else:
+            lon_min = float(np.min(lons[valid_idx]))
+            lon_max = float(np.max(lons[valid_idx]))
+            lat_min = float(np.min(lats[valid_idx]))
+            lat_max = float(np.max(lats[valid_idx]))
+
+        lat_max = 55.0
+
+        lon_buffer = 0.05 * (lon_max - lon_min) if (lon_max - lon_min) != 0 else 0.1
+        lat_buffer = 0.05 * (lat_max - lat_min) if (lat_max - lat_min) != 0 else 0.1
+        zoom_extent = [lon_min - lon_buffer, lon_max + lon_buffer, lat_min - lat_buffer, lat_max + lat_buffer]
+        return lons, lats, valid_idx, lon_min, lon_max, lat_min, lat_max, zoom_extent
+
     def plot_results(self, data, title, label, lons, lats):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
@@ -797,7 +819,7 @@ class plotting_helper:
         fig.savefig(out_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
 
-    def zoomed2Dmap_adaptedtoma(self, data_map, logscale, minval, maxval, title):
+    def zoomed2Dmap_adaptedtoma(self, data_map, logscale, minval, maxval, title, output_prefix="map2d", out_dir=None):
         """
         Create a two-panel figure:
         - Left: full-domain small-scale map with the region that contains actual data highlighted.
@@ -907,10 +929,69 @@ class plotting_helper:
         cbar.set_label(colorbar_label)
 
         # save figure (ensure directory exists)
-        out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs")
-        # out_dir = os.path.join(INPUTPATH, "checkinputs")
+        if out_dir is None:
+            out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs")
         os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, f"map2d_{title}_anomalies.png")
+        out_path = os.path.join(out_dir, f"{output_prefix}_{title}_anomalies.png")
+        print(f"saving {os.path.basename(out_path)}")
+        fig.savefig(out_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
+    def zoomed2Dmap_gradual(self, data_map, title, output_prefix="map2d", out_dir=None, cmap="coolwarm", vmin=None, vmax=None):
+        """Create a two-panel zoomed map with a continuous color scale centered on zero."""
+        projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
+
+        # use the shared zoom window so this matches zoomed2Dmap_adaptedtoma exactly
+        lons, lats, valid_idx, lon_min, lon_max, lat_min, lat_max, zoom_extent = self._zoom_extent_for_data(data_map)
+
+        values = np.asarray(data_map, dtype=float)
+        finite_values = values[np.isfinite(values)]
+        if vmin is None or vmax is None:
+            if finite_values.size == 0:
+                vmin, vmax = -1.0, 1.0
+            else:
+                span = float(np.nanmax(np.abs(finite_values)))
+                if span == 0:
+                    span = 1.0
+                vmin, vmax = -span, span
+
+        norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
+        cmap_obj = plt.get_cmap(cmap)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 9), subplot_kw={'projection': projection}, constrained_layout=True)
+
+        im1 = ax1.pcolormesh(lons, lats, values, cmap=cmap_obj, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+        ax1.coastlines()
+        ax1.gridlines(draw_labels=True)
+        ax1.set_title(f"{title} — EURO-CORDEX domain")
+
+        shapefile_path = os.path.join(os.path.dirname(get_root_dir()), "ne_10m_admin_0_countries", "ne_10m_admin_0_countries.shp")
+        shape_feature = ShapelyFeature(Reader(shapefile_path).geometries(), ccrs.PlateCarree(), edgecolor='black')
+        ax1.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        if len(valid_idx[0]) != 0:
+            region_polygon = Polygon([
+                (lon_min, lat_min),
+                (lon_min, lat_max),
+                (lon_max, lat_max),
+                (lon_max, lat_min),
+            ])
+            ax1.add_geometries([region_polygon], ccrs.PlateCarree(), facecolor='none', edgecolor='red', linewidth=2, zorder=5)
+
+        im2 = ax2.pcolormesh(lons, lats, values, cmap=cmap_obj, norm=norm, transform=ccrs.PlateCarree(), shading='auto')
+        ax2.gridlines(draw_labels=False)
+        ax2.set_title(title)
+        if len(valid_idx[0]) != 0:
+            ax2.set_extent(zoom_extent, crs=ccrs.PlateCarree())
+        ax2.add_feature(shape_feature, facecolor='none', edgecolor='black', linewidth=1)
+
+        cbar = fig.colorbar(im2, ax=[ax1, ax2], orientation='vertical', fraction=0.03, pad=0.02)
+        cbar.set_label(title)
+
+        if out_dir is None:
+            out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"{output_prefix}_{title}.png")
         print(f"saving {os.path.basename(out_path)}")
         fig.savefig(out_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
