@@ -4168,24 +4168,16 @@ class postprocess_calculations:
             "KGE": ERA5LSTM_vs_obs_kge - tsmp_vs_obs_kge,
             "NSE": ERA5LSTM_vs_obs_nse - tsmp_vs_obs_nse,
         }
-        print(error_maps["RMSE"])
-        print(ERA5LSTM_vs_obs_rmse[np.isfinite(ERA5LSTM_vs_obs_rmse)])
-        print(tsmp_vs_obs_rmse[np.isfinite(tsmp_vs_obs_rmse)])
-        print(error_maps["RMSE"][np.isfinite(error_maps["RMSE"])])
-        print(len(error_maps["RMSE"][np.isfinite(error_maps["RMSE"])]))
         
         for metric_name, metric_diff in error_maps.items():
             np.save(os.path.join(out_dir, f"error_map_ERA5LSTM_minus_TSMP_{metric_name.replace(' ', '_').lower()}-2001_2016.npy"), metric_diff)
 
-            
-            plot_functions.zoomed2Dmap_adaptedtoma(
+            plot_functions.zoomed2Dmap_gradual(
                 data_map=metric_diff,
-                logscale=False,
-                minval=vmin,
-                maxval=vmax,
                 title=f"ERA5LSTM - TSMP {metric_name}",
                 output_prefix=f"error_map_ERA5LSTM_minus_TSMP_{metric_name.replace(' ', '_').lower()}",
                 out_dir=out_dir,
+                cmap="coolwarm",
             )
 
         return error_maps
