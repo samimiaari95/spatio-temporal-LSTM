@@ -3698,6 +3698,7 @@ class postprocess_calculations:
         obsprocessing = obs_processing()
         map2d = np.load(os.path.join(INPUTPATH, "mapping_wtdobs_YMA.npy"))
         sim_members_anomalies = np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "sim_members_anomalies.npy"))
+        print(f"sim_members_anomalies shape: {sim_members_anomalies.shape}")
 
         map2d_metrics = {"KGE": np.zeros(map2d.shape), "r": np.zeros(map2d.shape), "RMSE": np.zeros(
             map2d.shape), "Bias": np.zeros(map2d.shape), "NSE": np.zeros(map2d.shape)}
@@ -3725,7 +3726,19 @@ class postprocess_calculations:
                 print(
                     f"len localobs: {len(anom_localobs)}, len sim_era5wtd: {ens_mean_era5wtd.shape[0]}")
                 raise ValueError("Lengths do not match")
-        
+
+            # Calculate for 2001-2016 period to compare with TSMP vs obs
+            anom_localobs = anom_localobs[12*5:]
+            ens_mean_era5wtd = ens_mean_era5wtd[12*5:]
+            sim_members_pixel = sim_members_pixel[:, 12*5:]
+            print(anom_localobs.shape, ens_mean_era5wtd.shape, sim_members_pixel.shape)
+            # check lengths again
+            if len(anom_localobs) != ens_mean_era5wtd.shape[0] or len(anom_localobs) != sim_members_pixel.shape[1] or len(ens_mean_era5wtd) != sim_members_pixel.shape[1]:
+                print(
+                    f"lengths do not match for pixel {yindex}_{xindex} after slicing, skipping...")
+                print(
+                    f"len localobs: {len(anom_localobs)}, len sim_era5wtd: {ens_mean_era5wtd.shape[0]}, len sim_members_pixel: {sim_members_pixel.shape[1]}")
+                raise ValueError("Lengths do not match after slicing")
 
             ###### calculate metrics ########
             kge = utils.calculate_kge(anom_localobs, ens_mean_era5wtd)
@@ -3737,13 +3750,13 @@ class postprocess_calculations:
 
             countrylocation = f"Y{yindex}_X{xindex}"
             ############## plot timeseries ##############
-            self.era5wtdensemble_localobs_timeseries(countrylocation, sim_members_pixel, ens_mean_era5wtd, None, anom_localobs,
-                                                     kge=kge,
-                                                     rmse=rmse,
-                                                     r=r,
-                                                     bias=bias,
-                                                     nse=nse
-                                                     )
+            # self.era5wtdensemble_localobs_timeseries(countrylocation, sim_members_pixel, ens_mean_era5wtd, None, anom_localobs,
+            #                                          kge=kge,
+            #                                          rmse=rmse,
+            #                                          r=r,
+            #                                          bias=bias,
+            #                                          nse=nse
+            #                                          )
 
             ############## plot 2D map of pixels with colored accuracy ##############
             map2d_metrics["r"][int(yindex), int(xindex)] = r
@@ -3754,15 +3767,15 @@ class postprocess_calculations:
         
         # save map2d_metrics to npy files
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "r_map_anomalies.npy"), map2d_metrics["r"])
+                "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "r_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"), map2d_metrics["r"])
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "KGE_map_anomalies.npy"), map2d_metrics["KGE"])
+                "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "KGE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"), map2d_metrics["KGE"])
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map_anomalies.npy"), map2d_metrics["RMSE"])
+                "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "RMSE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"), map2d_metrics["RMSE"])
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "Bias_map_anomalies.npy"), map2d_metrics["Bias"])
+                "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "Bias_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"), map2d_metrics["Bias"])
         np.save(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px",
-                "ensemble_mean", "era5wtd_vs_localobs", "NSE_map_anomalies.npy"), map2d_metrics["NSE"])
+                "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "NSE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"), map2d_metrics["NSE"])
 
     def calc_anomalies_from_sim_slowversion(self):
         obsprocessing = obs_processing()
@@ -4014,46 +4027,230 @@ class postprocess_calculations:
             )
 
         return metrics
-
-    def plot2Dmaps(self):
-        plot_functions = plotting_helper()
-        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map_anomalies_top10.npy")),
-                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map_anomalies_top10.npy")),
-                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map_anomalies_top10.npy")),
-                         "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map_anomalies_top10.npy")),
-                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map_anomalies_top10.npy"))}
-        # plot absolute mean bias instead of mean bias
-        map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
-        plot_functions.doublefig_EU_2Dmap(
-            data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE", country="EU")
-        plot_functions.doublefig_EU_2Dmap(
-            data_map=map2d_metrics["r"], logscale=False, minval=0, maxval=1, title="Pearson correlation", country="EU")
-        plot_functions.doublefig_EU_2Dmap(
-            data_map=map2d_metrics["RMSE"], logscale=True, minval=0.01, maxval=10, title="RMSE", country="EU")
-        plot_functions.doublefig_EU_2Dmap(
-            data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias", country="EU")
-        plot_functions.doublefig_EU_2Dmap(
-            data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE", country="EU")
     
     def plot2Dmaps_adaptedtoma(self):
         plot_functions = plotting_helper()
-        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map_anomalies.npy")),
-                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "r_map_anomalies.npy")),
-                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "RMSE_map_anomalies.npy")),
-                         "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "Bias_map_anomalies.npy")),
-                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "NSE_map_anomalies.npy"))}
+        map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "KGE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy")),
+                         "r": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "r_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy")),
+                         "RMSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "RMSE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy")),
+                        #  "Bias": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "Bias_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy")),
+                         "NSE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies", "NSE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))}
         # plot absolute mean bias instead of mean bias
-        map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
+        # map2d_metrics["Bias"] = np.abs(map2d_metrics["Bias"])
         plot_functions.zoomed2Dmap_adaptedtoma(
-            data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE")
+            data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE", out_dir=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies"))
         plot_functions.zoomed2Dmap_adaptedtoma(
-            data_map=map2d_metrics["r"], logscale=False, minval=0, maxval=1, title="Pearson correlation")
+            data_map=map2d_metrics["r"], logscale=False, minval=0, maxval=1, title="Pearson correlation", out_dir=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies"))
         plot_functions.zoomed2Dmap_adaptedtoma(
-            data_map=map2d_metrics["RMSE"], logscale=True, minval=0.0, maxval=2.5, title="RMSE")
+            data_map=map2d_metrics["RMSE"], logscale=True, minval=0.0, maxval=2.5, title="RMSE", out_dir=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies"))
         # plot_functions.zoomed2Dmap_adaptedtoma(
         #     data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias")
         plot_functions.zoomed2Dmap_adaptedtoma(
-            data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE")
+            data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE", out_dir=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies"))
+
+    def plot2Dmaps_adaptedtoma_tsmp_original_wtd_vs_obs_anomalies(self):
+        """Plot per-pixel accuracy maps for original TSMP WTD vs observed anomalies.
+
+        This mirrors ``plot2Dmaps_adaptedtoma`` but computes the per-pixel accuracy
+        between the TSMP original groundwater table depth and the observed monthly
+        anomalies. The metrics are Pearson correlation, RMSE, KGE, and NSE.
+        """
+        utils = utilities()
+        plot_functions = plotting_helper()
+
+        tsmp_daily = np.load(os.path.join(INPUTPATH, "wtd_2001-2020.npy"))
+        tsmp_daily = tsmp_daily[:16 * 365, :, :]
+        obs_anomalies = np.load(os.path.join(INPUTPATH, "wtd_obsEU_YMA_1996_2016.npy"))
+
+        mapping = np.load(os.path.join(INPUTPATH, "mapping_wtdobs_YMA.npy"))
+        map_shape = mapping.shape
+        map2d_metrics = {
+            "KGE": np.full(map_shape, np.nan, dtype=float),
+            "Pearson correlation": np.full(map_shape, np.nan, dtype=float),
+            "RMSE": np.full(map_shape, np.nan, dtype=float),
+            "NSE": np.full(map_shape, np.nan, dtype=float),
+        }
+
+        valid_idx = np.where(mapping == 1)
+
+        for yindex, xindex in zip(valid_idx[0], valid_idx[1]):
+            print(f"Processing pixel {yindex}_{xindex} with {valid_idx[0].tolist().index(yindex) + 1} of {len(valid_idx[0])}", end='\r')
+            tsmp_pixel = tsmp_daily[:, yindex, xindex].astype(float)
+            if np.all(np.isnan(tsmp_pixel)) or np.all(tsmp_pixel == 0):
+                continue
+
+            time = pd.date_range(start="2001-01-01", periods=tsmp_pixel.shape[0], freq="D")
+            df = pd.DataFrame(tsmp_pixel, index=time)
+            tsmp_monthly = np.asarray(df.resample("MS").mean().to_numpy()).flatten()
+
+            climatology_mean = np.array([np.mean(tsmp_monthly[i::12]) for i in range(12)], dtype=float)
+            climatology_std = np.array([np.std(tsmp_monthly[i::12]) for i in range(12)], dtype=float)
+
+            tsmp_anomalies = []
+            for month in range(12):
+                monthly_values = tsmp_monthly[month::12]
+                if climatology_std[month] == 0 or np.isnan(climatology_std[month]):
+                    monthly_anomaly = np.zeros_like(monthly_values, dtype=float)
+                else:
+                    monthly_anomaly = (monthly_values - climatology_mean[month]) / climatology_std[month]
+                tsmp_anomalies.append(monthly_anomaly)
+            tsmp_anomalies = np.concatenate(tsmp_anomalies)
+
+            obs_series = np.asarray(obs_anomalies[:, yindex, xindex], dtype=float)
+            overlap_start = 5 * 12
+            if len(obs_series) <= overlap_start:
+                continue
+
+            overlap_length = min(len(tsmp_anomalies), len(obs_series) - overlap_start)
+            if overlap_length <= 1:
+                continue
+
+            tsmp_anomalies = tsmp_anomalies[:overlap_length]
+            obs_series = obs_series[overlap_start:overlap_start + overlap_length]
+
+            if np.all(np.isnan(obs_series)) or np.all(np.isnan(tsmp_anomalies)):
+                continue
+
+            with np.errstate(divide='ignore', invalid='ignore'):
+                r = np.corrcoef(obs_series, tsmp_anomalies)[0, 1]
+                rmse = np.sqrt(np.mean((obs_series - tsmp_anomalies) ** 2))
+                kge = utils.calculate_kge(obs_series, tsmp_anomalies)
+                nse = 1 - (
+                    np.sum((obs_series - tsmp_anomalies) ** 2) /
+                    np.sum((obs_series - np.mean(obs_series)) ** 2)
+                )
+
+            map2d_metrics["Pearson correlation"][yindex, xindex] = r
+            map2d_metrics["RMSE"][yindex, xindex] = rmse
+            map2d_metrics["KGE"][yindex, xindex] = kge
+            map2d_metrics["NSE"][yindex, xindex] = nse
+
+        out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies")
+        os.makedirs(out_dir, exist_ok=True)
+        np.save(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_r_map-2001-2016.npy"), map2d_metrics["Pearson correlation"])
+        np.save(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_rmse_map-2001-2016.npy"), map2d_metrics["RMSE"])
+        np.save(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_kge_map-2001-2016.npy"), map2d_metrics["KGE"])
+        np.save(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_nse_map-2001-2016.npy"), map2d_metrics["NSE"])
+
+        plot_functions.zoomed2Dmap_adaptedtoma(
+            data_map=map2d_metrics["KGE"], logscale=False, minval=-1, maxval=1, title="KGE",
+            output_prefix="tsmp_original_wtd_vs_obs_anomalies", out_dir=out_dir)
+        plot_functions.zoomed2Dmap_adaptedtoma(
+            data_map=map2d_metrics["Pearson correlation"], logscale=False, minval=0, maxval=1, title="Pearson correlation",
+            output_prefix="tsmp_original_wtd_vs_obs_anomalies", out_dir=out_dir)
+        plot_functions.zoomed2Dmap_adaptedtoma(
+            data_map=map2d_metrics["RMSE"], logscale=True, minval=0.0, maxval=2.5, title="RMSE",
+            output_prefix="tsmp_original_wtd_vs_obs_anomalies", out_dir=out_dir)
+        plot_functions.zoomed2Dmap_adaptedtoma(
+            data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE",
+            output_prefix="tsmp_original_wtd_vs_obs_anomalies", out_dir=out_dir)
+
+        return map2d_metrics
+
+    def errormaps_TSMP_vs_ERALSTM_vs_obs(self):
+        plot_functions = plotting_helper()
+        out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies")
+        os.makedirs(out_dir, exist_ok=True)
+
+        tsmp_vs_obs_r = np.load(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_r_map-2001-2016.npy"))
+        tsmp_vs_obs_rmse = np.load(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_rmse_map-2001-2016.npy"))
+        tsmp_vs_obs_kge = np.load(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_kge_map-2001-2016.npy"))
+        tsmp_vs_obs_nse = np.load(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_nse_map-2001-2016.npy"))
+
+        ERA5LSTM_vs_obs_r = np.load(os.path.join(out_dir, "r_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))
+        ERA5LSTM_vs_obs_rmse = np.load(os.path.join(out_dir, "RMSE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))
+        ERA5LSTM_vs_obs_kge = np.load(os.path.join(out_dir, "KGE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))
+        ERA5LSTM_vs_obs_nse = np.load(os.path.join(out_dir, "NSE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))
+
+        error_maps = {
+            "Pearson correlation": ERA5LSTM_vs_obs_r - tsmp_vs_obs_r,
+            "RMSE": ERA5LSTM_vs_obs_rmse - tsmp_vs_obs_rmse,
+            "KGE": ERA5LSTM_vs_obs_kge - tsmp_vs_obs_kge,
+            "NSE": ERA5LSTM_vs_obs_nse - tsmp_vs_obs_nse,
+        }
+        print(error_maps["RMSE"])
+        print(ERA5LSTM_vs_obs_rmse[np.isfinite(ERA5LSTM_vs_obs_rmse)])
+        print(tsmp_vs_obs_rmse[np.isfinite(tsmp_vs_obs_rmse)])
+        print(error_maps["RMSE"][np.isfinite(error_maps["RMSE"])])
+        print(len(error_maps["RMSE"][np.isfinite(error_maps["RMSE"])]))
+        
+        for metric_name, metric_diff in error_maps.items():
+            np.save(os.path.join(out_dir, f"error_map_ERA5LSTM_minus_TSMP_{metric_name.replace(' ', '_').lower()}-2001_2016.npy"), metric_diff)
+
+            
+            plot_functions.zoomed2Dmap_adaptedtoma(
+                data_map=metric_diff,
+                logscale=False,
+                minval=vmin,
+                maxval=vmax,
+                title=f"ERA5LSTM - TSMP {metric_name}",
+                output_prefix=f"error_map_ERA5LSTM_minus_TSMP_{metric_name.replace(' ', '_').lower()}",
+                out_dir=out_dir,
+            )
+
+        return error_maps
+
+    def boxplots_errormaps_TSMP_vs_ERALSTM_vs_obs(self):
+        """Create a single figure with 4 boxplots of the ERA5LSTM-minus-TSMP metric differences."""
+        out_dir = os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "tsmp_vs_obs_vs_ERA5LSTM_anomalies")
+        os.makedirs(out_dir, exist_ok=True)
+
+        tsmp_vs_obs_r = np.load(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_r_map-2001-2016.npy"))
+        tsmp_vs_obs_rmse = np.load(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_rmse_map-2001-2016.npy"))
+        tsmp_vs_obs_kge = np.load(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_kge_map-2001-2016.npy"))
+        tsmp_vs_obs_nse = np.load(os.path.join(out_dir, "tsmp_original_wtd_vs_obs_anomalies_nse_map-2001-2016.npy"))
+
+        ERA5LSTM_vs_obs_r = np.load(os.path.join(out_dir, "r_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))
+        ERA5LSTM_vs_obs_rmse = np.load(os.path.join(out_dir, "RMSE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))
+        ERA5LSTM_vs_obs_kge = np.load(os.path.join(out_dir, "KGE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))
+        ERA5LSTM_vs_obs_nse = np.load(os.path.join(out_dir, "NSE_map_ERA5LSTM_vs_obs_anomalies-2001_2016.npy"))
+
+        metric_data = {
+            "Pearson correlation": np.asarray(ERA5LSTM_vs_obs_r - tsmp_vs_obs_r, dtype=float),
+            "RMSE": np.asarray(ERA5LSTM_vs_obs_rmse - tsmp_vs_obs_rmse, dtype=float),
+            "KGE": np.asarray(ERA5LSTM_vs_obs_kge - tsmp_vs_obs_kge, dtype=float),
+            "NSE": np.asarray(ERA5LSTM_vs_obs_nse - tsmp_vs_obs_nse, dtype=float),
+        }
+
+        fig, axes = plt.subplots(1, 4, figsize=(18, 5), sharey=False)
+        axes = np.atleast_1d(axes)
+        positions = []
+
+        for ax, (metric_name, values) in zip(axes, metric_data.items()):
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                ax.set_visible(False)
+                continue
+            positions.append(metric_name)
+            bp = ax.boxplot(
+                values,
+                patch_artist=True,
+                widths=0.5,
+                showfliers=True,
+                medianprops={"color": "black", "linewidth": 1.5},
+                boxprops={"edgecolor": "black"},
+                whiskerprops={"color": "black"},
+                capprops={"color": "black"},
+            )
+            for patch in bp["boxes"]:
+                patch.set_facecolor("steelblue")
+                patch.set_alpha(0.8)
+            ax.axhline(0.0, color="gray", linestyle="--", linewidth=1.0)
+            ax.set_title(metric_name)
+            ax.set_xticks([1])
+            ax.set_xticklabels(["ERA5LSTM - TSMP"])
+            ax.set_ylabel("metric difference")
+
+        if len(positions) == 0:
+            raise ValueError("No finite metric differences were available for boxplot comparison.")
+
+        fig.suptitle("Difference in accuracy metrics (ERA5LSTM minus TSMP)", fontsize=12)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        out_path = os.path.join(out_dir, "boxplot_error_ERA5LSTM_minus_TSMP_metrics.png")
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+        return metric_data
 
     def get_country_mask(self, country):
         mappingfile = pd.read_csv(os.path.join(
@@ -4095,11 +4292,6 @@ class postprocess_calculations:
             data_map=map2d_metrics["Bias"], logscale=True, minval=0.01, maxval=10, title="Absolute Mean Bias", country=country)
         plot_functions.doublefig_EU_2Dmap(
             data_map=map2d_metrics["NSE"], logscale=False, minval=-1, maxval=1, title="NSE", country=country)
-
-    def plot2Dmaps_multiregion(self):
-        regions = ["France", "Sweden"]
-        for country in regions:
-            self.plot2Dmaps_byregion(country)
 
     def plot_cdfs(self):
         map2d_metrics = {"KGE": np.load(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean", "era5wtd_vs_localobs", "KGE_map.npy")),
@@ -5111,7 +5303,7 @@ class postprocess_calculations:
     def postprocess_era5wtd_vs_obs(self):
         # self.calc_anomalies_from_sim_claude()
         # self.ensemble_statvsacc()
-        self.ensemble_statvsacc_fitting()
+        # self.ensemble_statvsacc_fitting()
         # self.ensemble_statvsacc_fitting_colored_by_wtd()
         # self.fit_ensvar_rmse_r()
         # self.onepoint_distribution()
@@ -5181,3 +5373,6 @@ class postprocess_calculations:
         # ),
         # reduce_dims=("time",),
         # )
+        # self.plot2Dmaps_adaptedtoma_tsmp_original_wtd_vs_obs_anomalies() # compare TSMP anomalies with obs
+        # self.boxplots_errormaps_TSMP_vs_ERALSTM_vs_obs()
+        self.errormaps_TSMP_vs_ERALSTM_vs_obs()
