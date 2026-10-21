@@ -1414,7 +1414,7 @@ class postprocess_calculations:
             ax.plot(x_fit, y_fit, 'r--', label=eq)
 
             ax.set_xlabel(plotmapping.get(xstat, xstat))
-            ax.set_ylabel(plotmapping.get(ystat, ystat))
+            ax.set_ylabel(plotmapping.get(ystat, ystat).replace("Absolute mean bias", "Absolute mean bias (m)").replace("RMSE", "RMSE (m)"))
 
             if xstat in ["std", "Ensemble variance", "IQR (75-25%)", "cv", "mad"]:
                 ax.set_xscale("log")
@@ -2363,9 +2363,11 @@ class postprocess_calculations:
             axs[i].grid(True, alpha=0.3)
             if i==0:
                 axs[i].set_ylabel("CRPS (m)")
-            
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"figure6.eps"), dpi=300)
+        fig.supxlabel("Season")
+
+        plt.tight_layout(rect=[0, 0.06, 1, 1])
+        print("saving figure6 CRPS boxplot")
+        # plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"figure6.eps"), dpi=300)
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"figure6.pdf"), dpi=300)
         return
     
