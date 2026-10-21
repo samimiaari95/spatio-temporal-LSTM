@@ -2354,18 +2354,21 @@ class postprocess_calculations:
         crpstrain = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_99members_onlytraining_4years4seasonspixel.npy"))
         crpstransfer = np.load(os.path.join(os.path.dirname(OUTPUTPATH), f"seasonalcrps_100members_onlytransfer_4years4seasonspixel.npy"))
         crps = np.concatenate((crpstrain, crpstransfer), axis=2)
-        # Plot boxplot per season per year
-        fig, axs = plt.subplots(1, crps.shape[0], figsize=(7.09, 2.13), sharey=True)
-        for i, year in enumerate(range(2017, 2021)):
-            axs[i].boxplot(crps[i].T, labels=["DJF", "MAM", "JJA", "SON"])
-            axs[i].set_title(f"{year}")
-            axs[i].set_yscale('log')
-            axs[i].grid(True, alpha=0.3)
-            if i==0:
-                axs[i].set_ylabel("CRPS (m)")
-        fig.supxlabel("Season")
+        # Plot boxplot per season per year with an explicit local font size.
+        flierprops = dict(marker="o", markersize=2, markeredgecolor="black", markeredgewidth=0.5, alpha=0.5)
+        with plt.rc_context({'font.size': 8}):
+            fig, axs = plt.subplots(1, crps.shape[0], figsize=(7.09, 2.5), sharey=True)
+            for i, year in enumerate(range(2017, 2021)):
+                axs[i].boxplot(crps[i].T, labels=["DJF", "MAM", "JJA", "SON"], flierprops=flierprops)
+                axs[i].set_title(f"{year}", fontsize=8)
+                axs[i].set_yscale('log')
+                axs[i].grid(True, alpha=0.3)
+                axs[i].tick_params(axis='both', labelsize=8)
+                if i==0:
+                    axs[i].set_ylabel("CRPS (m)", fontsize=8)
+            fig.supxlabel("Season", fontsize=8, x=0.54, y=0.1)
 
-        plt.tight_layout(rect=[0, 0.06, 1, 1])
+            plt.tight_layout(rect=[0, 0.06, 1, 1])
         print("saving figure6 CRPS boxplot")
         # plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"figure6.eps"), dpi=300)
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"figure6.pdf"), dpi=300)
