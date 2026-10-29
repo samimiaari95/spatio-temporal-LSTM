@@ -509,6 +509,105 @@ class utilities:
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", f"pdf_{xlabel}_{title}.png"))
         return print(f"plotted pdfs of {xlabel}")
 
+    def plot_rank_histogram(
+        self,
+        observations: Union[np.ndarray, list],
+        ensemble: Union[np.ndarray, list],
+        title: str = "rank_histogram",
+        xlabel: str = "Rank",
+        ylabel: str = "Count",
+        figsize: tuple = (10, 6),
+        save_dir: Optional[str] = None,
+        show_uniform_reference: bool = True,
+    ) -> tuple:
+        """
+        Plot a rank histogram for ensemble anomalies against observations.
+
+        Parameters
+        ----------
+        observations : array-like
+            Array of observed values with shape (n_samples,) or (n_samples, ...) that
+            matches the ensemble sample axis.
+        ensemble : array-like
+            Ensemble values with shape (n_members, n_samples) or (n_members, n_samples, ...).
+            The member axis is expected to be the first dimension.
+        title : str
+            Plot title (used in the saved filename).
+        xlabel, ylabel : str
+            Axis labels.
+        figsize : tuple
+            Matplotlib figure size.
+        save_dir : str, optional
+            Directory where the figure should be saved. Defaults to OUTPUTPATH/statistics.
+        show_uniform_reference : bool
+            Whether to draw the uniform-reference line expected for a well-calibrated ensemble.
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+        rank_counts : np.ndarray
+            Histogram counts for each rank bin.
+        ranks : np.ndarray
+            Rank for each sample.
+        """
+        obs = np.asarray(observations, dtype=float)
+        ens = np.asarray(ensemble, dtype=float)
+
+        if ens.ndim < 2:
+            raise ValueError("ensemble must have at least 2 dimensions: (n_members, n_samples, ...)")
+
+        n_members = ens.shape[0]
+        n_samples = np.prod(ens.shape[1:])
+        ens_flat = ens.reshape(n_members, n_samples)
+
+        obs_flat = obs.reshape(-1)
+        if obs_flat.size != n_samples:
+            raise ValueError(
+                f"observation length mismatch: observations has {obs_flat.size} values, "
+                f"but ensemble contains {n_samples} samples."
+            )
+
+        ranks = np.empty(n_samples, dtype=int)
+        for i in range(n_samples):
+            valid_members = ens_flat[:, i]
+            if not np.all(np.isfinite(valid_members)) or not np.isfinite(obs_flat[i]):
+                continue
+            ranks[i] = np.searchsorted(np.sort(valid_members), obs_flat[i], side="left")
+
+        valid_mask = np.isfinite(obs_flat) & np.all(np.isfinite(ens_flat), axis=0)
+        valid_ranks = ranks[valid_mask]
+
+        if valid_ranks.size == 0:
+            raise ValueError("No valid observation/ensemble pairs remain for the rank histogram.")
+
+        rank_counts, edges = np.histogram(
+            valid_ranks,
+            bins=np.arange(0, n_members + 2),
+            range=(0, n_members + 1),
+        )
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.bar(np.arange(len(rank_counts)), rank_counts, width=1.0, color="steelblue", edgecolor="black")
+        ax.set_xticks(np.arange(len(rank_counts)))
+        ax.set_xticklabels([str(i) for i in range(len(rank_counts))])
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+        if show_uniform_reference:
+            uniform_count = valid_ranks.size / (n_members + 1)
+            ax.axhline(uniform_count, color="crimson", linestyle="--", linewidth=2, label="Uniform reference")
+            ax.legend()
+
+        plt.tight_layout()
+
+        if save_dir is None:
+            save_dir = os.path.join(OUTPUTPATH, "statistics")
+        self.make_dir(save_dir)
+        fig.savefig(os.path.join(save_dir, f"rank_hist_{title}.png"), dpi=300, bbox_inches="tight")
+        return fig, rank_counts, valid_ranks
+
     def compute_crps_all_pixels(self, observations: np.ndarray, simulations: np.ndarray, plot=True, title: str = "crps"):
         """
         Compute CRPS for multiple pixels over time using explicit loops and optionally plot CDF.
