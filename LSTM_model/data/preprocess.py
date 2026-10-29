@@ -590,10 +590,12 @@ class preprocessing_data:
     
     # call here the function to prepare input array and also target array
     def prepare_input_target_arrays_in_hdf5(self):
+        import datetime
         mapping = np.load(os.path.join(INPUTPATH, "mapping_wtdobs_YMA.npy"))
         # import training mean and std (saved during training process)
-        for member in range(94,100):
+        for member in range(40, 50):
             print(f"Preparing input and target arrays for member {member}")
+            print(f"time: {datetime.datetime.now().time()}")
             with open(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{member}", f"meanstd_400px_member_{member}_{MODEL_NAME}.pkl"), 'rb') as f:
                 means_stds = pickle.load(f)
             f.close()
@@ -639,12 +641,77 @@ class preprocessing_data:
             raw_data = None
 
             # save to hdf5
-            self.save_to_hdf5(all_inputs, target_data, os.path.join(INPUTPATH, "validation_ERA5", f"400px_member_{member}", f"standardized3dinput1dtarget_{member}.h5"))
+            self.save_to_hdf5(all_inputs, target_data, os.path.join("/p/scratch/cesmtst/miaari1/inputhdf5_files", f"standardized3dinput1dtarget_{member}.h5"))
             target_data = None
             all_inputs = None
     
-    def test_hdf5(self):
-        with h5py.File(os.path.join(INPUTPATH, "raw", "ERA5-Land", "ERA5land_t2m_199604.nc"), "r") as f:
-            inputs = f["t2m"][()]
-        h5py.File.close(f)
-        print(inputs.shape)
+    # call here the function to prepare input array and also target array
+    def prepare_input_target_arrays_in_hdf5_saveonethespot(self):
+        import datetime
+        mapping = np.load(os.path.join(INPUTPATH, "mapping_wtdobs_YMA.npy"))
+        selected_cells = int(np.count_nonzero(mapping == 1))
+        n_target_steps = TEST_PERIOD - LOOKBACK
+        total_samples = n_target_steps * selected_cells
+        time_block_size = 32
+        # import training mean and std (saved during training process)
+        for member in range(99, 100):
+            print(f"Preparing input and target arrays for member {member}")
+            print(f"time: {datetime.datetime.now().time()}")
+            with open(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", f"400px_member_{member}", f"meanstd_400px_member_{member}_{MODEL_NAME}.pkl"), 'rb') as f:
+                means_stds = pickle.load(f)
+            f.close()
+
+            featuresnamesintraining = ['TOT_PREC', 'vpd', 'soilmoisture', 'slopex', 'slopey', 'soilind', 'lon2D_ts', 'lat2D_ts', 'wtd']
+            featuresnamesintransfer = FEATURES_FILES + [TARGETVAR_FILE]
+            means_std_mapping = {featuresnamesintransfer[i]: featuresnamesintraining[i] for i in range(len(featuresnamesintransfer))}
+
+            def _load_and_standardize(varname, prefix, timesteps):
+                raw_data = np.asarray(np.load(os.path.join(INPUTPATH, varname)), dtype=np.float32)
+                raw_data = np.nan_to_num(raw_data, copy=False)
+                if "wtd" in varname:
+                    print(f"Setting negative values to 0 for {varname}")
+                    raw_data[raw_data < 0.0] = 0
+                raw_data = raw_data[:, mapping == 1]
+                if raw_data.ndim > 2:
+                    raw_data = raw_data.reshape(raw_data.shape[0], -1)
+                raw_data = raw_data[:timesteps, :]
+                mean = np.asarray(means_stds[f"{prefix}mean"], dtype=np.float32)
+                std = np.asarray(means_stds[f"{prefix}std"], dtype=np.float32)
+                return ((raw_data - mean) / std).astype(np.float32, copy=False)
+
+            target_data = _load_and_standardize(TARGETVAR_FILE, means_std_mapping[TARGETVAR_FILE], n_target_steps)
+            target_data = target_data.reshape(-1).astype(np.float32, copy=False)
+
+            output_path = os.path.join("/p/scratch/cesmtst/miaari1/inputhdf5_files", f"standardized3dinput1dtarget_{member}.h5")
+            with h5py.File(output_path, "w") as f:
+                input_dataset = f.create_dataset(
+                    "input_data",
+                    shape=(total_samples, LOOKBACK, len(FEATURES_FILES)),
+                    dtype=np.float32,
+                    chunks=(1, LOOKBACK, len(FEATURES_FILES)),
+                )
+                target_dataset = f.create_dataset(
+                    "target_data",
+                    shape=(total_samples,),
+                    dtype=np.float32,
+                    chunks=(1,),
+                )
+                target_dataset[...] = target_data
+
+                for feature_index, inputvar in enumerate(FEATURES_FILES):
+                    print(inputvar)
+                    input_data = _load_and_standardize(inputvar, means_std_mapping[inputvar], TEST_PERIOD)
+                    windows = np.lib.stride_tricks.sliding_window_view(input_data, LOOKBACK, axis=0)[:-1]
+
+                    for start in range(0, n_target_steps, time_block_size):
+                        end = min(start + time_block_size, n_target_steps)
+                        row_start = start * selected_cells
+                        row_end = end * selected_cells
+                        window_block = windows[start:end]
+                        input_dataset[row_start:row_end, :, feature_index] = window_block.reshape(-1, LOOKBACK)
+
+                    del input_data
+                    del windows
+
+            del target_data
+    
