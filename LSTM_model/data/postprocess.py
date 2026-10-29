@@ -1035,9 +1035,8 @@ class postprocess_calculations:
         ymetrics = {"Spearman correlation": "lin", "Kendall's tau": "lin", "Pearson p-value": "exp", "CCC": "exp", "Median AE": "exp",
                     "MAPE": "lin", "SMAPE": "lin", "Murphy Skill Score": "lin", "Bias Slope": "lin", "Conditional Bias": "lin", "Unconditional Bias": "lin",
                     "MSE Skill Score": "lin", "NMSE": "exp", "NRMSE": "exp", "NMAE": "exp", "Unbiased Anomaly Correlation Coefficient": "lin",
-                    "Multiplicative Bias": "lin", "LESS": "lin", "Bias_std": "exp", "Members correlation": "lin", "Members RMSE": "exp", "Members KGE": "lin",
-                    "Members correlation std": "exp", "Members RMSE std": "exp", "Members KGE std": "exp",
-                    "spread-RMSE ratio": "lin", "RMSE": "exp", "Pearson correlation": "lin", "KGE": "lin", "KGE_nobias": "exp", "Absolute mean bias": "exp", "NSE": "lin", "Beta": "exp",
+                    "Multiplicative Bias": "lin", "LESS": "lin", "Bias_std": "exp",
+                    "spread-RMSE ratio": "lin", "RMSE": "exp", "Pearson correlation": "lin", "KGE": "lin", "Absolute mean bias": "exp", "NSE": "lin", "Beta": "exp",
                     "Alpha": "exp", "(Alpha-1)^2": "exp", "(Beta-1)^2": "exp", "(r-1)^2": "exp"}
         plotmapping = {
             "Ensemble variance": r"$\overline{EV}$",
@@ -1066,17 +1065,17 @@ class postprocess_calculations:
                 yval = metric[ymetric].values if not ymetric == "Absolute mean bias" else np.absolute(
                     metric[ymetric].values)
 
-                if ymetric == "Pearson correlation" or ymetric == "Members correlation":
+                if ymetric == "Pearson correlation":
                     xval = xval[~np.isnan(yval)]
                     yval = yval[~np.isnan(yval)]
                     # xval = xval[yval>=0.0]
                     # yval = yval[yval>=0.0]
 
-                if ymetric == "KGE" or ymetric == "KGE_nobias" or ymetric == "Members KGE":
+                if ymetric == "KGE":
                     xval = xval[~np.isnan(yval)]
                     yval = yval[~np.isnan(yval)]
-                    xval = xval[yval >= 0.2]
-                    yval = yval[yval >= 0.2]
+                    xval = xval[yval >= -0.4]
+                    yval = yval[yval >= -0.4]
 
                 if ymetric == "Beta" or ymetric == "Alpha" or ymetric == "(Alpha-1)^2" or ymetric == "(Beta-1)^2" or ymetric == "(r-1)^2":
                     xval = xval[~np.isnan(yval)]
@@ -1093,7 +1092,7 @@ class postprocess_calculations:
                 logx, logy, xminlim, xmaxlim, yminlim, ymaxlim = None, None, None, None, None, None
                 if xstat == "std" or xstat == "Ensemble variance" or xstat == "IQR (75-25%)" or xstat == "cv" or xstat == "mad":
                     logx = True
-                if ymetric == "Members correlation std" or ymetric == "Members RMSE std" or ymetric == "Members KGE std" or ymetric == "RMSE" or ymetric == "Absolute mean bias" or ymetric == "Alpha" or ymetric == "Beta" or ymetric == "(Alpha-1)^2" or ymetric == "(Beta-1)^2" or ymetric == "(r-1)^2" or ymetric == "Members RMSE" or ymetric == "Bias_std":
+                if ymetric == "RMSE" or ymetric == "Absolute mean bias" or ymetric == "Alpha" or ymetric == "Beta" or ymetric == "(Alpha-1)^2" or ymetric == "(Beta-1)^2" or ymetric == "(r-1)^2" or ymetric == "Bias_std":
                     logy = True
                 if ymetrics[ymetric] == "exp":
                     logy = True
@@ -1106,7 +1105,7 @@ class postprocess_calculations:
                     yminlim = -1
                     ymaxlim = 1
                 if ymetric == "KGE":
-                    yminlim = 0.2
+                    yminlim = -0.4
                     ymaxlim = 1
 
                 if xstat == "Pairwise correlation" and ymetric == "Members correlation std":
@@ -3536,7 +3535,7 @@ class postprocess_calculations:
                 label="ERA5-LSTM ensemble mean_a", linewidth=3.0)
         # ax.plot(dates, tsmpobs, "b-", label="TSMP observations", linewidth=3.0)
         ax.scatter([], [], color="k",
-                   label=f"KGE:{kge}, r:{r}, RMSE:{rmse},\nBias:{bias}, NSE: {nse}")
+                   label=f"KGE:{kge}, r:{r}, RMSE:{rmse}")#,\nBias:{bias}, NSE: {nse}")
 
         ax.xaxis.set_major_locator(mdates.MonthLocator([1]))
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
@@ -3728,9 +3727,11 @@ class postprocess_calculations:
                 raise ValueError("Lengths do not match")
 
             # Calculate for 2001-2016 period to compare with TSMP vs obs
-            anom_localobs = anom_localobs[12*5:]
-            ens_mean_era5wtd = ens_mean_era5wtd[12*5:]
-            sim_members_pixel = sim_members_pixel[:, 12*5:]
+            # commented if not comparing to TSMP
+            # anom_localobs = anom_localobs[12*5:]
+            # ens_mean_era5wtd = ens_mean_era5wtd[12*5:]
+            # sim_members_pixel = sim_members_pixel[:, 12*5:]
+
             print(anom_localobs.shape, ens_mean_era5wtd.shape, sim_members_pixel.shape)
             # check lengths again
             if len(anom_localobs) != ens_mean_era5wtd.shape[0] or len(anom_localobs) != sim_members_pixel.shape[1] or len(ens_mean_era5wtd) != sim_members_pixel.shape[1]:
@@ -3750,13 +3751,13 @@ class postprocess_calculations:
 
             countrylocation = f"Y{yindex}_X{xindex}"
             ############## plot timeseries ##############
-            # self.era5wtdensemble_localobs_timeseries(countrylocation, sim_members_pixel, ens_mean_era5wtd, None, anom_localobs,
-            #                                          kge=kge,
-            #                                          rmse=rmse,
-            #                                          r=r,
-            #                                          bias=bias,
-            #                                          nse=nse
-            #                                          )
+            self.era5wtdensemble_localobs_timeseries(countrylocation, sim_members_pixel, ens_mean_era5wtd, None, anom_localobs,
+                                                     kge=kge,
+                                                     rmse=rmse,
+                                                     r=r,
+                                                     bias=bias,
+                                                     nse=nse
+                                                     )
 
             ############## plot 2D map of pixels with colored accuracy ##############
             map2d_metrics["r"][int(yindex), int(xindex)] = r
@@ -5300,7 +5301,7 @@ class postprocess_calculations:
         # self.fit_ensvar_rmse_r()
         # self.onepoint_distribution()
         # self.eval_era5wtd_obswtd_tsmpwtd() # magnitude comparison
-        # self.eval_era5wtd_obswtd_tsmpwtd_anomalies() # anomalies comparison
+        self.eval_era5wtd_obswtd_tsmpwtd_anomalies() # anomalies comparison
         # self.cdf_metrics_era5_vs_tsmp_anomalies()
 
         # self.evaluate_members_rmse_pearson(members_filepath=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", 
@@ -5367,4 +5368,4 @@ class postprocess_calculations:
         # )
         # self.plot2Dmaps_adaptedtoma_tsmp_original_wtd_vs_obs_anomalies() # compare TSMP anomalies with obs
         # self.boxplots_errormaps_TSMP_vs_ERALSTM_vs_obs()
-        self.errormaps_TSMP_vs_ERALSTM_vs_obs()
+        # self.errormaps_TSMP_vs_ERALSTM_vs_obs()
