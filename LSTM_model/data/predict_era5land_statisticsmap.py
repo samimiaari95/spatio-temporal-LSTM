@@ -84,6 +84,7 @@ def all_dates(start_year: int, end_year: int) -> List[dt.date]:
         for year in range(start_year, end_year + 1)
         for month in range(1, 13)
         for day in range(1, calendar.monthrange(year, month)[1] + 1)
+        if not (month == 2 and day == 29)
     ]
 
 
@@ -345,8 +346,13 @@ def stage_features(
         for year in range(FIRST_CONTEXT_YEAR, PREDICTION_YEARS[-1] + 1):
             for month in range(1, 13):
                 month_days = month_dates(year, month)
-                start = date_offsets[month_days[0]]
-                end = start + len(month_days)
+                kept_day_indices = [
+                    day_index
+                    for day_index, date in enumerate(month_days)
+                    if date in date_offsets
+                ]
+                start = date_offsets[month_days[kept_day_indices[0]]]
+                end = start + len(kept_day_indices)
                 for pixel_start in range(0, len(flat_indices), pixel_batch_size):
                     pixel_end = min(pixel_start + pixel_batch_size, len(flat_indices))
                     monthly_data = load_dynamic_month(
@@ -361,7 +367,7 @@ def stage_features(
                     )
                     features[
                         feature_index, start:end, pixel_start:pixel_end
-                    ] = monthly_data
+                    ] = monthly_data[kept_day_indices]
 
     for feature_index, filename in enumerate(FEATURES_FILES[3:], start=3):
         for pixel_start in range(0, len(flat_indices), pixel_batch_size):
@@ -522,6 +528,7 @@ def save_metadata(
         "mask_shape": list(mask_shape),
         "selected_pixel_count": selected_count,
         "prediction_years": list(PREDICTION_YEARS),
+        "excluded_calendar_dates": ["02-29"],
         "context_years": {
             str(year): year - 1 for year in PREDICTION_YEARS
         },
