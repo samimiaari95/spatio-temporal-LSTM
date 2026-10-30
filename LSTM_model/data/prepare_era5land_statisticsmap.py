@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,7 @@ from LSTM_model.data.predict_era5land_statisticsmap import (
     OUTPUTPATH,
     PREDICTION_YEARS,
     all_dates,
+    build_lookback_features,
     stage_features,
 )
 
@@ -59,6 +61,14 @@ def run(args: argparse.Namespace) -> None:
         raise FileExistsError(
             f"Refusing to overwrite prepared features: {feature_path}"
         )
+    temporal_feature_path = (
+        run_dir / "feature_inputs" / "era5land_temporal_features.tmp.npy"
+    )
+    if temporal_feature_path.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite temporary temporal features: "
+            f"{temporal_feature_path}"
+        )
     metadata_dir = run_dir / "metadata"
     if (metadata_dir / "preprocessing.json").exists():
         raise FileExistsError(
@@ -79,6 +89,14 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError(f"No pixels equal to 1 in mask {args.mask_path}")
     flat_indices = np.ravel_multi_index((y_indices, x_indices), mask.shape)
     dates = all_dates(FIRST_CONTEXT_YEAR, PREDICTION_YEARS[-1])
+    prediction_dates = [
+        date for date in dates if date.year in PREDICTION_YEARS
+    ]
+    if dates[LOOKBACK:] != prediction_dates:
+        raise ValueError(
+            "The prepared date sequence must contain exactly LOOKBACK context "
+            "days before the configured prediction dates"
+        )
 
     LOGGER.info(
         "Preparing %d dates, %d of %d grid cells, %d predictors",
@@ -87,8 +105,37 @@ def run(args: argparse.Namespace) -> None:
         mask.size,
         len(FEATURES_FILES),
     )
+    expected_feature_shape = (
+        (len(dates) - LOOKBACK) * len(flat_indices),
+        LOOKBACK,
+        len(FEATURES_FILES),
+    )
+    windowed_bytes = (
+        int(np.prod(expected_feature_shape, dtype=np.int64))
+        * np.dtype(np.float32).itemsize
+    )
+    temporal_bytes = (
+        len(FEATURES_FILES)
+        * len(dates)
+        * len(flat_indices)
+        * np.dtype(np.float32).itemsize
+    )
+    available_bytes = shutil.disk_usage(run_dir).free
+    LOGGER.info(
+        "Windowed feature output will be %s (%.2f GiB); %.2f GiB available "
+        "before temporary staging",
+        expected_feature_shape,
+        windowed_bytes / (1024**3),
+        available_bytes / (1024**3),
+    )
+    if available_bytes < windowed_bytes + temporal_bytes:
+        raise OSError(
+            "Insufficient free filesystem space for windowed features and "
+            f"temporary staging: need {(windowed_bytes + temporal_bytes) / (1024**3):.2f} GiB, "
+            f"have {available_bytes / (1024**3):.2f} GiB"
+        )
     stage_features(
-        feature_path,
+        temporal_feature_path,
         dates,
         Path(args.era5_dir),
         Path(args.input_dir),
@@ -97,6 +144,18 @@ def run(args: argparse.Namespace) -> None:
         flat_indices,
         mask.shape,
         args.pixel_batch_size,
+    )
+    feature_shape = build_lookback_features(
+        temporal_feature_path,
+        feature_path,
+        len(dates),
+        len(flat_indices),
+    )
+    temporal_feature_path.unlink()
+    LOGGER.info(
+        "Removed temporary temporal feature stack after constructing model "
+        "inputs: %s",
+        temporal_feature_path,
     )
 
     metadata_dir.mkdir(parents=True, exist_ok=True)
@@ -116,6 +175,11 @@ def run(args: argparse.Namespace) -> None:
         "mask_shape": list(mask.shape),
         "selected_pixel_count": len(flat_indices),
         "date_count": len(dates),
+        "feature_layout": "time_pixel_lookback_feature",
+        "feature_shape": list(feature_shape),
+        "prediction_sample_count": feature_shape[0],
+        "feature_sample_start_date": prediction_dates[0].isoformat(),
+        "feature_sample_end_date": prediction_dates[-1].isoformat(),
         "dtype": "float32",
         "preprocessing_device": "cpu",
         "pixel_batch_size": args.pixel_batch_size,

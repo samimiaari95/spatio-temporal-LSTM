@@ -232,11 +232,16 @@ def _npy_month(
 
     array = np.load(filename, mmap_mode="r")
     expected_days = calendar.monthrange(year, month)[1]
-    if array.shape[0] != expected_days:
+    allowed_day_counts = {expected_days}
+    if month == 2 and calendar.isleap(year):
+        allowed_day_counts.add(expected_days - 1)
+    if array.shape[0] not in allowed_day_counts:
         LOGGER.info(
-            "%s has %d days; reading %04d-%02d from the regridded NetCDF source",
+            "%s has %d days; expected %s; reading %04d-%02d from the "
+            "regridded NetCDF source",
             filename,
             array.shape[0],
+            " or ".join(map(str, sorted(allowed_day_counts))),
             year,
             month,
         )
@@ -385,10 +390,13 @@ def load_dynamic_month(
         )
 
     expected_days = calendar.monthrange(year, month)[1]
-    if data.shape[0] != expected_days:
+    allowed_day_counts = {expected_days}
+    if month == 2 and calendar.isleap(year):
+        allowed_day_counts.add(expected_days - 1)
+    if data.shape[0] not in allowed_day_counts:
         raise ValueError(
             f"{variable} {year}-{month:02d} has {data.shape[0]} days; "
-            f"expected {expected_days}"
+            f"expected one of {sorted(allowed_day_counts)}"
         )
     return data
 
@@ -432,7 +440,7 @@ def stage_features(
     flat_indices: np.ndarray,
     mask_shape: Tuple[int, int],
     pixel_batch_size: int,
-) -> np.ndarray:
+) -> None:
     feature_path.parent.mkdir(parents=True, exist_ok=True)
     if feature_path.exists():
         raise FileExistsError(f"Refusing to overwrite staged features: {feature_path}")
@@ -509,7 +517,82 @@ def stage_features(
             features[feature_index, :, pixel_start:pixel_end] = selected[None, :]
 
     features.flush()
-    return features
+    del features
+
+
+def build_lookback_features(
+    temporal_feature_path: Path,
+    feature_path: Path,
+    date_count: int,
+    pixel_count: int,
+    pixel_batch_size: int = 1024,
+) -> Tuple[int, int, int]:
+    temporal_features = np.load(
+        temporal_feature_path, mmap_mode="r", allow_pickle=False
+    )
+    expected_temporal_shape = (
+        len(FEATURES_FILES),
+        date_count,
+        pixel_count,
+    )
+    if temporal_features.shape != expected_temporal_shape:
+        raise ValueError(
+            f"Temporal feature shape is {temporal_features.shape}; expected "
+            f"{expected_temporal_shape}"
+        )
+    sample_days = date_count - LOOKBACK
+    if sample_days < 1:
+        raise ValueError(
+            f"Need more than LOOKBACK={LOOKBACK} dates, got {date_count}"
+        )
+    feature_shape = (
+        sample_days * pixel_count,
+        LOOKBACK,
+        len(FEATURES_FILES),
+    )
+    expected_size = int(np.prod(feature_shape, dtype=np.int64)) * np.dtype(
+        np.float32
+    ).itemsize
+    LOGGER.info(
+        "Building transfer-compatible input windows with shape %s (%.2f GiB)",
+        feature_shape,
+        expected_size / (1024**3),
+    )
+    if feature_path.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite windowed features: {feature_path}"
+        )
+
+    feature_path.parent.mkdir(parents=True, exist_ok=True)
+    windowed_features = np.lib.format.open_memmap(
+        feature_path,
+        mode="w+",
+        dtype=np.float32,
+        shape=feature_shape,
+    )
+    windows = np.lib.stride_tricks.sliding_window_view(
+        temporal_features, LOOKBACK, axis=1
+    )
+    for day_index in range(sample_days):
+        for pixel_start in range(0, pixel_count, pixel_batch_size):
+            pixel_end = min(pixel_start + pixel_batch_size, pixel_count)
+            feature_block = np.ascontiguousarray(
+                windows[:, day_index, pixel_start:pixel_end, :]
+                .transpose(1, 2, 0),
+                dtype=np.float32,
+            )
+            sample_start = day_index * pixel_count + pixel_start
+            sample_end = day_index * pixel_count + pixel_end
+            windowed_features[sample_start:sample_end] = feature_block
+        if day_index == 0 or (day_index + 1) % 30 == 0 or day_index + 1 == sample_days:
+            LOGGER.info(
+                "Prepared lookback windows for %d/%d prediction dates",
+                day_index + 1,
+                sample_days,
+            )
+    windowed_features.flush()
+    del windows, windowed_features, temporal_features
+    return feature_shape
 
 
 def load_member_scalers(member: int) -> Dict[str, object]:
@@ -551,59 +634,41 @@ def predict_year_batch(
     scaler: Dict[str, object],
     model: torch.nn.Module,
     device: torch.device,
-    prediction_days: int,
-    context_days: int,
-    time_batch_size: int,
 ) -> np.ndarray:
-    pixel_count = feature_block.shape[2]
-    prediction_start = context_days - LOOKBACK
-    if prediction_start < 0:
+    expected_shape_tail = (LOOKBACK, len(FEATURES_FILES))
+    if feature_block.ndim != 3 or feature_block.shape[1:] != expected_shape_tail:
         raise ValueError(
-            f"Context has {context_days} days, fewer than LOOKBACK={LOOKBACK}"
+            f"Expected input windows shaped (samples, {LOOKBACK}, "
+            f"{len(FEATURES_FILES)}), got {feature_block.shape}"
         )
-    windows_by_feature = []
+    means = np.empty(len(FEATURES_FILES), dtype=np.float32)
+    standard_deviations = np.empty(len(FEATURES_FILES), dtype=np.float32)
     for feature_index, prefix in enumerate(FEATURE_SCALER_PREFIXES):
-        feature_data = feature_block[feature_index]
-        mean = np.float32(np.asarray(scaler[f"{prefix}mean"]))
-        std = np.float32(np.asarray(scaler[f"{prefix}std"]))
-        standardized = (feature_data - mean) / std
-        windows_by_feature.append(
-            np.lib.stride_tricks.sliding_window_view(
-                standardized, LOOKBACK, axis=0
-            )
+        means[feature_index] = np.float32(
+            np.asarray(scaler[f"{prefix}mean"])
         )
+        standard_deviations[feature_index] = np.float32(
+            np.asarray(scaler[f"{prefix}std"])
+        )
+    standardized = (feature_block - means[None, None, :]) / standard_deviations[
+        None, None, :
+    ]
+    predictions = []
+    with torch.inference_mode():
+        for sample_start in range(0, len(standardized), BATCH_SIZE):
+            input_tensor = torch.from_numpy(
+                np.ascontiguousarray(
+                    standardized[sample_start : sample_start + BATCH_SIZE]
+                )
+            ).to(device)
+            predictions.append(model(input_tensor).reshape(-1).cpu().numpy())
 
-    result = np.empty((prediction_days, pixel_count), dtype=np.float32)
-    for day_start in range(0, prediction_days, time_batch_size):
-        day_end = min(day_start + time_batch_size, prediction_days)
-        window_start = prediction_start + day_start
-        window_end = prediction_start + day_end
-        input_block = np.stack(
-            [windows[window_start:window_end] for windows in windows_by_feature],
-            axis=-1,
-        )
-        input_block = input_block.reshape(
-            -1, LOOKBACK, len(FEATURES_FILES)
-        )
-        predictions = []
-        with torch.inference_mode():
-            for sample_start in range(0, len(input_block), BATCH_SIZE):
-                input_tensor = torch.from_numpy(
-                    np.ascontiguousarray(
-                        input_block[sample_start : sample_start + BATCH_SIZE]
-                    )
-                ).to(device)
-                predictions.append(model(input_tensor).reshape(-1).cpu().numpy())
-
-        standardized_predictions = np.concatenate(predictions).reshape(
-            day_end - day_start, pixel_count
-        )
-        if not np.isfinite(standardized_predictions).all():
-            raise ValueError("The ensemble member produced non-finite predictions")
-        mean = np.float32(np.asarray(scaler["wtdmean"]))
-        std = np.float32(np.asarray(scaler["wtdstd"]))
-        result[day_start:day_end] = standardized_predictions * std + mean
-    return result
+    standardized_predictions = np.concatenate(predictions)
+    if not np.isfinite(standardized_predictions).all():
+        raise ValueError("The ensemble member produced non-finite predictions")
+    mean = np.float32(np.asarray(scaler["wtdmean"]))
+    std = np.float32(np.asarray(scaler["wtdstd"]))
+    return standardized_predictions * std + mean
 
 
 def save_metadata(
@@ -936,16 +1001,40 @@ def run(args: argparse.Namespace) -> None:
     prediction_dates = [
         date for date in source_dates if date.year in PREDICTION_YEARS
     ]
+    if source_dates[LOOKBACK:] != prediction_dates:
+        raise ValueError(
+            "The prepared prediction dates do not align with the configured "
+            "365-day lookback windows"
+        )
     date_offsets = {date: index for index, date in enumerate(source_dates)}
     predictions_dir = run_dir / "predictions"
     feature_path = Path(preprocessing["feature_path"])
     if not feature_path.is_file():
         raise FileNotFoundError(f"Prepared feature array is missing: {feature_path}")
     feature_data = np.load(feature_path, mmap_mode="r", allow_pickle=False)
-    expected_feature_shape = (len(FEATURES_FILES), len(source_dates), len(flat_indices))
+    expected_feature_shape = (
+        len(prediction_dates) * len(flat_indices),
+        LOOKBACK,
+        len(FEATURES_FILES),
+    )
+    if preprocessing.get("feature_layout") != "time_pixel_lookback_feature":
+        raise ValueError(
+            "Prepared features must use time-major, pixel-minor, "
+            "lookback, feature ordering"
+        )
+    if preprocessing.get("lookback_days") != LOOKBACK:
+        raise ValueError(
+            f"Prepared features use LOOKBACK={preprocessing.get('lookback_days')}; "
+            f"the prediction model requires {LOOKBACK}"
+        )
+    if preprocessing.get("feature_shape") != list(expected_feature_shape):
+        raise ValueError(
+            "Preprocessing metadata feature shape does not match the expected "
+            f"model input shape {expected_feature_shape}"
+        )
     if feature_data.shape != expected_feature_shape:
         raise ValueError(
-            f"Prepared feature shape is {feature_data.shape}; expected "
+            f"Prepared windowed feature shape is {feature_data.shape}; expected "
             f"{expected_feature_shape}"
         )
     if feature_data.dtype != np.float32:
@@ -992,60 +1081,68 @@ def run(args: argparse.Namespace) -> None:
         model = load_member_model(member, device)
         for year in PREDICTION_YEARS:
             year_started = time.monotonic()
-            context_year = year - 1
-            context_start = date_offsets[dt.date(context_year, 1, 1)]
-            prediction_start = date_offsets[dt.date(year, 1, 1)]
-            prediction_end = (
-                date_offsets[dt.date(year + 1, 1, 1)]
-                if year < PREDICTION_YEARS[-1]
-                else len(source_dates)
-            )
-            context_days = prediction_start - context_start
             year_dates = [date for date in prediction_dates if date.year == year]
             output_start = prediction_dates.index(year_dates[0])
-            output_end = output_start + len(year_dates)
+            first_context_index = (
+                date_offsets[year_dates[0]] - LOOKBACK
+            )
+            context_start = source_dates[first_context_index]
+            context_end = source_dates[date_offsets[year_dates[0]] - 1]
             LOGGER.info(
-                "Member %d: predicting year %d (%d days), with %d context "
-                "days from %d",
+                "Member %d: predicting year %d (%d days); first input window "
+                "covers %s through %s (%d days)",
                 member,
                 year,
                 len(year_dates),
-                context_days,
-                context_year,
+                context_start,
+                context_end,
+                LOOKBACK,
             )
-            for pixel_start in range(
-                shard_start, shard_end, args.pixel_batch_size
-            ):
-                pixel_end = min(pixel_start + args.pixel_batch_size, shard_end)
-                batch_started = time.monotonic()
-                feature_block = np.asarray(
-                    feature_data[
-                        :, context_start:prediction_end, pixel_start:pixel_end
-                    ],
-                    dtype=np.float32,
-                )
-                batch_predictions = predict_year_batch(
-                    feature_block,
-                    scalers,
-                    model,
-                    device,
-                    len(year_dates),
-                    context_days,
-                    args.time_batch_size,
-                )
-                member_predictions[
-                    member_index, output_start:output_end, pixel_start:pixel_end
-                ] = batch_predictions
-                LOGGER.info(
-                    "Member %d year %d: completed pixel batch %d-%d of %d "
-                    "in %.1f s",
-                    member,
-                    year,
-                    pixel_start + 1,
-                    pixel_end,
-                    len(flat_indices),
-                    time.monotonic() - batch_started,
-                )
+            for day_start in range(0, len(year_dates), args.time_batch_size):
+                day_end = min(day_start + args.time_batch_size, len(year_dates))
+                for pixel_start in range(
+                    shard_start, shard_end, args.pixel_batch_size
+                ):
+                    pixel_end = min(pixel_start + args.pixel_batch_size, shard_end)
+                    batch_started = time.monotonic()
+                    prediction_day_indices = np.arange(
+                        output_start + day_start, output_start + day_end
+                    )
+                    pixel_indices = np.arange(pixel_start, pixel_end)
+                    sample_indices = (
+                        prediction_day_indices[:, None] * len(flat_indices)
+                        + pixel_indices[None, :]
+                    ).reshape(-1)
+                    feature_block = np.asarray(
+                        feature_data[sample_indices], dtype=np.float32
+                    )
+                    batch_predictions = predict_year_batch(
+                        feature_block,
+                        scalers,
+                        model,
+                        device,
+                    ).reshape(day_end - day_start, pixel_end - pixel_start)
+                    member_predictions[
+                        member_index,
+                        output_start + day_start : output_start + day_end,
+                        pixel_start:pixel_end,
+                    ] = batch_predictions
+                    if (
+                        pixel_start == shard_start
+                        or pixel_end == shard_end
+                    ):
+                        LOGGER.info(
+                            "Member %d year %d: completed dates %d-%d, "
+                            "pixel batch %d-%d of %d in %.1f s",
+                            member,
+                            year,
+                            day_start + 1,
+                            day_end,
+                            pixel_start + 1,
+                            pixel_end,
+                            len(flat_indices),
+                            time.monotonic() - batch_started,
+                        )
             LOGGER.info(
                 "Member %d year %d completed in %.1f s",
                 member,
