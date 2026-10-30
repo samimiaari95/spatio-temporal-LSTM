@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from LSTM_model.data.predict_era5land_statisticsmap import (
+    ENSEMBLE_MEMBERS,
     FIRST_CONTEXT_YEAR,
     INPUTPATH,
     OUTPUTPATH,
@@ -139,10 +140,9 @@ def run(args: argparse.Namespace) -> None:
     metadata_dir = run_dir / "metadata"
     preprocessing_path = metadata_dir / "preprocessing.json"
     prediction_config_path = metadata_dir / "prediction_config.json"
-    if not preprocessing_path.is_file() or not prediction_config_path.is_file():
+    if not preprocessing_path.is_file():
         raise FileNotFoundError(
-            "CPU preprocessing and GPU prediction must both complete before "
-            f"postprocessing; expected metadata in {metadata_dir}"
+            f"CPU preprocessing metadata is missing: {preprocessing_path}"
         )
     existing_outputs = (
         run_dir / "maps",
@@ -164,9 +164,6 @@ def run(args: argparse.Namespace) -> None:
     )
     with preprocessing_path.open(encoding="utf-8") as file:
         preprocessing = json.load(file)
-    with prediction_config_path.open(encoding="utf-8") as file:
-        prediction_config = json.load(file)
-
     mask = np.load(preprocessing["mask_path"], allow_pickle=False)
     if list(mask.shape) != preprocessing["mask_shape"]:
         raise ValueError("Mask shape does not match preprocessing metadata")
@@ -190,23 +187,150 @@ def run(args: argparse.Namespace) -> None:
     ]
     if dates != expected_dates:
         raise ValueError("Prepared date sequence does not match the configured years")
+    member_predictions_path = None
+    member_prediction_paths = None
+    if prediction_config_path.is_file():
+        with prediction_config_path.open(encoding="utf-8") as file:
+            prediction_config = json.load(file)
+        member_prediction_outputs = prediction_config.get(
+            "member_prediction_outputs"
+        )
+        if member_prediction_outputs is None:
+            member_predictions_path = Path(prediction_config["prediction_output"])
+            expected_prediction_shape = (
+                len(prediction_config["members"]),
+                len(prediction_dates),
+                len(flat_indices),
+            )
+            member_predictions = np.load(
+                member_predictions_path, mmap_mode="r", allow_pickle=False
+            )
+            if member_predictions.shape != expected_prediction_shape:
+                raise ValueError(
+                    f"Prediction array has shape {member_predictions.shape}; "
+                    f"expected {expected_prediction_shape}"
+                )
+        else:
+            member_predictions_path = None
+            members = prediction_config["members"]
+            if sorted(map(int, member_prediction_outputs)) != members:
+                raise ValueError(
+                    "Per-member prediction files do not match the configured "
+                    "ensemble member list"
+                )
+            member_prediction_paths = [
+                Path(member_prediction_outputs[str(member)]) for member in members
+            ]
+    else:
+        members = list(ENSEMBLE_MEMBERS)
+        member_prediction_outputs = {}
+        member_manifests = []
+        missing_members = []
+        for member in members:
+            manifest_path = metadata_dir / f"member_{member:03d}_prediction.json"
+            if not manifest_path.is_file():
+                missing_members.append(member)
+                continue
+            with manifest_path.open(encoding="utf-8") as file:
+                manifest = json.load(file)
+            expected_output_path = (
+                run_dir / "predictions" / f"daily_wtd_member_{member:03d}.npy"
+            ).resolve()
+            output_path = Path(manifest["prediction_output"]).resolve()
+            if manifest.get("run_name") != args.run_name or manifest.get(
+                "member"
+            ) != member:
+                raise ValueError(
+                    f"Prediction manifest does not match run/member {args.run_name}/{member}: "
+                    f"{manifest_path}"
+                )
+            if output_path != expected_output_path or not output_path.is_file():
+                raise FileNotFoundError(
+                    f"Prediction output is missing or unexpected for member "
+                    f"{member}: {output_path}"
+                )
+            if (
+                manifest.get("prediction_date_count") != len(prediction_dates)
+                or manifest.get("selected_pixel_count") != len(flat_indices)
+            ):
+                raise ValueError(
+                    f"Prediction dimensions in manifest do not match the "
+                    f"prepared run for member {member}"
+                )
+            member_array = np.load(
+                output_path, mmap_mode="r", allow_pickle=False
+            )
+            expected_member_shape = (
+                1,
+                len(prediction_dates),
+                len(flat_indices),
+            )
+            if member_array.shape != expected_member_shape:
+                raise ValueError(
+                    f"Member {member} prediction array has shape "
+                    f"{member_array.shape}; expected {expected_member_shape}"
+                )
+            if member_array.dtype != np.float32:
+                raise ValueError(
+                    f"Member {member} prediction array has dtype "
+                    f"{member_array.dtype}; expected float32"
+                )
+            member_prediction_outputs[str(member)] = str(output_path)
+            member_manifests.append(manifest)
+        if missing_members:
+            raise FileNotFoundError(
+                "Prediction jobs have not completed for ensemble members: "
+                + ", ".join(map(str, missing_members))
+            )
+        first_manifest = member_manifests[0]
+        for manifest in member_manifests:
+            if any(
+                manifest.get(field) != first_manifest.get(field)
+                for field in (
+                    "model_name",
+                    "pixel_batch_size",
+                    "time_batch_size",
+                    "world_size",
+                )
+            ):
+                raise ValueError(
+                    "Per-member prediction settings are inconsistent across "
+                    "the ensemble"
+                )
+        prediction_config = {
+            "run_name": args.run_name,
+            "model_name": first_manifest["model_name"],
+            "members": members,
+            "prediction_date_count": len(prediction_dates),
+            "selected_pixel_count": len(flat_indices),
+            "world_size": 1,
+            "devices": {
+                "0": {
+                    "device": first_manifest["device"],
+                    "name": first_manifest["device_name"],
+                }
+            },
+            "member_devices": {
+                str(manifest["member"]): manifest["device_name"]
+                for manifest in member_manifests
+            },
+            "pixel_batch_size": first_manifest["pixel_batch_size"],
+            "time_batch_size": first_manifest["time_batch_size"],
+            "prediction_output": None,
+            "member_prediction_outputs": member_prediction_outputs,
+        }
+        temporary_config_path = prediction_config_path.with_suffix(
+            prediction_config_path.suffix + f".partial-{os.getpid()}"
+        )
+        with temporary_config_path.open("w", encoding="utf-8") as file:
+            json.dump(prediction_config, file, indent=2)
+        os.replace(temporary_config_path, prediction_config_path)
+        member_prediction_paths = [
+            Path(member_prediction_outputs[str(member)]) for member in members
+        ]
+
     if prediction_config["selected_pixel_count"] != len(flat_indices):
         raise ValueError("Prediction metadata pixel count does not match the mask")
-
-    member_predictions_path = Path(prediction_config["prediction_output"])
-    expected_prediction_shape = (
-        len(prediction_config["members"]),
-        len(prediction_dates),
-        len(flat_indices),
-    )
-    member_predictions = np.load(
-        member_predictions_path, mmap_mode="r", allow_pickle=False
-    )
-    if member_predictions.shape != expected_prediction_shape:
-        raise ValueError(
-            f"Prediction array has shape {member_predictions.shape}; expected "
-            f"{expected_prediction_shape}"
-        )
 
     args.mask_path = preprocessing["mask_path"]
     args.era5_dir = preprocessing["era5_directory"]
@@ -229,6 +353,7 @@ def run(args: argparse.Namespace) -> None:
         prediction_dates,
         member_predictions_path,
         device,
+        member_prediction_paths,
     )
     create_plots(run_dir, prediction_dates)
     LOGGER.info("CPU output processing and plotting completed")

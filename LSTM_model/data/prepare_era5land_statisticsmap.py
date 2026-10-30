@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from LSTM_model.data.predict_era5land_statisticsmap import (
+    ENSEMBLE_MEMBERS,
     FEATURES_FILES,
     FIRST_CONTEXT_YEAR,
     INPUTPATH,
@@ -120,18 +121,26 @@ def run(args: argparse.Namespace) -> None:
         * len(flat_indices)
         * np.dtype(np.float32).itemsize
     )
+    prediction_bytes = (
+        len(ENSEMBLE_MEMBERS)
+        * len(prediction_dates)
+        * len(flat_indices)
+        * np.dtype(np.float32).itemsize
+    )
+    required_bytes = windowed_bytes + temporal_bytes + prediction_bytes
     available_bytes = shutil.disk_usage(run_dir).free
     LOGGER.info(
-        "Windowed feature output will be %s (%.2f GiB); %.2f GiB available "
-        "before temporary staging",
-        expected_feature_shape,
+        "Windowed features require %.2f GiB and per-member predictions "
+        "require %.2f GiB; %.2f GiB available before staging",
         windowed_bytes / (1024**3),
+        prediction_bytes / (1024**3),
         available_bytes / (1024**3),
     )
-    if available_bytes < windowed_bytes + temporal_bytes:
+    if available_bytes < required_bytes:
         raise OSError(
             "Insufficient free filesystem space for windowed features and "
-            f"temporary staging: need {(windowed_bytes + temporal_bytes) / (1024**3):.2f} GiB, "
+            "per-member predictions plus temporary staging: need "
+            f"{required_bytes / (1024**3):.2f} GiB, "
             f"have {available_bytes / (1024**3):.2f} GiB"
         )
     stage_features(

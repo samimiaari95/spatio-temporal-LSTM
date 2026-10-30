@@ -32,6 +32,7 @@ from LSTM_model.model.config import (
 LOGGER = logging.getLogger("statisticsmap")
 FIRST_CONTEXT_YEAR = 2016
 PREDICTION_YEARS = (2017, 2018, 2019, 2020)
+ENSEMBLE_MEMBERS = tuple(range(100))
 FEATURE_SCALER_PREFIXES = (
     "TOT_PREC",
     "vpd",
@@ -63,12 +64,17 @@ class RankFilter(logging.Filter):
         return True
 
 
-def configure_logging(run_dir: Path, rank: int) -> None:
-    log_path = (
-        run_dir / "logs" / "run.log"
-        if rank == 0
-        else run_dir / "logs" / f"worker_rank_{rank:02d}.log"
-    )
+def configure_logging(
+    run_dir: Path, rank: int, member: Optional[int] = None
+) -> None:
+    if member is not None:
+        log_path = run_dir / "logs" / f"member_{member:03d}_rank_{rank:02d}.log"
+    else:
+        log_path = (
+            run_dir / "logs" / "run.log"
+            if rank == 0
+            else run_dir / "logs" / f"worker_rank_{rank:02d}.log"
+        )
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)s rank=%(rank)s %(message)s"
     )
@@ -778,15 +784,51 @@ def write_final_outputs(
     x_indices: np.ndarray,
     flat_indices: np.ndarray,
     prediction_dates: Sequence[dt.date],
-    member_predictions_path: Path,
+    member_predictions_path: Optional[Path],
     device: str,
+    member_prediction_paths: Optional[Sequence[Path]] = None,
 ) -> None:
     predictions_dir = run_dir / "predictions"
     maps_dir = run_dir / "maps"
     metadata_dir = run_dir / "metadata"
-    member_predictions = np.load(member_predictions_path, mmap_mode="r")
     pixel_count = len(flat_indices)
     day_count = len(prediction_dates)
+    if member_prediction_paths is None:
+        if member_predictions_path is None:
+            raise ValueError("A prediction array or member files must be provided")
+        member_predictions = np.load(
+            member_predictions_path, mmap_mode="r", allow_pickle=False
+        )
+        member_arrays = None
+    else:
+        if member_predictions_path is not None:
+            raise ValueError(
+                "Provide either a combined prediction array or member files, not both"
+            )
+        if not member_prediction_paths or len(member_prediction_paths) != len(
+            args.members
+        ):
+            raise ValueError(
+                "The number of member prediction files must match the ensemble"
+            )
+        member_predictions = None
+        member_arrays = [
+            np.load(path, mmap_mode="r", allow_pickle=False)
+            for path in member_prediction_paths
+        ]
+        expected_member_shape = (1, day_count, pixel_count)
+        for path, member_array in zip(member_prediction_paths, member_arrays):
+            if member_array.shape != expected_member_shape:
+                raise ValueError(
+                    f"Member prediction array {path} has shape "
+                    f"{member_array.shape}; expected {expected_member_shape}"
+                )
+            if member_array.dtype != np.float32:
+                raise ValueError(
+                    f"Member prediction array {path} has dtype "
+                    f"{member_array.dtype}; expected float32"
+                )
+
     mean_predictions = np.lib.format.open_memmap(
         predictions_dir / "daily_wtd_ensemble_mean.npy",
         mode="w+",
@@ -807,9 +849,25 @@ def write_final_outputs(
             pixel_end,
             pixel_count,
         )
-        member_block = np.asarray(
-            member_predictions[:, :, pixel_start:pixel_end], dtype=np.float32
-        )
+        if member_arrays is None:
+            if member_predictions is None:
+                raise RuntimeError("Combined prediction array was not loaded")
+            member_block = np.asarray(
+                member_predictions[:, :, pixel_start:pixel_end], dtype=np.float32
+            )
+        else:
+            member_block = np.empty(
+                (
+                    len(member_arrays),
+                    day_count,
+                    pixel_end - pixel_start,
+                ),
+                dtype=np.float32,
+            )
+            for member_index, member_array in enumerate(member_arrays):
+                member_block[member_index] = member_array[
+                    0, :, pixel_start:pixel_end
+                ]
         if not np.isfinite(member_block).all():
             raise ValueError(
                 f"Member predictions are incomplete or non-finite for masked "
@@ -923,7 +981,11 @@ def run(args: argparse.Namespace) -> None:
     run_dir = output_root / args.run_name
     if not run_dir.is_dir() or not (run_dir / "logs").is_dir():
         raise FileNotFoundError(f"Prepared run directory does not exist: {run_dir}")
-    configure_logging(run_dir, rank)
+    configure_logging(
+        run_dir,
+        rank,
+        args.members[0] if args.separate_member_output else None,
+    )
     LOGGER.info(
         "Starting GPU prediction on rank %d of %d using %s",
         rank,
@@ -1044,8 +1106,110 @@ def run(args: argparse.Namespace) -> None:
 
     member_predictions_path = predictions_dir / "daily_wtd_members.npy"
     prediction_config_path = run_dir / "metadata" / "prediction_config.json"
+    if args.separate_member_output and (
+        len(args.members) != 1 or world_size not in (1, 4)
+    ):
+        raise ValueError(
+            "--separate-member-output requires one member and either one or "
+            "four workers"
+        )
+    member_output_path = (
+        predictions_dir / f"daily_wtd_member_{args.members[0]:03d}.npy"
+        if args.separate_member_output
+        else None
+    )
+    member_job_id = os.environ.get("SLURM_JOB_ID", "manual")
+    partial_member_output_path = (
+        predictions_dir
+        / f"daily_wtd_member_{args.members[0]:03d}.partial-{member_job_id}.npy"
+        if args.separate_member_output
+        else None
+    )
+    member_manifest_path = (
+        run_dir / "metadata" / f"member_{args.members[0]:03d}_prediction.json"
+        if args.separate_member_output
+        else None
+    )
+    member_already_complete = False
+    if args.separate_member_output:
+        if (
+            member_output_path is None
+            or partial_member_output_path is None
+            or member_manifest_path is None
+        ):
+            raise RuntimeError("Separate member output paths were not initialized")
+        if member_output_path.exists() and member_manifest_path.is_file():
+            with member_manifest_path.open(encoding="utf-8") as file:
+                completed_manifest = json.load(file)
+            completed_array = np.load(
+                member_output_path, mmap_mode="r", allow_pickle=False
+            )
+            expected_shape = (1, len(prediction_dates), len(flat_indices))
+            if (
+                completed_manifest.get("run_name") == args.run_name
+                and completed_manifest.get("member") == args.members[0]
+                and completed_manifest.get("world_size") == world_size
+                and completed_array.shape == expected_shape
+                and completed_array.dtype == np.float32
+            ):
+                member_already_complete = True
+                LOGGER.info(
+                    "Member %d already has a completed output; skipping",
+                    args.members[0],
+                )
+            else:
+                raise ValueError(
+                    f"Existing prediction output or metadata is invalid for "
+                    f"member {args.members[0]}"
+                )
+        elif member_output_path.exists() or member_manifest_path.exists():
+            raise FileExistsError(
+                f"Prediction output is incomplete for member {args.members[0]}; "
+                "remove or rename the incomplete output before retrying"
+            )
 
     def initialize_prediction_file() -> None:
+        if args.separate_member_output:
+            if (
+                member_output_path is None
+                or partial_member_output_path is None
+                or member_manifest_path is None
+            ):
+                raise RuntimeError("Separate member output paths were not initialized")
+            if member_already_complete:
+                LOGGER.info(
+                    "Member %d already has a completed output; skipping",
+                    args.members[0],
+                )
+                return
+            if (
+                member_output_path.exists()
+                or partial_member_output_path.exists()
+                or member_manifest_path.exists()
+                or prediction_config_path.exists()
+            ):
+                raise FileExistsError(
+                    f"Prediction output already exists for member "
+                    f"{args.members[0]} in {predictions_dir}; use a new run "
+                    "directory rather than overwriting it"
+                )
+            predictions_dir.mkdir(parents=True, exist_ok=True)
+            predictions = np.lib.format.open_memmap(
+                partial_member_output_path,
+                mode="w+",
+                dtype=np.float32,
+                shape=(1, len(prediction_dates), len(flat_indices)),
+            )
+            predictions[:] = np.nan
+            predictions.flush()
+            del predictions
+            LOGGER.info(
+                "Initialized temporary prediction output for member %d with shape %s",
+                args.members[0],
+                (1, len(prediction_dates), len(flat_indices)),
+            )
+            return
+
         if member_predictions_path.exists() or prediction_config_path.exists():
             raise FileExistsError(
                 f"Prediction outputs already exist in {predictions_dir}; "
@@ -1067,7 +1231,16 @@ def run(args: argparse.Namespace) -> None:
         )
 
     synchronize_rank_zero(initialize_prediction_file, rank, world_size)
-    member_predictions = np.load(member_predictions_path, mmap_mode="r+")
+    if member_already_complete:
+        return
+    prediction_store_path = (
+        partial_member_output_path
+        if args.separate_member_output
+        else member_predictions_path
+    )
+    if prediction_store_path is None:
+        raise RuntimeError("Prediction output path was not initialized")
+    member_predictions = np.load(prediction_store_path, mmap_mode="r+")
 
     for member_index, member in enumerate(args.members):
         member_started = time.monotonic()
@@ -1162,7 +1335,47 @@ def run(args: argparse.Namespace) -> None:
 
     member_predictions.flush()
     del member_predictions
-    LOGGER.info("All ensemble-member predictions are complete")
+    if args.separate_member_output:
+        if (
+            member_output_path is None
+            or partial_member_output_path is None
+            or member_manifest_path is None
+        ):
+            raise RuntimeError("Separate member output paths were not initialized")
+
+        def publish_member_output() -> None:
+            os.replace(partial_member_output_path, member_output_path)
+            member_manifest = {
+                "run_name": args.run_name,
+                "model_name": MODEL_NAME,
+                "member": args.members[0],
+                "prediction_date_count": len(prediction_dates),
+                "selected_pixel_count": len(flat_indices),
+                "world_size": world_size,
+                "device": str(device),
+                "device_name": (
+                    torch.cuda.get_device_name(device)
+                    if device.type == "cuda"
+                    else "cpu"
+                ),
+                "pixel_batch_size": args.pixel_batch_size,
+                "time_batch_size": args.time_batch_size,
+                "prediction_output": str(member_output_path.resolve()),
+            }
+            temporary_manifest_path = member_manifest_path.with_suffix(
+                member_manifest_path.suffix + f".partial-{member_job_id}"
+            )
+            with temporary_manifest_path.open("w", encoding="utf-8") as file:
+                json.dump(member_manifest, file, indent=2)
+            os.replace(temporary_manifest_path, member_manifest_path)
+            LOGGER.info(
+                "Ensemble member %d output and completion metadata saved",
+                args.members[0],
+            )
+
+        synchronize_rank_zero(publish_member_output, rank, world_size)
+    else:
+        LOGGER.info("All ensemble-member predictions are complete")
 
     def save_prediction_config() -> None:
         gpu_info = (
@@ -1191,7 +1404,8 @@ def run(args: argparse.Namespace) -> None:
         with prediction_config_path.open("w", encoding="utf-8") as file:
             json.dump(prediction_config, file, indent=2)
 
-    synchronize_rank_zero(save_prediction_config, rank, world_size)
+    if not args.separate_member_output:
+        synchronize_rank_zero(save_prediction_config, rank, world_size)
     LOGGER.info("GPU prediction job completed successfully")
 
 
@@ -1201,12 +1415,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--run-name", required=True)
-    parser.add_argument("--members", type=parse_members, default=list(range(100)))
+    parser.add_argument(
+        "--members", type=parse_members, default=list(ENSEMBLE_MEMBERS)
+    )
     parser.add_argument("--pixel-batch-size", type=int, default=64)
     parser.add_argument("--time-batch-size", type=int, default=8)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--expected-world-size", type=int)
     parser.add_argument("--require-gpu", action="store_true")
+    parser.add_argument(
+        "--separate-member-output",
+        action="store_true",
+        help="Write one member to an isolated file for independent array jobs.",
+    )
     return parser
 
 

@@ -7,8 +7,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
-#SBATCH --partition=devel
-#SBATCH --time=00:20:00
+#SBATCH --partition=batch
+#SBATCH --time=03:00:00
 #SBATCH --output=/p/project1/cslts/miaari1/python_scripts/global_TL/spatio-temporal-LSTM/outputs/EU_74_-48_69_20/statisticsEUmap/logs/preprocess_%j.out
 #SBATCH --error=/p/project1/cslts/miaari1/python_scripts/global_TL/spatio-temporal-LSTM/outputs/EU_74_-48_69_20/statisticsEUmap/logs/preprocess_%j.err
 #SBATCH --mail-user=s.miaari@fz-juelich.de
@@ -39,7 +39,7 @@ else
     fi
     RUN_DIR="${STATISTICS_ROOT}/${RUN_NAME}"
     if [[ ! -d "${RUN_DIR}/logs" ]]; then
-        echo "Run directory must be created by submit_statisticsmap_pipeline.sh: ${RUN_DIR}" >&2
+        echo "Run directory must be created by submit_statisticsmap_preprocess.sh: ${RUN_DIR}" >&2
         exit 1
     fi
 fi
