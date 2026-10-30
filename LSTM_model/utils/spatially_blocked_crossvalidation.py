@@ -116,11 +116,11 @@ def _haversine_distances(latitudes: np.ndarray, longitudes: np.ndarray) -> np.nd
 
 def _load_transfer_pixel_table() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     utils = utilities()
-    statistics_path = os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv")
+    statistics_path = os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv")
     statistics = pd.read_csv(statistics_path)
     residuals = np.abs(statistics["Absolute mean bias"].to_numpy(dtype=float))
 
-    transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "transfer_subset.npy"))
+    transfer_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "spreadskill_fit_subset.npy"))
     lat2d = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
     lon2d = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
 
@@ -323,6 +323,7 @@ def _fit_variogram_and_group_blocks(
     # plt.legend(fontsize=8)
     plt.tight_layout()
     plt.savefig(plot_path, dpi=300)
+    plt.savefig(os.path.join(plot_directory, "figureS11.png"), dpi=300)
     plt.close()
 
     return SpatiallyBlockedCVInfo(

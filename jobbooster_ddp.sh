@@ -15,8 +15,9 @@
 #SBATCH --mail-user=s.miaari@fz-juelich.de
 #SBATCH --mail-type=ALL
 
-cd /p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM
-source /p/project1/cslts/miaari1/python_scripts/DailyScriptBox/envs/env11_juwels.ini
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_DIR"
+source /p/project1/cslts/miaari1/python_scripts/DailyScriptBox/envs/loadenv.JURECA-DCadapted_JUWELS_2025_GCC-OpenMPI_Std-Py-AI.ini
 
 # Check if an integer argument is provided
 if [[ $# -eq 0 ]]; then
@@ -55,4 +56,4 @@ srun env -u CUDA_VISIBLE_DEVICES python -u -m torchrun_jsc \
        --rdzv_id="$SLURM_JOB_ID" \
        --rdzv_endpoint="$MASTER_ADDR":"$MASTER_PORT" \
        --rdzv_backend static \
-       /p/project1/cslts/miaari1/python_scripts/spatio-temporal-LSTM/main.py -t
+       "$REPO_DIR/main.py" --train

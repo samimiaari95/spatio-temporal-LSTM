@@ -10,7 +10,6 @@ import cartopy.feature as cfeature
 from shapely.geometry import Polygon
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
-from sklearn.metrics import r2_score
 from LSTM_model.model.config import *
 
 class plotting_helper:
@@ -337,8 +336,8 @@ class plotting_helper:
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
         
         # get EU lon lat
-        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
-        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
         # define limits and normalization
         norm  = mcolors.LogNorm(vmin=minval, vmax=maxval) if logscale else Normalize(vmin=minval, vmax=maxval)
 
@@ -399,8 +398,8 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
-        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
@@ -444,8 +443,8 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
-        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
@@ -469,7 +468,7 @@ class plotting_helper:
         print(f"saving one pixel at {indexes}")
         fig.savefig(os.path.join(OUTPUTPATH, f"{indexes}_{TARGET_REGION}.png"))
 
-    def selectedpixels_in_EU(self, mappingpath):
+    def selectedpixels_in_EU(self, mappingpath, output_filename=None):
         mapping = np.load(mappingpath)
         mapping[mapping == 0] = np.nan
         indices = np.where(~np.isnan(mapping))
@@ -478,8 +477,8 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': projection})
@@ -495,10 +494,15 @@ class plotting_helper:
         ax.coastlines(color='black')
         ax.gridlines(draw_labels=True)
         
-        print(f"saving selected pixels at {TARGET_REGION}")
-        filename = os.path.basename(mappingpath)
-        filename = filename.split(".")[0]
-        fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), f"{filename}.png"))
+        output_path = output_filename
+        if output_path is None:
+            filename = os.path.splitext(os.path.basename(mappingpath))[0]
+            output_path = os.path.join(os.path.dirname(OUTPUTPATH), f"{filename}.png")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        print(f"saving selected pixels at {output_path}")
+        fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        return output_path
 
     def plot_RB(self):
         data = np.zeros((30,30))
@@ -514,8 +518,8 @@ class plotting_helper:
         grid_size = 30
         
 
-        lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))[i:i+grid_size, j:j+grid_size]
-        lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))[i:i+grid_size, j:j+grid_size]
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))[i:i+grid_size, j:j+grid_size]
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))[i:i+grid_size, j:j+grid_size]
         print(lats.shape)
 
         data[data < 0.01] = np.nan
@@ -535,8 +539,8 @@ class plotting_helper:
         i = 195 #195+16
         j = 164 #164+13
         grid_size = 30
-        lons = np.load(os.path.join(os.path.dirname(INPUTPATH), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(INPUTPATH), "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
         points = [[lons[i,j], lats[i,j]], [lons[i,j+grid_size], lats[i,j+grid_size]], [lons[i+grid_size,j+grid_size], lats[i+grid_size,j+grid_size]], [lons[i+grid_size,j], lats[i+grid_size,j]]]
         study_area_polygon = Polygon(points)
         study_area_feature_seine = ShapelyFeature([study_area_polygon], ccrs.PlateCarree(), edgecolor='blue', facecolor='none')
@@ -546,6 +550,8 @@ class plotting_helper:
         fig.savefig(os.path.join(os.path.dirname(OUTPUTPATH), "Seine_30x30.png"))
     
     def plot_predr2(self, obs, sim):
+        from sklearn.metrics import r2_score
+
         # Calculate R2
         r2 = r2_score(obs, sim)
         print(r2)
@@ -575,8 +581,8 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
 
         # Create a figure and an axis with a Cartopy projection
         fig, ax = plt.subplots(figsize=(3.34, 2.6), subplot_kw={'projection': projection})
@@ -606,8 +612,8 @@ class plotting_helper:
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
         # get EU lon lat
-        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
         lons = lons[100:-10,10:-10]
         lats = lats[100:-10,10:-10]
         
@@ -638,8 +644,8 @@ class plotting_helper:
     def EU_2Dmap_wtdtopo(self, data_map, logscale, minval, maxval, title, ax=None, panel_label=None):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
-        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
 
         cmap = plt.get_cmap("viridis") if "water table" in title.lower() else plt.get_cmap("terrain")
 
@@ -681,8 +687,8 @@ class plotting_helper:
     def EU_2Dmap_predictedaccfromstats(self, data_map, logscale, minval, maxval, title, ax=None, panel_label=None):
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
 
-        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
 
         cmap = plt.get_cmap("viridis")
 
@@ -737,8 +743,8 @@ class plotting_helper:
             central_latitude=53
         )
 
-        lons = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lon2D.npy"))
-        lats = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "lat2D.npy"))
+        lons = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
 
         cmap_colors = "viridis" if ("MSE" in title or "Pearson" in title or "KGE" in title or "water" in title or "ias" in title) else "coolwarm"
         cmap = plt.get_cmap(cmap_colors)
@@ -802,8 +808,8 @@ class plotting_helper:
         """
         projection = ccrs.LambertAzimuthalEqualArea(central_longitude=19, central_latitude=53)
         # get EU lon lat
-        lon = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
-        lat = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        lon = np.load(os.path.join(GRIDPATH, "lon2D.npy"))
+        lat = np.load(os.path.join(GRIDPATH, "lat2D.npy"))
 
         years = [2017, 2018, 2019, 2020]
         seasons = ["DJF", "MAM", "JJA", "SON"]

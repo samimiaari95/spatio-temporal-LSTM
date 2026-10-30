@@ -2,3 +2,10 @@ numpy
 pandas
 matplotlib
 torch
+scipy
+scikit-learn
+netCDF4
+h5py
+cartopy
+shapely
+properscoring

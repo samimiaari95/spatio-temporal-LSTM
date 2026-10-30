@@ -1,29 +1,63 @@
 import os
-import logging
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
-logger = logging.getLogger(__name__)
-
 
 def get_root_dir():
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    return str(Path(__file__).resolve().parents[2])
 
-# number of cells
-X = 10 #238
-Y = 10 #240
+
+ROOT_DIR = get_root_dir()
+DATASET_NAME = os.environ.get("SPATIOTEMPORAL_DATASET", "ensemble_mean")
+TARGET_REGION = os.environ.get("SPATIOTEMPORAL_TARGET_REGION", DATASET_NAME)
+SOURCE_REGION = os.environ.get("SPATIOTEMPORAL_SOURCE_REGION", TARGET_REGION)
+INPUTPATH = os.environ.get(
+    "SPATIOTEMPORAL_INPUT_DIR",
+    os.path.join(ROOT_DIR, "inputs", "20yrs_ts", "ensemble_400px", TARGET_REGION),
+)
+FULL_DATA_PATH = os.environ.get(
+    "SPATIOTEMPORAL_FULL_DATA_DIR",
+    os.path.dirname(os.path.dirname(INPUTPATH)),
+)
+GRIDPATH = os.environ.get("SPATIOTEMPORAL_GRID_DIR", FULL_DATA_PATH)
+ENSEMBLE_100PX_INPUT_DIR = os.environ.get(
+    "SPATIOTEMPORAL_100PX_INPUT_DIR",
+    os.path.join(ROOT_DIR, "inputs", "20yrs_ts", "ensemble_100px"),
+)
+ENSEMBLE_400PX_TRAINING_DIR = os.environ.get(
+    "SPATIOTEMPORAL_400PX_TRAINING_DIR",
+    os.path.join(ROOT_DIR, "inputs", "20yrs_ts", "ensemble_400px"),
+)
+OUTPUT_BASE = os.environ.get(
+    "SPATIOTEMPORAL_OUTPUT_DIR",
+    os.path.join(ROOT_DIR, "outputs", "20yrs_ts", "ensemble_400px"),
+)
+
+RAW_DATA_SOURCE = os.environ.get(
+    "SPATIOTEMPORAL_RAW_DATA_SOURCE",
+    os.path.join(ROOT_DIR, "inputs", "raw_archive"),
+)
+RAW_STAGING_PATH = os.path.join(ROOT_DIR, "inputs", "raw")
+
+# number of sampled cells in the supplied training subset
+X = 10
+Y = 10
 NB_CELLS = X*Y
 
 member = int(os.environ.get("ENS_MEMBER", 0))
 
-# study region
-TARGET_REGION = f"ensemble_mean"
-SOURCE_REGION = f"ensemble_mean"
-
-# directory and inputs
-OUTPUTPATH = os.path.join(get_root_dir(), "outputs", "20yrs_ts", "ensemble_400px", TARGET_REGION)
-INPUTPATH = os.path.join(get_root_dir(), "inputs", "20yrs_ts", "ensemble_400px", SOURCE_REGION)
-FEATURES_FILES = ["TOT_PREC.npy", "vpd.npy", "soilmoisture.npy", "slopex.npy", "slopey.npy", "soilind.npy", "lon2D_ts.npy", "lat2D_ts.npy"]
+FEATURES_FILES = [
+    "TOT_PREC.npy",
+    "vpd.npy",
+    "soilmoisture.npy",
+    "slopex.npy",
+    "slopey.npy",
+    "soilind.npy",
+    "lon2D_ts.npy",
+    "lat2D_ts.npy",
+]
 TARGETVAR_FILE = "wtd.npy"
 
 # time period
@@ -44,10 +78,21 @@ LR_STEP_SIZE = 50
 LR_GAMMA = 0.1
 BATCH_SIZE = 1000
 
-# model name
-MODEL_NAME = f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}x{NUM_LAYERS}lr{str(LR_GAMMA).replace('.','')}x{LR_STEP_SIZE}_{LOOKBACK}x{BATCH_SIZE}_prvpdsmxyind" if LR_SCHEDULER else f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.','')}x{NUM_LAYERS}_{LOOKBACK}x{BATCH_SIZE}_prvpdsmxyind"
-logger.warning(f"Check model name: {MODEL_NAME}")
-
+MODEL_NAME = os.environ.get(
+    "SPATIOTEMPORAL_MODEL_NAME",
+    (
+        f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.', '')}x{NUM_LAYERS}"
+        f"lr{str(LR_GAMMA).replace('.', '')}x{LR_STEP_SIZE}_"
+        f"{LOOKBACK}x{BATCH_SIZE}_prvpdsmxyind"
+        if LR_SCHEDULER
+        else f"{NUM_EPOCHS}_{HIDDEN_SIZE}dr{str(DROPOUT).replace('0.', '')}"
+        f"x{NUM_LAYERS}_{LOOKBACK}x{BATCH_SIZE}_prvpdsmxyind"
+    ),
+)
+OUTPUTPATH = os.environ.get(
+    "SPATIOTEMPORAL_MODEL_OUTPUT_DIR",
+    os.path.join(OUTPUT_BASE, TARGET_REGION),
+)
 
 class AwesomeLSTM(nn.Module):
     def __init__(self, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS, DROPOUT):

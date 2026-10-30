@@ -1,12 +1,10 @@
-#import heat as ht
 import numpy as np
 import os
 import glob
-import netCDF4 as nc
 import datetime
-#import SLOTH.sloth.diagnostics
-import SLOTH.sloth.IO
-#import SLOTH.sloth.analysis
+from pathlib import Path
+
+from LSTM_model.model.config import RAW_STAGING_PATH, ROOT_DIR
 
 
 class calculate_soilmoisture:
@@ -14,6 +12,10 @@ class calculate_soilmoisture:
          pass
     
     def calculate_soilmoisture_diag(self, month):
+        import heat as ht
+        import netCDF4 as nc
+        import SLOTH.sloth.diagnostics
+        import SLOTH.sloth.IO
 
         '''
         python VolumetricSoilMoisture_test_separate.py --satur=/p/scratch/cjjsc39/zhang36/ERA5eval/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline_data/tar_file/1997120100/parflow/*satur* 
@@ -45,19 +47,20 @@ class calculate_soilmoisture:
         #parser.add_argument('--griddesFile', type=str, required=True,
         #                    help='Full path to file holding griddefinition for used grid')
 
-        #args = parser.parse_args()
-        #saturFilesPattern = args.satur
-        saturFilesPattern = f"/p/scratch/cslts/miaari1/raw/{month}/*satur*"
-        #porosityFile      = args.porosityFile
-        porosityFile = "/p/scratch/cslts/miaari1/static/porosity.nc"
-        #LLSMFile             = args.LLSMFile
-        LLSMFile = "/p/scratch/cslts/miaari1/static/EUR-11_TSMP_FZJ-IBG3_444x432_LAND-LAKE-SEA-MASK.nc"
-        #griddesFile          = args.griddesFile # should be the txt file
-        griddesFile = "/p/scratch/cslts/miaari1/static/EUR-11_TSMP_FZJ-IBG3_CLMPFLDomain_444x432_griddes.txt"
-        #outDir               = args.outDir
-        outDir = "/p/scratch/cslts/miaari1/soilmoisture/"
-        #saturVarName      = args.saturVarName
+        static_dir = Path(ROOT_DIR) / "inputs" / "static"
+        saturFilesPattern = os.path.join(RAW_STAGING_PATH, month, "*satur*")
+        porosityFile = static_dir / "porosity.nc"
+        LLSMFile = static_dir / "EUR-11_TSMP_FZJ-IBG3_444x432_LAND-LAKE-SEA-MASK.nc"
+        griddesFile = static_dir / "EUR-11_TSMP_FZJ-IBG3_CLMPFLDomain_444x432_griddes.txt"
+        outDir = os.path.join(RAW_STAGING_PATH, "soilmoisture")
         saturVarName = "saturation"
+        required_files = (porosityFile, LLSMFile, griddesFile)
+        missing_files = [str(path) for path in required_files if not path.is_file()]
+        if missing_files:
+            raise FileNotFoundError(
+                "Soil-moisture diagnostics require these files inside inputs/static: "
+                + ", ".join(missing_files)
+            )
 
         # Get environment variables
         author_name      = os.getenv('AUTHOR_NAME')
@@ -78,6 +81,10 @@ class calculate_soilmoisture:
 
         # each script calculate for all the nc file in one folder in one month -- YOU CAN CUSTIMIZE TO YOUR DATASET
         saturFiles   = sorted(glob.glob(saturFilesPattern)) # Full path to ParFlow pressure files for each month (in my case)
+        if not saturFiles:
+            raise FileNotFoundError(
+                f"No saturation files were staged for month {month} under {RAW_STAGING_PATH}."
+            )
 
         # load porosity data as heat
         split=None

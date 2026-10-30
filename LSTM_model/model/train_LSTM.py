@@ -1,122 +1,161 @@
+from __future__ import annotations
+
+import logging
 import os
-import h5py
 import pickle
-import numpy as np
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import torch
+import torch.distributed as distributed
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, Dataset
-from LSTM_model.model.config import *
-from LSTM_model.utils.utils import utilities
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
-class MyDataset(Dataset):
-    def __init__(self, filename):
-        self.datafile = h5py.File(os.path.join(INPUTPATH, filename),'r')
-        self.device = torch.device('cuda')
-    
-    def __len__(self):
-        return self.datafile["target_data"].shape[0]
+from LSTM_model.model.config import (
+    BATCH_SIZE,
+    DROPOUT,
+    HIDDEN_SIZE,
+    INPUT_SIZE,
+    LEARNING_RATE,
+    LR_GAMMA,
+    LR_SCHEDULER,
+    LR_STEP_SIZE,
+    LOOKBACK,
+    MODEL_NAME,
+    NUM_EPOCHS,
+    NUM_LAYERS,
+    OUTPUTPATH,
+    OUTPUT_SIZE,
+    TARGET_REGION,
+    TRAINING_PERIOD,
+    AwesomeLSTM,
+)
+from LSTM_model.model.dataset import (
+    GridSequenceDataset,
+    calculate_training_statistics,
+)
 
-    def __getitem__(self, idx):
-        # all input features in one file of shape (datapoints, lookback, # of features)
-        inputs = self.datafile["input_data"][idx]
-        outputs = self.datafile["target_data"][idx]
-        return torch.from_numpy(inputs).float().to(self.device), torch.from_numpy(outputs).float().to(self.device)
-        
-class train_LSTM_model():
-
-    def train(self):
-        def get_local_rank():
-            """Return the local rank of this process."""
-            return int(os.getenv('LOCAL_RANK'))
-
-        torch.distributed.init_process_group(backend='cpu:gloo,cuda:nccl')
-
-        utils = utilities()
-        # check if GPU available in hardware
-        if torch.cuda.is_available():
-            print(f"GPU: {torch.cuda.get_device_name(0)} is available.")
-        else:
-            print("No GPU available. Training will run on CPU.")
-
-        # make sure to have cuda toolkit or PyTorch with GPU support installed before this step
-        #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        local_rank = get_local_rank()
-
-        device = torch.device('cuda', local_rank)
-
-        torch.cuda.set_device(device)
-
-        # check output directory
-        if not os.path.exists(os.path.join(OUTPUTPATH)):
-            utils.make_dir(os.path.join(OUTPUTPATH))
-
-        # define mean and std dictionary
-        means_stds = {}
-        
-        # prepare input data, standardization, lookback and train time series
-        train_inputs, means_stds = utils.singleregion_inputfeatures(0, TRAINING_PERIOD, means_stds)
-
-        # prepare input data of target variable and standardize
-        obs_stand_train, means_stds = utils.singleregion_targetvar(LOOKBACK, TRAINING_PERIOD, means_stds)
-
-        # save training data mean and std
-        with open(os.path.join(OUTPUTPATH, f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"), 'wb') as f:
-            pickle.dump(means_stds, f)
-        f.close()
-
-        #print("creating dataloader")
-        dataset = TensorDataset(torch.tensor(train_inputs).float().to(device), torch.tensor(obs_stand_train).float().to(device))
-        #dataset = MyDataset("target1d_inputs3d_pointsxlookbackxfeatures.h5")
-
-        #with open(os.path.join(OUTPUTPATH, f"meanstd_{SOURCE_REGION}_{MODEL_NAME}.pkl"), 'rb') as f:
-        #    means_stds = pickle.load(f)
-        #f.close()
+logger = logging.getLogger(__name__)
 
 
-        train_sampler = torch.utils.data.distributed.DistributedSampler(dataset, shuffle=True, seed=0,)
-        
-        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=train_sampler)
-        # initialization
-        lstm_model = AwesomeLSTM(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS, DROPOUT)
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(lstm_model.parameters(), lr=LEARNING_RATE)
-        if LR_SCHEDULER: scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=LR_STEP_SIZE, gamma=LR_GAMMA)
+class train_LSTM_model:
+    def train(self) -> None:
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        world_size = int(os.environ.get("WORLD_SIZE", "1"))
+        use_cuda = torch.cuda.is_available()
+        device = torch.device("cuda", local_rank) if use_cuda else torch.device("cpu")
 
-        lstm_model = lstm_model.to(device) # Move the model to the GPU
-        rank = torch.distributed.get_rank()
-        world_size = torch.distributed.get_world_size()
-        lstm_model = torch.nn.parallel.DistributedDataParallel(
-            lstm_model,
-            device_ids=[rank],
-        )
-        # training
-        print("training")
-        lstm_model.train()
-        epoch_loss = {epoch:[] for epoch in range(NUM_EPOCHS)}
-        for epoch in range(NUM_EPOCHS):
-            train_sampler.set_epoch(epoch)
-            for inputs, y in dataloader:
-                optimizer.zero_grad()
-                y_hat = lstm_model(inputs)
-                loss = criterion(y_hat.flatten(), y)
-                loss.backward()
-                torch.distributed.all_reduce(loss)             
-                loss /= world_size
-                optimizer.step()
-                print(f"epoch: {epoch}, loss={loss.item()}")
-                epoch_loss[epoch].append(loss.item())
-            if LR_SCHEDULER: scheduler.step()
+        initialized_here = False
+        if world_size > 1 and not distributed.is_initialized():
+            backend = "nccl" if use_cuda else "gloo"
+            distributed.init_process_group(backend=backend)
+            initialized_here = True
 
-            # save the trained model
-            torch.save(lstm_model.module.state_dict(), os.path.join(OUTPUTPATH, f'{TARGET_REGION}_{MODEL_NAME}.pt'))
-            print("model saved")
-            # plot epochs vs loss
-            epoch_vs_loss_plot = {k:np.mean(np.array(v)) for k, v in epoch_loss.items()}
-            epoch_plot = plt#.figure().clear()
-            epoch_plot.plot(list(epoch_vs_loss_plot.keys()), list(epoch_vs_loss_plot.values()))
-            epoch_plot.xlabel("Epochs")
-            epoch_plot.ylabel("MSE")
-            epoch_plot.savefig(os.path.join(OUTPUTPATH, f'{TARGET_REGION}_{MODEL_NAME}.png'))
-            print("epoch loss plotted")
-        torch.distributed.destroy_process_group()
+        is_distributed = distributed.is_initialized()
+        rank = distributed.get_rank() if is_distributed else 0
+
+        try:
+            if use_cuda:
+                torch.cuda.set_device(device)
+                logger.info("Training on %s", torch.cuda.get_device_name(device))
+            else:
+                logger.info("Training on CPU")
+
+            os.makedirs(OUTPUTPATH, exist_ok=True)
+            statistics = calculate_training_statistics()
+            output_dir = Path(OUTPUTPATH)
+            stats_path = output_dir / f"meanstd_{TARGET_REGION}_{MODEL_NAME}.pkl"
+            temporary_stats_path = output_dir / f".{stats_path.name}.tmp"
+            if rank == 0:
+                with temporary_stats_path.open("wb") as stream:
+                    pickle.dump(statistics, stream)
+                os.replace(temporary_stats_path, stats_path)
+
+            dataset = GridSequenceDataset(
+                target_start=LOOKBACK,
+                target_end=TRAINING_PERIOD,
+                statistics=statistics,
+            )
+            sampler = DistributedSampler(dataset, shuffle=True, seed=0)
+            dataloader = DataLoader(
+                dataset,
+                batch_size=BATCH_SIZE,
+                shuffle=False,
+                sampler=sampler,
+                pin_memory=use_cuda,
+            )
+
+            model = AwesomeLSTM(
+                INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, NUM_LAYERS, DROPOUT
+            ).to(device)
+            if is_distributed:
+                model = DistributedDataParallel(
+                    model,
+                    device_ids=[local_rank] if use_cuda else None,
+                )
+
+            criterion = nn.MSELoss()
+            optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+            scheduler = (
+                torch.optim.lr_scheduler.StepLR(
+                    optimizer, step_size=LR_STEP_SIZE, gamma=LR_GAMMA
+                )
+                if LR_SCHEDULER
+                else None
+            )
+            epoch_losses: list[float] = []
+
+            for epoch in range(NUM_EPOCHS):
+                sampler.set_epoch(epoch)
+                model.train()
+                batch_losses: list[float] = []
+
+                for inputs, target in dataloader:
+                    inputs = inputs.to(device, non_blocking=use_cuda)
+                    target = target.to(device, non_blocking=use_cuda)
+                    optimizer.zero_grad(set_to_none=True)
+                    prediction = model(inputs).flatten()
+                    loss = criterion(prediction, target)
+                    loss.backward()
+                    optimizer.step()
+
+                    batch_loss = loss.detach().clone()
+                    if is_distributed:
+                        distributed.all_reduce(batch_loss)
+                        batch_loss /= distributed.get_world_size()
+                    batch_losses.append(batch_loss.item())
+
+                epoch_loss = sum(batch_losses) / len(batch_losses)
+                epoch_losses.append(epoch_loss)
+                if scheduler is not None:
+                    scheduler.step()
+
+                if rank == 0:
+                    logger.info(
+                        "Epoch %d/%d - MSE %.6f",
+                        epoch + 1,
+                        NUM_EPOCHS,
+                        epoch_loss,
+                    )
+                    model_path = output_dir / f"{TARGET_REGION}_{MODEL_NAME}.pt"
+                    temporary_model_path = output_dir / f".{model_path.name}.tmp"
+                    torch.save(
+                        model.module.state_dict()
+                        if is_distributed
+                        else model.state_dict(),
+                        temporary_model_path,
+                    )
+                    os.replace(temporary_model_path, model_path)
+
+            if rank == 0:
+                fig, ax = plt.subplots()
+                ax.plot(range(len(epoch_losses)), epoch_losses)
+                ax.set_xlabel("Epochs")
+                ax.set_ylabel("MSE")
+                fig.savefig(output_dir / f"{TARGET_REGION}_{MODEL_NAME}.png")
+                plt.close(fig)
+        finally:
+            if initialized_here and distributed.is_initialized():
+                distributed.destroy_process_group()

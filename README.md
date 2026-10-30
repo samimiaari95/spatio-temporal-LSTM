@@ -1,43 +1,110 @@
-# spatio-temporal-LSTM
-This is the script for spatially training an LSTM model with an example dataset
-## Clone the model
-After cloning the repository, it is necessary to clone within this repository the open source SLOTH repository with the following command
-```
-git clone https://github.com/samimiaari95/spatio-temporal-LSTM.git
-cd spatio-temporal-LSTM
-git clone --recurse-submodules https://github.com/HPSCTerrSys/SLOTH.git
-```
-## Folder structure
-spatio-temporal-LSTM/<br>
-├── LSTM_model/<br>
-│&emsp;&emsp;├── data/<br>
-│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;├── postprocess.py<br>
-│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;├── preprocess.py<br>
-│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;└── rawdataset.py<br>
-│&emsp;&emsp;├── model/<br>
-│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;├── config.py<br>
-│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;├── train_LSTM.py<br>
-│&emsp;&emsp;&nbsp;|&emsp;&emsp;&emsp;└── validate_LSTM.py<br>
-│&emsp;&emsp;└── utils/<br>
-│&emsp;&emsp;&emsp;&emsp;&emsp;&nbsp;&nbsp;├── plot_functions.py<br>
-│&emsp;&emsp;&emsp;&emsp;&emsp;&nbsp;&nbsp;├── utils.py<br>
-│&emsp;&emsp;&emsp;&emsp;&emsp;&nbsp;&nbsp;└── volumetric_soilmoisture.py<br>
-├── inputs<br>
-├── outputs<br>
-├── SLOTH<br>
-├── requirements.txt<br>
-├── README.md<br>
-└── main.py<br>
+# Spatio-temporal LSTM
 
-## Example dataset
-In the input directory exists the input variables for training and evaluating the model. <br>
-The output directory includes the trained model for the respective inputs.<br>
-The config.py is adjusted for the provided example. <br>
-### Run the example
-To run the example install requirements and run the main.py file in addition to the argument for the needed mode as follow:
+This repository contains the stages for preparing the sampled water-table dataset,
+training an LSTM, predicting the held-out period, and calculating evaluation
+metrics and plots. All generated files default to this repository's `inputs/`
+and `outputs/` directories.
+
+## Environment
+
+Install the Python dependencies in `requirements.txt` in the environment used to
+run the pipeline. The raw ParFlow diagnostic conversion additionally requires
+the JSC SLOTH/ParFlow diagnostics modules and their static input files; these
+are not vendored in this repository.
+
+For the supplied JSC environment:
+
+```bash
+source /p/project1/cslts/miaari1/python_scripts/DailyScriptBox/envs/loadenv.JURECA-DCadapted_JUWELS_2025_GCC-OpenMPI_Std-Py-AI.ini
 ```
-python main.py --train # training mode
-python main.py --eval  # validation mode
-python main.py --calc  # calculation  
+
+The default configuration preserves the original 400px `ensemble_mean`
+experiment: it expects 7,300 daily samples for each of the 8 configured feature
+arrays and `wtd.npy`, under `inputs/20yrs_ts/ensemble_400px/ensemble_mean/`.
+The bundled `rand100EU_yravg1mstd_ohe` arrays and 160-unit checkpoint belong to a
+different experiment and are not compatible with these defaults. In particular,
+the default model uses 256 hidden units; retrain it with matching inputs before
+running prediction.
+Set `SPATIOTEMPORAL_INPUT_DIR`, `SPATIOTEMPORAL_OUTPUT_DIR`,
+`SPATIOTEMPORAL_MODEL_OUTPUT_DIR`, `SPATIOTEMPORAL_DATASET`,
+`SPATIOTEMPORAL_MODEL_NAME`, `SPATIOTEMPORAL_TARGET_REGION`, or
+`SPATIOTEMPORAL_SOURCE_REGION` to override the defaults. The figure stages can
+also use `SPATIOTEMPORAL_FULL_DATA_DIR`, `SPATIOTEMPORAL_GRID_DIR`,
+`SPATIOTEMPORAL_100PX_INPUT_DIR`, and
+`SPATIOTEMPORAL_400PX_TRAINING_DIR` for full-domain and ensemble inputs.
+
+## Pipeline
+
+Run commands from the repository root:
+
+```bash
+python main.py --prep
+python main.py --train
+python main.py --predict       # --eval is retained as an alias
+python main.py --calc
+python main.py --figures
 ```
-The provided input data are already preprocessed and ready for training and validation.
+
+`--prep` validates the preprocessed arrays' presence, dimensions, and configured
+time span. Supply the matching preprocessed arrays before running these stages.
+`--train` also performs this validation before training. Training supports CPU,
+one GPU, and distributed launches such as the Slurm script. Prediction uses the
+trained checkpoint and writes `obs_destand_<model>.npy` and
+`sim_destand_<model>.npy`.
+
+To stage files from the local `inputs/raw_archive/` directory (no internet
+download is performed), provide each archive identifier and member path
+explicitly:
+
+```bash
+python main.py --raw \
+  --raw-month 2001010100 \
+  --raw-file parflow/wtd.nc \
+  --raw-file TOT_PREC_ts.nc
+```
+
+The source archive directory is `RAW_DATA_SOURCE` in
+`LSTM_model/model/config.py` and can be overridden with
+`SPATIOTEMPORAL_RAW_DATA_SOURCE`, provided it remains inside the checkout.
+Staged files are written under `inputs/raw/`. This raw-file staging command is
+not a complete raw-to-training-data conversion: the existing soil-moisture
+diagnostic and full-domain feature-selection steps require external static data
+and project-specific inputs that are not present in this checkout.
+
+`--all` runs prepare, train, predict, and the available local evaluation
+calculations in sequence. It assumes prepared input arrays and a usable runtime
+environment. `--calc` calculates single-model metrics and plots.
+`--figures` creates the fit/validation split, ensemble statistics, and CRPS
+intermediates from the stored ensemble predictions before running the existing
+manuscript figure generators. It still requires the full-domain ensemble
+predictions, pixel mappings, training-member mapping, and the 100px ensemble
+inputs used by the comparison figures.
+
+## Figures and analysis
+
+The analysis code is retained in `LSTM_model/data/postprocess.py` and
+`LSTM_model/utils/plot_functions.py`. Existing routines cover Figures 1, 3, and
+5–13 and supplementary Figures S1–S12. Figures 2 and 4 are generated
+externally and have no source generator in this checkout. Figure 3 uses
+`400px_member_0/choices.npy` from the configured 400px training inputs and grid
+coordinates to mark the selected training pixels. Figure S2 reuses the
+EV/KGE-component scatter; S3 and S4 reuse the NSE
+CDF and map; S6 reuses the WTD/topography correlation panels; and S11/S12 are
+generated by the spatial-CV variogram/correlogram routines.
+
+The bundled 100-cell example does not include the ensemble statistics, CRPS
+intermediates, full-domain WTD/topography, or all ensemble masks required by
+`--figures`. The raw stage only stages explicitly requested local archive
+members; it does not create these missing analysis artifacts.
+
+## Layout
+
+```text
+LSTM_model/
+  data/       raw staging, input validation, preprocessing, and postprocessing
+  model/      model configuration, lazy sequence dataset, training, prediction
+  utils/      metric, cross-validation, and plotting helpers
+inputs/       bundled 100-cell example arrays (not the default 400px inputs)
+outputs/      bundled 160-unit example checkpoint (not the default model)
+main.py       command-line stage entry point
+```

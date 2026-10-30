@@ -638,7 +638,9 @@ class postprocess_calculations:
 
         ####### save to csv ########
         df = pd.DataFrame(df_dic)
-        df.to_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"), index=False)
+        statistics_path = os.path.join(OUTPUTPATH, "statistics")
+        os.makedirs(statistics_path, exist_ok=True)
+        df.to_csv(os.path.join(statistics_path, "ensemble_statistics.csv"), index=False)
 
     def kge_investigation(self):
         df = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
@@ -856,7 +858,7 @@ class postprocess_calculations:
     def ensemble_statvsacc_fitting(self):
         ####### old version --- replaced with create_group_figure ##########
         utils = utilities()
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
         xstats = {"std":"exp", "Ensemble variance":"exp", "Pairwise correlation":"lin", "IQR (75-25%)":"exp", "cv":"exp", "mad":"exp"}
         ystats = {"mean_membersobs_correlation": "lin", "mean_membersobs_RMSE": "exp", "mean_membersobs_KGE": "lin", "RMSE":"exp", "Pearson correlation":"lin", "KGE":"lin", "KGE_nobias":"exp", "Absolute mean bias":"exp", "NSE":"lin", "Beta":"exp", "Alpha":"exp", "(Alpha-1)^2":"exp", "(Beta-1)^2":"exp", "(r-1)^2":"exp"}
         plotmapping = {
@@ -1927,13 +1929,15 @@ class postprocess_calculations:
             ("NSE","IQR (75-25%)")
         ]
         stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
-        # self.create_group_figure(stat, comb8, "figure8", ncols=2)
+        os.makedirs(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc"), exist_ok=True)
+        os.makedirs(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc_mad"), exist_ok=True)
+        self.create_group_figure(stat, comb8, "figure8", ncols=2)
         self.create_group_figure(stat, comb9, "figure9", ncols=2)
-        # self.create_group_figure(stat, comb10, "figure10", ncols=2)
-        # self.ensemble_crpsvsstats_fitting() # figure 11
-        # self.create_kge_component_figure(stat, "figureS1")
-        # self.create_group_figure(stat, combB2, "figureS5", ncols=2)
-        # self.create_pairwise_corr_figure(stat, "figureS8")
+        self.create_group_figure(stat, comb10, "figure10", ncols=2)
+        self.ensemble_crpsvsstats_fitting()
+        self.create_kge_component_figure(stat, "figureS1")
+        self.create_group_figure(stat, combB2, "figureS5", ncols=2)
+        self.create_pairwise_corr_figure(stat, "figureS8")
 
     def run_statvsacc_fitting_cv(self):
         comb8 = [
@@ -1958,7 +1962,8 @@ class postprocess_calculations:
             ("NSE","Ensemble variance"),
             ("NSE","IQR (75-25%)")
         ]
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
+        os.makedirs(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc"), exist_ok=True)
         self.create_group_figure_cv(stat, comb8, "figure8", ncols=2)
         self.ensemble_crpsvsstats_fitting() # figure 11
         self.create_pairwise_corr_figure(stat, "figureS9")
@@ -1972,11 +1977,38 @@ class postprocess_calculations:
             # ("Pearson correlation","Ensemble variance"),
             # ("Pearson correlation","IQR (75-25%)")
         ]
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
+        os.makedirs(os.path.join(OUTPUTPATH, "statistics", "fitted_statsvsacc"), exist_ok=True)
         self.create_group_figure_cv_residuals(stat, comb8, "figureS10", ncols=2)
 
+    def generate_figures(self):
+        os.makedirs(os.path.join(OUTPUTPATH, "statistics"), exist_ok=True)
+        self.split_transfersubset_into_fitandvalidate_subsets()
+        self.ensemble_statvsacc()
+        self.preprocess_crps_trainingEU()
+        self.preprocess_crps_transferEU()
+        self.crps_seasonal_trainEU()
+        self.crps_seasonal_transferEU()
+        self.crps_trainingEU()
+        self.crps_transferEU()
+        self.ensemble_crpsvsstats()
+
+        self.plot_map_selectedpixels()
+        self.plot_avg_wtd()
+        self.cdf_EU()
+        self.cdfplot_crps()
+        self.boxplot_seasonal_crps()
+        self.metrics_2D_EU()
+        self.run_statvsacc_fitting()
+        self.run_statvsacc_fitting_cv()
+        self.run_statvsacc_fitting_cv_residuals()
+        self.kgecomponents_vs_EV()
+        self.metrics_vs_topo_combined()
+        self.plot_wtd_topo_combined()
+        self.estimate_acc_from_stats()
+
     def count_pearson_higher06(self):
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
         stat = stat.dropna(subset=["Pearson correlation"])
         stat = stat[stat["Ensemble variance"] >= 100]
         count_higher06 = (stat["Pearson correlation"] > 0.6).sum()
@@ -2051,7 +2083,7 @@ class postprocess_calculations:
         
         #### Transfer & training filtered subsets ####
         EU400px_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
-        EU100px_inpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_100_withcriteria_43226/inputs/20yrs_ts/ensemble_100px", "ensemble_mean")
+        EU100px_inpath = os.path.join(ENSEMBLE_100PX_INPUT_DIR, "ensemble_mean")
         training_subset = np.load(os.path.join(os.path.dirname(os.path.dirname(EU400px_inpath)), "training_subset.npy"))
         training_subset_100px = np.load(os.path.join(os.path.dirname(EU100px_inpath), "target_pixels", "training_subset_ensemble100px.npy"))
         print("Progress: [" + "." * 100 + "]", flush=True)
@@ -2299,6 +2331,16 @@ class postprocess_calculations:
             dpi=300,
             bbox_inches='tight'
         )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figureS3.png"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figureS3.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
 
         plt.close()
 
@@ -2337,6 +2379,18 @@ class postprocess_calculations:
 
         crps = utils.compute_crps_all_pixels(observations=obs, simulations=sims, plot=False)
         np.save(os.path.join(os.path.dirname(OUTPUTPATH), f"crps_100members_onlytransfer.npy"), crps)
+
+    def crps_trainingEU(self):
+        utils = utilities()
+
+        obs = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"obs_ts_trainpixels_{target}.npy")) for target in range(100)]
+        sims = [np.load(os.path.join(os.path.dirname(INPUTPATH), f"target_pixels_{target}", f"sim_99members_ts_trainpixels_{target}.npy")) for target in range(100)]
+
+        obs = np.concatenate(obs, axis=1)
+        sims = np.concatenate(sims, axis=2)
+
+        crps = utils.compute_crps_all_pixels(observations=obs, simulations=sims, plot=False)
+        np.save(os.path.join(os.path.dirname(OUTPUTPATH), "crps_99members_onlytraining.npy"), crps)
 
     def cdfplot_crps(self):
         utils = utilities()
@@ -2403,7 +2457,7 @@ class postprocess_calculations:
         utils = utilities()
         EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
-        EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
+        EU_traininpath = ENSEMBLE_400PX_TRAINING_DIR
         trainmembers_mapping = np.load(os.path.join(EU_traininpath, "mapping_memberstrainpixels.npy"))
         training_mapping = np.load(os.path.join(EU_traininpath, "target_pixels", "training_subset.npy"))
         for target in range(100):
@@ -2431,8 +2485,7 @@ class postprocess_calculations:
         utils = utilities()
         EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
-        EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
-        trainmembers_mapping = np.load(os.path.join(EU_traininpath, "mapping_memberstrainpixels.npy"))
+        EU_traininpath = ENSEMBLE_400PX_TRAINING_DIR
         transfer_mapping = np.load(os.path.join(EU_traininpath, "target_pixels", "transfer_subset.npy"))
         print(f"transfer_mapping sum: {np.sum(transfer_mapping)}")
         for target in range(100):
@@ -2825,19 +2878,17 @@ class postprocess_calculations:
             hspace=0.08
         )
 
-        # plt.savefig(
-        #     os.path.join(OUTPUTPATH, "figure7.png"),
-        #     dpi=300,
-        #     bbox_inches='tight'
-        # )
-
-        # plt.savefig(
-        #     os.path.join(OUTPUTPATH, "figure7.pdf"),
-        #     dpi=300,
-        #     bbox_inches='tight'
-        # )
-
-        plt.close()
+        fig.savefig(
+            os.path.join(OUTPUTPATH, "figure7.png"),
+            dpi=300,
+            bbox_inches="tight",
+        )
+        fig.savefig(
+            os.path.join(OUTPUTPATH, "figure7.pdf"),
+            dpi=300,
+            bbox_inches="tight",
+        )
+        plt.close(fig)
 
         fig, ax = plt.subplots(
             figsize=(3.35, 2.345),
@@ -2864,6 +2915,16 @@ class postprocess_calculations:
 
         plt.savefig(
             os.path.join(OUTPUTPATH, "figureB2.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figureS4.png"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "figureS4.pdf"),
             dpi=300,
             bbox_inches='tight'
         )
@@ -2921,8 +2982,8 @@ class postprocess_calculations:
         # --- data ---
         corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU_onlytransfer()
 
-        topo = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))[0, :, :]
-        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        topo = np.load(os.path.join(FULL_DATA_PATH, "topo.npy"))[0, :, :]
+        wtd = np.load(os.path.join(FULL_DATA_PATH, "wtd.npy"))
         wtd = np.mean(wtd, axis=0)
 
         # mask invalid pixels
@@ -2987,6 +3048,16 @@ class postprocess_calculations:
             dpi=300,
             bbox_inches='tight'
         )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figureS6.pdf"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+        plt.savefig(
+            os.path.join(OUTPUTPATH, "statistics", "figureS6.png"),
+            dpi=300,
+            bbox_inches='tight'
+        )
         plt.close()
 
     def metrics_vs_topo(self):
@@ -2995,10 +3066,10 @@ class postprocess_calculations:
         corr2d, rmse2d, bias2d, kge2d, nse2d = self.map_1Dto2D_EU()
         plot_functions = plotting_helper()
         #### for topography #####
-        topo_v1 = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))
+        topo_v1 = np.load(os.path.join(FULL_DATA_PATH, "topo.npy"))
         topo_v1 = topo_v1[0,:,:]
         #### for wtd #####
-        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        wtd = np.load(os.path.join(FULL_DATA_PATH, "wtd.npy"))
         wtd = np.mean(wtd, axis=0)  # average wtd over time
 
         topo = topo_v1
@@ -3136,8 +3207,8 @@ class postprocess_calculations:
         plot_functions = plotting_helper()
         EU_inpath = os.path.join(os.path.dirname(INPUTPATH), "ensemble_mean")
         EU_outpath = os.path.join(os.path.dirname(OUTPUTPATH), "ensemble_mean")
-        EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
-        rollsubset = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "mapping_0stdroll6months.npy"))
+        EU_traininpath = ENSEMBLE_400PX_TRAINING_DIR
+        rollsubset = np.load(os.path.join(FULL_DATA_PATH, "mapping_0stdroll6months.npy"))
         training_subset = np.load(os.path.join(os.path.dirname(INPUTPATH), "target_pixels", "training_subset.npy"))
         iqrmap = np.zeros(rollsubset.shape)
         iqrmap[iqrmap==0] = np.nan
@@ -3433,9 +3504,16 @@ class postprocess_calculations:
 
     def plot_map_selectedpixels(self):
         plot_functions = plotting_helper()
-        EU_traininpath = os.path.join("/p/project1/cslts/miaari1/python_scripts/fork/train_400_withcriteria_43226/inputs/20yrs_ts", "ensemble_400px")
-        mappingfile = os.path.join(EU_traininpath, f"400px_member_0", "choices.npy")
-        plot_functions.selectedpixels_in_EU(mappingpath=mappingfile)
+        mappingfile = os.path.join(
+            ENSEMBLE_400PX_TRAINING_DIR,
+            "400px_member_0",
+            "choices.npy",
+        )
+        output_path = os.path.join(OUTPUTPATH, "figure3.png")
+        return plot_functions.selectedpixels_in_EU(
+            mappingpath=mappingfile,
+            output_filename=output_path,
+        )
 
     def wtd_vs_acc(self):
         utils = utilities()
@@ -3548,7 +3626,7 @@ class postprocess_calculations:
         plot_functions = plotting_helper()
         # wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "topo.npy"))
         # print(wtd.shape)
-        wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
+        wtd = np.load(os.path.join(FULL_DATA_PATH, "wtd.npy"))
         wtd = np.mean(wtd[-365:,:,:], axis=0)
 
         # exclude sides
@@ -3570,7 +3648,7 @@ class postprocess_calculations:
     def plot_wtd_topo_combined(self):
         plot_functions = plotting_helper()
 
-        base_path = os.path.dirname(os.path.dirname(INPUTPATH))
+        base_path = FULL_DATA_PATH
 
         # --- Load Topography ---
         topo = np.load(os.path.join(base_path, "topo.npy"))
@@ -3708,7 +3786,7 @@ class postprocess_calculations:
         plot_functions.logscales_histogram(ev_nse, "Ensemble variance", "NSE < 0.2", nbbins=30, title="Ensemble variance vs NSElessthan02")
 
     def kgecomponents_vs_EV(self):
-        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics_mad.csv"))
+        stat = pd.read_csv(os.path.join(OUTPUTPATH, "statistics", "ensemble_statistics.csv"))
         
         ev = stat["Ensemble variance"].values
         kge = stat["KGE"].values
@@ -3740,6 +3818,9 @@ class postprocess_calculations:
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "figureA2.eps"), dpi=300)
         plt.savefig(os.path.join(OUTPUTPATH, "statistics", "figureA2.pdf"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "figureS2.eps"), dpi=300)
+        plt.savefig(os.path.join(OUTPUTPATH, "statistics", "figureS2.pdf"), dpi=300)
+        plt.close()
     
     def inputvars_plot(self):
         plot_functions = plotting_helper()

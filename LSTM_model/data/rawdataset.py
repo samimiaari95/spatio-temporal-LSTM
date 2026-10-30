@@ -1,74 +1,98 @@
-import tarfile
 import os
+import shutil
+import tarfile
 import numpy as np
-import argparse
-from SLOTH.sloth.IO import readSa
-from LSTM_model.utils.utils import utilities
-from LSTM_model.utils.plot_functions import plotting_helper
+from pathlib import Path, PurePosixPath
 #from LSTM_model.utils.volumetric_soilmoisture import calculate_soilmoisture
 from LSTM_model.model.config import *
 
 
 class preprocess_rawdata:
-    def __init__(self) -> None:
-        pass
+    def stage_files(self, months, filenames):
+        if not months or not filenames:
+            raise ValueError("At least one archive month and one member path are required.")
+
+        staged_files = []
+        for month in months:
+            if not month.isdigit():
+                raise ValueError(f"Archive month must contain digits only: {month!r}")
+            archive_path = Path(RAW_DATA_SOURCE) / f"{month}.tar"
+            if not archive_path.is_file():
+                raise FileNotFoundError(f"Raw archive not found: {archive_path}")
+            destination_dir = Path(RAW_STAGING_PATH) / month
+            destination_dir.mkdir(parents=True, exist_ok=True)
+
+            with tarfile.open(archive_path, "r:*") as archive:
+                used_destinations = set()
+                for filename in filenames:
+                    member_path = PurePosixPath(filename)
+                    if (
+                        member_path.is_absolute()
+                        or not member_path.parts
+                        or any(part in {"", ".", ".."} for part in member_path.parts)
+                    ):
+                        raise ValueError(f"Invalid archive member path: {filename!r}")
+
+                    archive_member = PurePosixPath(month, *member_path.parts).as_posix()
+                    source = archive.extractfile(archive_member)
+                    if source is None:
+                        raise FileNotFoundError(
+                            f"Archive member {archive_member!r} is missing from "
+                            f"{archive_path}."
+                        )
+                    destination = destination_dir / member_path.name
+                    if destination in used_destinations:
+                        raise ValueError(
+                            f"Multiple archive members would overwrite {destination}."
+                        )
+                    used_destinations.add(destination)
+                    with source, destination.open("wb") as output:
+                        shutil.copyfileobj(source, output)
+                    staged_files.append(str(destination))
+
+        return staged_files
 
     def extract_file_from_tar(self, filename, month):
-        utils = utilities()
-        # filename example: "parflow/wtd.nc"
-        source_path = "/p/largedata2/detectdata/CentralDB/projects/d02/working_directory/sim/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline/postpro/ProductionV1"
-        dst_path = "/p/scratch/cslts/miaari1/raw"
-        files = [file for file in os.listdir(source_path) if f"{month}.tar" in file]
-        files.sort()
-        tarname = f"{month}.tar"
-        utils.make_dir(os.path.join(dst_path, month))
-        
-        with tarfile.open(os.path.join(source_path, tarname), 'r:') as tar:
-            filedata = tar.extractfile(f'{month}/{filename}')
-
-            # --------------------- save file ---------------------------
-            with open(os.path.join(dst_path, month, f"{filename.split('/')[-1]}"), "wb") as outfile:
-                outfile.write(filedata.read())
-            outfile.close()
-        tar.close()
-
+        return self.stage_files([month], [filename])[0]
 
     def extract_tar(self, file_timesteps, month):
-        utils = utilities()
-        volumetric_soilmoisture = calculate_soilmoisture()
-        source_path = "/p/largedata2/detectdata/CentralDB/projects/d02/working_directory/sim/DETECT_EUR-11_ECMWF-ERA5_evaluation_r1i1p1_FZJ-COSMO5-01-CLM3-5-0-ParFlow3-12-0_v1Baseline/postpro/ProductionV1"
-        dst_path = "/p/scratch/cslts/miaari1/raw"
-        files = [file for file in os.listdir(source_path) if f"{month}.tar" in file]#if int(file.split(".")[0])>2001013000 and int(file.split(".")[0])<2001030100 and file.endswith(".tar")]
-        files.sort() #2011010100
+        from LSTM_model.utils.volumetric_soilmoisture import calculate_soilmoisture
 
-        for file in files:
-            print(file)
-            #month = file.split(".tar")[0]
-            if not os.path.exists(os.path.join(dst_path, month)):
-                os.mkdir(os.path.join(dst_path, month))
+        if not month.isdigit():
+            raise ValueError(f"Archive month must contain digits only: {month!r}")
+        destination = Path(RAW_STAGING_PATH) / month
+        destination.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(Path(RAW_DATA_SOURCE) / f"{month}.tar", "r:*") as archive:
+            for timestep in file_timesteps:
+                if (
+                    any(
+                        marker in month
+                        for marker in ("040100", "060100", "090100", "110100")
+                    )
+                    and "2977" in timestep
+                ):
+                    continue
+                if "020100" in month and any(
+                    marker in timestep for marker in ("2785", "2881", "2977")
+                ):
+                    continue
+                member_path = (
+                    PurePosixPath(month)
+                    / "parflow"
+                    / f"ParFlow_EU11_{month}.out.{timestep}"
+                )
+                source = archive.extractfile(member_path.as_posix())
+                if source is None:
+                    raise FileNotFoundError(
+                        f"Archive member {member_path} is missing for {month}."
+                    )
+                with source, (destination / member_path.name).open("wb") as output:
+                    output.write(source.read())
 
-            with tarfile.open(os.path.join(source_path, file), 'r:') as tar:
-                for file_timestep in file_timesteps:
-                    if ("040100" in month or "060100" in month or "090100" in month or "110100" in month) and ("2977" in file_timestep):
-                        continue
-                    if ("2785" in file_timestep or "2881" in file_timestep or "2977" in file_timestep) and ("020100" in month):
-                        continue
-
-                    img_file = tar.extractfile(f'{month}/parflow/ParFlow_EU11_{month}.out.{file_timestep}')
-                    
-                    # --------------------- save file ---------------------------
-                    with open (os.path.join(dst_path, month, f"ParFlow_EU11_{month}.out.{file_timestep}"), "wb") as outfile:
-                        outfile.write(img_file.read())
-                    outfile.close()
-            tar.close()
-            # calculate soil moisture
-            # use heat environment from diagnostics, without any modification. just comment in this script the not installed libraries 
-            volumetric_soilmoisture.calculate_soilmoisture_diag(month)
-            # delete saturation files
-            utils.delete_files(os.path.join(dst_path, month), "saturation")
+        calculate_soilmoisture().calculate_soilmoisture_diag(month)
 
     def extract_calc_soilmoisture(self, month):
-        exdir = "/p/scratch/cslts/miaari1/2001010100/parflow/"
+        exdir = os.path.join(RAW_STAGING_PATH, month)
         filenames = [x.split(".out.")[-1] for x in os.listdir(exdir) if "_saturation.nc" in x]
         filenames.sort()
         self.extract_tar(file_timesteps=filenames, month=month)
@@ -91,9 +115,11 @@ class preprocess_rawdata:
         return np.array(daily_data)
 
     def preprocess_matrix_sm(self, month):
+        from LSTM_model.utils.utils import utilities
+
         utils = utilities()
-        dirpath = "/p/scratch/cslts/miaari1/soilmoisture"
-        outpath = "/p/scratch/cslts/miaari1/raw"
+        dirpath = os.path.join(RAW_STAGING_PATH, "soilmoisture")
+        outpath = RAW_STAGING_PATH
         #months = os.listdir("/p/scratch/cslts/miaari1/detect/raw")
         #for month in months:
         monthfiles = [x for x in os.listdir(dirpath) if f"{month}" in x]
@@ -118,8 +144,10 @@ class preprocess_rawdata:
 
 
     def preprocess_matrix(self, month):
+        from LSTM_model.utils.utils import utilities
+
         utils = utilities()
-        outpath = "/p/scratch/cslts/miaari1/raw"
+        outpath = RAW_STAGING_PATH
         # define variables filenames
         subsurfstor = "subSurfStor.nc"
         tasmax = "TMAX_2M_ts.nc"
@@ -174,22 +202,29 @@ class preprocess_rawdata:
             np.save(outfile, data)
 
     def savelonlat(self):
+        from LSTM_model.utils.utils import utilities
+
         utils = utilities()
         outdir = os.path.join(get_root_dir(), "inputs")
-        lon2D = utils.read_nc(filepath="/p/oldscratch/cslts/miaari1/detect/raw/2001010100/wtd.nc", var="lon")
-        lat2D = utils.read_nc(filepath="/p/oldscratch/cslts/miaari1/detect/raw/2001010100/wtd.nc", var="lat")
+        wtd_path = os.path.join(RAW_STAGING_PATH, "2001010100", "wtd.nc")
+        lon2D = utils.read_nc(filepath=wtd_path, var="lon")
+        lat2D = utils.read_nc(filepath=wtd_path, var="lat")
         np.save(os.path.join(outdir, "lon2D.npy"), np.array(lon2D))
         np.save(os.path.join(outdir, "lat2D.npy"), np.array(lat2D))
 
     def sa_to_npy(self):
+        from SLOTH.sloth.IO import readSa
+
         filepath = os.path.join(os.path.dirname(INPUTPATH), "EUR-11_TSMP_FZJ-IBG3_CLMPFLDomain_444x432_YSLOPE_TPS_HydroRIVER_sea_streams_corr.sa")
         ind = readSa(filepath)
         ind = ind[0,:,:]
         np.save(os.path.join(os.path.dirname(INPUTPATH), "slopey.npy"), ind)
 
     def preprocess_raw_vpd(self):
+        from LSTM_model.utils.utils import utilities
+
         utils = utilities()
-        outpath = "/p/scratch/cslts/miaari1/raw"
+        outpath = RAW_STAGING_PATH
         rh = "RELHUM_2M_ts.nc"
         t = "T_2M_ts.nc"
 
@@ -219,6 +254,8 @@ class preprocess_rawdata:
             np.save(outfile, data)
     
     def avgwtd_2020(self):
+        from LSTM_model.utils.plot_functions import plotting_helper
+
         plots = plotting_helper()
         wtd = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "wtd.npy"))
         mapping = np.load(os.path.join(os.path.dirname(os.path.dirname(INPUTPATH)), "ensemble_400px_org", "mapping_0stdroll6months.npy"))
