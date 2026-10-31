@@ -1,14 +1,18 @@
 #!/bin/bash -x
+# author: Sami Miaari
+# e-mail: s.miaari@fz-juelich.de
 
 #SBATCH --job-name=statsmap_postprocess
-#SBATCH --account=xxx
+#SBATCH --account=xxxx
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
-#SBATCH --partition=dc-cpu
-#SBATCH --time=04:00:00
+#SBATCH --cpus-per-task=32
+#SBATCH --partition=batch
+#SBATCH --time=18:00:00
 #SBATCH --output=/p/project1/cslts/miaari1/python_scripts/global_TL/spatio-temporal-LSTM/outputs/EU_74_-48_69_20/statisticsEUmap/logs/postprocess_%j.out
 #SBATCH --error=/p/project1/cslts/miaari1/python_scripts/global_TL/spatio-temporal-LSTM/outputs/EU_74_-48_69_20/statisticsEUmap/logs/postprocess_%j.err
+#SBATCH --mail-user=s.miaari@fz-juelich.de
+#SBATCH --mail-type=ALL
 
 set -euo pipefail
 
