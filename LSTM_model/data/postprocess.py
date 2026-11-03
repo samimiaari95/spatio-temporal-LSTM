@@ -5290,8 +5290,136 @@ class postprocess_calculations:
                             "era5wtd_vs_localobs", "statistics_anom", "performance_metrics_anom_top1member.csv"), index=False)
         # df_stat.to_csv(os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", "ensemble_mean",
         #                 "era5wtd_vs_localobs", "statistics_anom", "ensemble_statistics_anom.csv"), index=False)
-    
 
+    def map_statistics(self):
+        run_dir = os.path.join(
+            OUTPUTPATH,
+            "statisticsEUmap",
+            "run_preprocess_14337357_20261029_182710",
+        )
+        predictions_dir = os.path.join(run_dir, "predictions")
+        metadata_dir = os.path.join(run_dir, "metadata")
+        std_predictions = np.load(
+            os.path.join(predictions_dir, "daily_wtd_ensemble_std.npy"),
+            mmap_mode="r",
+            allow_pickle=False,
+        )
+        selected_pixels = np.load(
+            os.path.join(metadata_dir, "selected_pixels.npy"),
+            allow_pickle=False,
+        )
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"), allow_pickle=False)
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"), allow_pickle=False)
+
+        if std_predictions.ndim != 2:
+            raise ValueError(
+                "Ensemble standard deviations must have shape (time, selected_pixel); "
+                f"got {std_predictions.shape}."
+            )
+        if selected_pixels.shape != (std_predictions.shape[1], 2):
+            raise ValueError(
+                "Selected-pixel metadata does not match the prediction array: "
+                f"{selected_pixels.shape} versus {std_predictions.shape[1]} pixels."
+            )
+        if lons.shape != lats.shape:
+            raise ValueError(
+                f"Longitude and latitude grids differ in shape: {lons.shape} "
+                f"versus {lats.shape}."
+            )
+        if not np.issubdtype(selected_pixels.dtype, np.integer):
+            raise ValueError("Selected-pixel coordinates must be integers.")
+        if (
+            np.any(selected_pixels[:, 0] < 0)
+            or np.any(selected_pixels[:, 0] >= lons.shape[0])
+            or np.any(selected_pixels[:, 1] < 0)
+            or np.any(selected_pixels[:, 1] >= lons.shape[1])
+        ):
+            raise ValueError("Selected-pixel coordinates fall outside the map grid.")
+        if std_predictions.shape[0] == 0:
+            raise ValueError("No ensemble predictions are available to map.")
+
+        # The saved standard deviations are computed across members for each day.
+        # Square them and average over days without loading the full time series.
+        variance_sum = np.zeros(std_predictions.shape[1], dtype=np.float64)
+        time_batch_size = 64
+        for time_start in range(0, std_predictions.shape[0], time_batch_size):
+            time_end = min(time_start + time_batch_size, std_predictions.shape[0])
+            std_block = np.asarray(
+                std_predictions[time_start:time_end], dtype=np.float64
+            )
+            if not np.isfinite(std_block).all():
+                raise ValueError(
+                    f"Non-finite ensemble standard deviations in time steps "
+                    f"{time_start}:{time_end}."
+                )
+            np.square(std_block, out=std_block)
+            variance_sum += np.sum(std_block, axis=0)
+        mean_variance = variance_sum / std_predictions.shape[0]
+
+        variance_map = np.full(lons.shape, np.nan, dtype=np.float32)
+        variance_map[selected_pixels[:, 0], selected_pixels[:, 1]] = mean_variance
+        if not np.isfinite(variance_map[selected_pixels[:, 0], selected_pixels[:, 1]]).all():
+            raise ValueError("The mean ensemble variance map contains non-finite values.")
+
+        maps_dir = os.path.join(run_dir, "maps")
+        plots_dir = os.path.join(run_dir, "plots")
+        os.makedirs(maps_dir, exist_ok=True)
+        os.makedirs(plots_dir, exist_ok=True)
+        np.save(
+            os.path.join(maps_dir, "mean_ensemble_variance_2017_2020.npy"),
+            variance_map,
+        )
+
+        valid_idx = np.where(np.isfinite(variance_map))
+        if valid_idx[0].size == 0:
+            raise ValueError("No finite pixels are available to plot.")
+        positive_variances = variance_map[
+            np.isfinite(variance_map) & (variance_map > 0)
+        ]
+        if positive_variances.size == 0:
+            raise ValueError("Logarithmic normalization requires positive variance values.")
+        vmin = float(np.min(positive_variances))
+        vmax = float(np.max(positive_variances))
+        if vmin == vmax:
+            vmax = float(np.nextafter(vmax, np.inf))
+        norm = plt.matplotlib.colors.LogNorm(vmin=vmin, vmax=vmax)
+
+        projection = ccrs.LambertAzimuthalEqualArea(
+            central_longitude=19,
+            central_latitude=53,
+        )
+        fig, ax = plt.subplots(
+            figsize=(12, 9),
+            subplot_kw={"projection": projection},
+            constrained_layout=True,
+        )
+        mesh = ax.pcolormesh(
+            lons,
+            lats,
+            variance_map,
+            cmap="viridis",
+            norm=norm,
+            transform=ccrs.PlateCarree(),
+            shading="auto",
+        )
+        ax.coastlines()
+        ax.gridlines(draw_labels=True)
+        ax.set_title("Mean ensemble variance, 2017-2020")
+        colorbar = fig.colorbar(
+            mesh,
+            ax=ax,
+            orientation="vertical",
+            fraction=0.046,
+            pad=0.04,
+        )
+        colorbar.set_label("Mean ensemble variance (WTD squared)")
+        figure_path = os.path.join(
+            plots_dir, "mean_ensemble_variance_2017_2020.png"
+        )
+        fig.savefig(figure_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved ensemble variance map to {figure_path}")
+        return variance_map
 
     def postprocess_era5wtd_vs_obs(self):
         # self.calc_anomalies_from_sim_claude()
@@ -5301,7 +5429,7 @@ class postprocess_calculations:
         # self.fit_ensvar_rmse_r()
         # self.onepoint_distribution()
         # self.eval_era5wtd_obswtd_tsmpwtd() # magnitude comparison
-        self.eval_era5wtd_obswtd_tsmpwtd_anomalies() # anomalies comparison
+        # self.eval_era5wtd_obswtd_tsmpwtd_anomalies() # anomalies comparison
         # self.cdf_metrics_era5_vs_tsmp_anomalies()
 
         # self.evaluate_members_rmse_pearson(members_filepath=os.path.join(OUTPUTPATH, "validation_ERA5", "ensemble_400px", 
@@ -5369,3 +5497,5 @@ class postprocess_calculations:
         # self.plot2Dmaps_adaptedtoma_tsmp_original_wtd_vs_obs_anomalies() # compare TSMP anomalies with obs
         # self.boxplots_errormaps_TSMP_vs_ERALSTM_vs_obs()
         # self.errormaps_TSMP_vs_ERALSTM_vs_obs()
+
+        self.map_statistics()
