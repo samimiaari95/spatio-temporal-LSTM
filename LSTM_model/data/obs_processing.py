@@ -2,7 +2,10 @@ import os
 import math
 import numpy as np
 import pandas as pd
+import h5py
 from datetime import datetime
+from LSTM_model.utils.utils import utilities
+from LSTM_model.utils.plot_functions import plotting_helper
 from pyproj import Transformer
 from LSTM_model.model.config import *
 
@@ -101,6 +104,13 @@ class obs_processing:
         rows, cols = np.where(target_map == 1)
         flat_idx = np.flatnonzero((rows == yindex) & (cols == xindex))[0]
         return target, flat_idx
+    
+    def find_flatidx_from_2Dindices(self, yindex, xindex):
+        obs_map = np.load(os.path.join(INPUTPATH, "mapping_wtdobs_YMA.npy"))
+        # find the 1d index within this target
+        rows, cols = np.where(obs_map == 1)
+        flat_idx = np.flatnonzero((rows == yindex) & (cols == xindex))[0]
+        return flat_idx
 
     def mapping_localobs_TSMPproj_v1(self):
         # load local observations
@@ -1440,8 +1450,9 @@ class obs_processing:
         for country in os.listdir(dirobsde):
             dircountry = os.path.join(dirobsde, country)
             print(country)
-            if "Bayern" in country or "Wuerttemberg" in country:
-                continue # should correct elevations manually
+            # bayern and wuerttemberg are included when working with anomalies
+            # if "Bayern" in country or "Wuerttemberg" in country:
+            #     continue # should correct elevations manually
             if os.path.isdir(dircountry):
                 datapath = os.path.join(dircountry, "p.data.monthly_averaged_WTD_measured_data", os.listdir(os.path.join(dircountry, "p.data.monthly_averaged_WTD_measured_data"))[0], "2000_2015_monthly")
                 # read txt as a dataframe
@@ -1450,6 +1461,7 @@ class obs_processing:
 
                 for file in os.listdir(datapath):
                     if file.endswith('.csv'):
+                        # Hessen, Sachsen_iDA and Rheinland_Pfalz are all included with corrected and wrong elevations when working with anomalies
                         # check modified date of elevation corrected files, should be after 2026-01-01:
                         if ("Hessen" in country or "Sachsen_iDA" in country or "Rheinland_Pfalz" in country) and os.path.getmtime(os.path.join(datapath, file)) < datetime(2026,1,1).timestamp():
                             continue
@@ -1460,7 +1472,7 @@ class obs_processing:
                         obsdf[colname] = wtddata
                         print(f"added well {wellindex} for country Germany")
         print(obsdf)
-        obsdf.to_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU_monthly.parquet"), index=False)
+        obsdf.to_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU_monthly_incorrect_elevations.parquet"), index=False)
 
     def find_mindistance_pointobs_to_grid(self, lon, lat):
         """
@@ -1504,7 +1516,7 @@ class obs_processing:
 
     def maptoTSMP_averageduplicates(self):
         # keep all columns except well id
-        df_eu = pd.read_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU_monthly.parquet"))
+        df_eu = pd.read_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU_monthly_incorrect_elevations.parquet"))
         locations = pd.DataFrame(columns=['country', 'lon', 'lat', 'tsmp_lon', 'tsmp_lat', 'tsmp_xindex', 'tsmp_yindex', 'target_chunk', 'sim_1darrayindex'])
         for column in df_eu.columns:
             country = column.split("_")[0]
@@ -1554,6 +1566,72 @@ class obs_processing:
         print("Final mapped dataframe columns:")
         print(df_eu.columns)
         print(df_eu)
-        df_eu.to_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU_monthly_avgdup.parquet"), index=False)
+        df_eu.to_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU_monthly_avgdup_incorrect_elevations.parquet"), index=False)
         print(locations)
-        locations.to_csv(os.path.join(os.path.join(INPUTPATH, "localobservations"), "mapping_wtdobsEU_TSMP_avgdup.csv"), index=False)
+        locations.to_csv(os.path.join(os.path.join(INPUTPATH, "localobservations"), "mapping_wtdobsEU_TSMP_avgdup_incorrect_elevations.csv"), index=False)
+    
+    def tsmpindicesofallobs(self):
+        df_eu = pd.read_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU_monthly.parquet"))
+        locations = pd.DataFrame(columns=['tsmp_xindex', 'tsmp_yindex'])
+        for column in df_eu.columns:
+            lon = float(column.split("LON")[1].split("LAT")[0])
+            lat = float(column.split("LAT")[1])
+            yindex, xindex, tsmp_lon, tsmp_lat = self.find_mindistance_pointobs_to_grid(lon, lat)
+            locations = pd.concat([locations, pd.DataFrame([{
+                'tsmp_xindex': xindex,
+                'tsmp_yindex': yindex
+            }])], ignore_index=True)
+        print(locations)
+        locations["xy"] = locations.apply(lambda row: f"{row['tsmp_xindex']}_{row['tsmp_yindex']}", axis=1)
+        print(locations)
+        locations.drop_duplicates(subset=['xy'], inplace=True)
+        locations.reset_index(inplace=True, drop=True)
+        print(locations)
+        # locations.to_csv(os.path.join(os.path.join(INPUTPATH, "localobservations"), "tsmp_indices_of_all_obs.csv"), index=False)
+    
+    def additional_obs(self):
+        obsfilepath = os.path.join(os.path.dirname(get_root_dir()), "grid_measured_wtd_a_data_1996_2016_EUR11_YM_v_20210407.nc")
+        with h5py.File(obsfilepath, "r") as f:
+            obswtda = f["wtd_a"][()]
+            h5py.File.close(f)
+        print(obswtda.shape)
+        indices = np.where(~np.isnan(np.nanmean(obswtda, axis=0)))
+        print(obswtda[0, 351, 258])
+        print(obswtda[0, 154, 161])
+
+        # expand dimensions to match map2d shape
+        output = np.full((252, 432, 444), np.nan, dtype=obswtda.dtype)
+        # Compute offsets to center the data
+        row_offset = (432 - 412) // 2   # 10
+        col_offset = (444 - 424) // 2   # 10
+        output[
+            :,
+            row_offset:row_offset+412,
+            col_offset:col_offset+424
+        ] = obswtda
+        print(output.shape)
+        np.save(os.path.join(INPUTPATH, "wtd_obsEU_YMA_1996_2016.npy"), output)
+    
+    def obs_lonlat_area(self):
+        plots = plotting_helper()
+        obsfilepath = os.path.join(os.path.dirname(get_root_dir()), "grid_measured_wtd_a_data_1996_2016_EUR11_YM_v_20210407.nc")
+        with h5py.File(obsfilepath, "r") as f:
+            lon = f["lon"][()]
+            lat = f["lat"][()]
+            obswtda = f["wtd_a"][()]
+            h5py.File.close(f)
+        print(lon.shape)
+        print(lat.shape)
+        # expand dimensions to match map2d shape
+        output = np.full((252, 432, 444), np.nan, dtype=obswtda.dtype)
+        # Compute offsets to center the data
+        row_offset = (432 - 412) // 2   # 10
+        col_offset = (444 - 424) // 2   # 10
+        output[
+            :,
+            row_offset:row_offset+412,
+            col_offset:col_offset+424
+        ] = obswtda
+        obswtda = np.mean(output, axis=0)
+
+        plots.zoomed2Dmap_adaptedtoma(obswtda, False, np.min(obswtda), np.max(obswtda), "wtda obs")
