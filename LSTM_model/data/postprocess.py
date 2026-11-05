@@ -5421,6 +5421,196 @@ class postprocess_calculations:
         print(f"Saved ensemble variance map to {figure_path}")
         return variance_map
 
+    def map_statistics_TSMPinputs(self):
+        chunksmap = np.load(os.path.join(INPUTPATH, "chunksmap.npy"))
+        tsmp_dir = os.path.join(
+            os.path.dirname(os.path.dirname(get_root_dir())),
+            "spatio-temporal-LSTM",
+            "outputs",
+            "20yrs_ts",
+            "ensemble_400px",
+        )
+        run_dir = os.path.join(
+            OUTPUTPATH,
+            "statisticsEUmap",
+            "run_preprocess_14337357_20261029_182710",
+        )
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"), allow_pickle=False)
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"), allow_pickle=False)
+
+        if chunksmap.ndim != 2 or chunksmap.shape != lons.shape:
+            raise ValueError(
+                "The TSMP chunk map must match the two-dimensional longitude grid: "
+                f"{chunksmap.shape} versus {lons.shape}."
+            )
+        if lons.shape != lats.shape:
+            raise ValueError(
+                f"Longitude and latitude grids differ in shape: {lons.shape} "
+                f"versus {lats.shape}."
+            )
+        if not (
+            np.issubdtype(chunksmap.dtype, np.integer)
+            or np.issubdtype(chunksmap.dtype, np.floating)
+        ):
+            raise ValueError("The TSMP chunk map must contain integer or floating-point IDs.")
+        if np.isinf(chunksmap).any():
+            raise ValueError("The TSMP chunk map must not contain infinite values.")
+        finite_chunk_ids = chunksmap[np.isfinite(chunksmap)]
+        if (
+            finite_chunk_ids.size == 0
+            or np.any(finite_chunk_ids != np.floor(finite_chunk_ids))
+            or not np.array_equal(np.unique(finite_chunk_ids), np.arange(100))
+        ):
+            raise ValueError("The TSMP chunk map must contain chunk IDs 0 through 99.")
+
+        member_files = []
+        expected_chunk_ids = set(range(100))
+        for member in range(100):
+            member_dir = os.path.join(tsmp_dir, f"400px_member_{member}")
+            if not os.path.isdir(member_dir):
+                raise FileNotFoundError(
+                    f"Missing TSMP ensemble member directory: {member_dir}"
+                )
+            chunk_files = {}
+            for prediction_path in glob.glob(os.path.join(member_dir, "sim*.npy")):
+                filename = os.path.splitext(os.path.basename(prediction_path))[0]
+                try:
+                    chunk_id = int(filename.rsplit("_", 1)[1])
+                except (IndexError, ValueError) as exc:
+                    raise ValueError(
+                        f"Cannot determine the chunk ID from {prediction_path}."
+                    ) from exc
+                if chunk_id in chunk_files:
+                    raise ValueError(
+                        f"Duplicate predictions for chunk {chunk_id} in {member_dir}."
+                    )
+                chunk_files[chunk_id] = prediction_path
+            if set(chunk_files) != expected_chunk_ids:
+                raise ValueError(
+                    f"Expected predictions for chunks 0 through 99 in {member_dir}; "
+                    f"found {len(chunk_files)} distinct chunk IDs."
+                )
+            member_files.append(chunk_files)
+
+        variance_map = np.full(lons.shape, np.nan, dtype=np.float32)
+        number_of_days = None
+        time_batch_size = 16
+        for chunk_id in range(100):
+            pixel_indices = np.where(chunksmap == chunk_id)
+            number_of_pixels = pixel_indices[0].size
+            if number_of_pixels == 0:
+                raise ValueError(f"Chunk {chunk_id} has no pixels in the TSMP chunk map.")
+
+            member_predictions = [
+                np.load(files[chunk_id], mmap_mode="r", allow_pickle=False)
+                for files in member_files
+            ]
+            expected_shape = member_predictions[0].shape
+            if len(expected_shape) != 2 or expected_shape[1] != number_of_pixels:
+                raise ValueError(
+                    f"Predictions for chunk {chunk_id} must have shape "
+                    f"(time, {number_of_pixels}); got {expected_shape}."
+                )
+            if expected_shape[0] == 0:
+                raise ValueError(f"Predictions for chunk {chunk_id} contain no days.")
+            if any(
+                predictions.ndim != 2 or predictions.shape != expected_shape
+                for predictions in member_predictions
+            ):
+                raise ValueError(
+                    f"All 100 members must have matching prediction shapes for "
+                    f"chunk {chunk_id}."
+                )
+            if number_of_days is None:
+                number_of_days = expected_shape[0]
+            elif expected_shape[0] != number_of_days:
+                raise ValueError(
+                    f"Prediction time dimension differs for chunk {chunk_id}: "
+                    f"{expected_shape[0]} versus {number_of_days} days."
+                )
+
+            variance_sum = np.zeros(number_of_pixels, dtype=np.float64)
+            for time_start in range(0, number_of_days, time_batch_size):
+                time_end = min(time_start + time_batch_size, number_of_days)
+                prediction_block = np.empty(
+                    (len(member_predictions), time_end - time_start, number_of_pixels),
+                    dtype=np.float64,
+                )
+                for member, predictions in enumerate(member_predictions):
+                    prediction_block[member] = predictions[time_start:time_end]
+                if not np.isfinite(prediction_block).all():
+                    raise ValueError(
+                        f"Non-finite TSMP predictions for chunk {chunk_id}, "
+                        f"time steps {time_start}:{time_end}."
+                    )
+                variance_sum += np.sum(np.var(prediction_block, axis=0), axis=0)
+
+            variance_map[pixel_indices] = variance_sum / number_of_days
+            del member_predictions, prediction_block
+
+        mapped_variances = variance_map[np.isfinite(chunksmap)]
+        if not np.isfinite(mapped_variances).all():
+            raise ValueError("The mean TSMP ensemble variance map contains non-finite values.")
+
+        maps_dir = os.path.join(run_dir, "maps")
+        plots_dir = os.path.join(run_dir, "plots")
+        os.makedirs(maps_dir, exist_ok=True)
+        os.makedirs(plots_dir, exist_ok=True)
+        np.save(
+            os.path.join(
+                maps_dir, "mean_ensemble_variance_2017_2020_TSMPinputs.npy"
+            ),
+            variance_map,
+        )
+
+        positive_variances = variance_map[
+            np.isfinite(variance_map) & (variance_map > 0)
+        ]
+        if positive_variances.size == 0:
+            raise ValueError("Logarithmic normalization requires positive variance values.")
+        vmin = float(np.min(positive_variances))
+        vmax = float(np.max(positive_variances))
+        if vmin == vmax:
+            vmax = float(np.nextafter(vmax, np.inf))
+        norm = plt.matplotlib.colors.LogNorm(vmin=vmin, vmax=vmax)
+
+        projection = ccrs.LambertAzimuthalEqualArea(
+            central_longitude=19,
+            central_latitude=53,
+        )
+        fig, ax = plt.subplots(
+            figsize=(12, 9),
+            subplot_kw={"projection": projection},
+            constrained_layout=True,
+        )
+        mesh = ax.pcolormesh(
+            lons,
+            lats,
+            variance_map,
+            cmap="viridis",
+            norm=norm,
+            transform=ccrs.PlateCarree(),
+            shading="auto",
+        )
+        ax.coastlines()
+        ax.gridlines(draw_labels=True)
+        ax.set_title("Mean ensemble variance, 2017-2020 (TSMP inputs)")
+        colorbar = fig.colorbar(
+            mesh,
+            ax=ax,
+            orientation="vertical",
+            fraction=0.046,
+            pad=0.04,
+        )
+        colorbar.set_label("Mean ensemble variance (WTD squared)")
+        figure_path = os.path.join(
+            plots_dir, "mean_ensemble_variance_2017_2020_TSMPinputs.png"
+        )
+        fig.savefig(figure_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved TSMP ensemble variance map to {figure_path}")
+        return variance_map
+
     def postprocess_era5wtd_vs_obs(self):
         # self.calc_anomalies_from_sim_claude()
         # self.ensemble_statvsacc()
@@ -5498,4 +5688,5 @@ class postprocess_calculations:
         # self.boxplots_errormaps_TSMP_vs_ERALSTM_vs_obs()
         # self.errormaps_TSMP_vs_ERALSTM_vs_obs()
 
-        self.map_statistics()
+        # self.map_statistics()
+        self.map_statistics_TSMPinputs()
