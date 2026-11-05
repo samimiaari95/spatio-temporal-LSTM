@@ -1635,3 +1635,411 @@ class obs_processing:
         obswtda = np.mean(output, axis=0)
 
         plots.zoomed2Dmap_adaptedtoma(obswtda, False, np.min(obswtda), np.max(obswtda), "wtda obs")
+
+    @staticmethod
+    def _england_station_id(value):
+        numeric_id = pd.to_numeric(value, errors="raise")
+        if not float(numeric_id).is_integer():
+            raise ValueError(f"Expected an integer England station ID, got {value!r}")
+        return str(int(numeric_id))
+
+    def _read_england_station_locations(self, shapefile_path):
+        try:
+            import shapefile
+        except ImportError as exc:
+            raise ImportError(
+                "Reading the England station shapefile requires the 'pyshp' package."
+            ) from exc
+
+        reader = shapefile.Reader(shapefile_path, encoding="utf-8")
+        try:
+            field_names = [field[0] for field in reader.fields[1:]]
+            required_fields = {"No", "Lat", "Long"}
+            missing_fields = required_fields.difference(field_names)
+            if missing_fields:
+                raise ValueError(
+                    f"England station shapefile is missing fields: {sorted(missing_fields)}"
+                )
+            locations = pd.DataFrame(reader.records(), columns=field_names)
+        finally:
+            reader.close()
+
+        locations["station_id"] = locations["No"].map(self._england_station_id)
+        locations["lat"] = pd.to_numeric(locations["Lat"], errors="coerce")
+        locations["lon"] = pd.to_numeric(locations["Long"], errors="coerce")
+        locations = locations.dropna(subset=["station_id", "lat", "lon"]).copy()
+        if locations["station_id"].duplicated().any():
+            duplicates = locations.loc[
+                locations["station_id"].duplicated(keep=False), "station_id"
+            ].unique()
+            raise ValueError(
+                f"Station IDs are not unique in the England shapefile: {duplicates.tolist()}"
+            )
+        if (
+            ~locations["lon"].between(-180, 180)
+            | ~locations["lat"].between(-90, 90)
+        ).any():
+            raise ValueError("The England shapefile contains coordinates outside WGS84 bounds.")
+        return locations.set_index("station_id", drop=False)
+
+    def _read_continuous_england_timeseries(self, timeseries_dir, locations):
+        expected_months = pd.period_range("1996-01", "2016-12", freq="M")
+        series_by_station = []
+        station_metadata = []
+        seen_ids = set()
+        csv_files = sorted(
+            filename
+            for filename in os.listdir(timeseries_dir)
+            if filename.endswith("_timeseries.csv")
+        )
+        if not csv_files:
+            raise FileNotFoundError(
+                f"No '*_timeseries.csv' files were found in {timeseries_dir}"
+            )
+
+        for filename in csv_files:
+            station_id = self._england_station_id(
+                filename[: -len("_timeseries.csv")]
+            )
+            if station_id in seen_ids:
+                raise ValueError(f"Duplicate timeseries files found for station {station_id}.")
+            seen_ids.add(station_id)
+            if station_id not in locations.index:
+                continue
+
+            data = pd.read_csv(os.path.join(timeseries_dir, filename))
+            if not {"date", "GD"}.issubset(data.columns):
+                raise ValueError(
+                    f"{filename} must contain 'date' and 'GD' columns; "
+                    f"found {data.columns.tolist()}"
+                )
+            dates = pd.to_datetime(data["date"], errors="coerce")
+            values = pd.to_numeric(data["GD"], errors="coerce")
+            valid = (
+                dates.notna()
+                & values.notna()
+                & dates.ge(pd.Timestamp("1996-01-01"))
+                & dates.lt(pd.Timestamp("2017-01-01"))
+                & np.isfinite(values)
+            )
+            data = pd.DataFrame(
+                {"date": dates[valid], "value": values[valid]}
+            ).sort_values("date")
+            covered_months = pd.PeriodIndex(data["date"], freq="M").unique()
+            if not expected_months.isin(covered_months).all():
+                continue
+
+            station = locations.loc[station_id]
+            station_column = (
+                f"England_station{station_id}_"
+                f"LON{station['lon']:.6f}LAT{station['lat']:.6f}"
+            )
+            series_by_station.append(
+                pd.Series(
+                    data["value"].to_numpy(),
+                    index=pd.DatetimeIndex(data["date"]),
+                    name=station_column,
+                )
+            )
+            station_metadata.append(
+                {
+                    "station_id": station_id,
+                    "station_column": station_column,
+                    "lon": float(station["lon"]),
+                    "lat": float(station["lat"]),
+                }
+            )
+
+        if not series_by_station:
+            raise ValueError(
+                "No England stations have at least one valid reading in every "
+                "calendar month from 1996-01 through 2016-12."
+            )
+        observations = pd.concat(series_by_station, axis=1).sort_index()
+        observations.index.name = "date"
+        return observations, station_metadata
+
+    def plot_england_station_locations(self, mapping, output_path):
+        import matplotlib.pyplot as plt
+
+        if mapping.empty:
+            raise ValueError("Cannot plot England station locations: mapping is empty.")
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+        grid_cells = mapping.drop_duplicates(
+            subset=["tsmp_yindex", "tsmp_xindex"]
+        )
+        figure, axis = plt.subplots(figsize=(10, 8))
+        axis.scatter(
+            mapping["lon"],
+            mapping["lat"],
+            s=12,
+            alpha=0.65,
+            label="Stations",
+        )
+        axis.scatter(
+            grid_cells["tsmp_lon"],
+            grid_cells["tsmp_lat"],
+            s=20,
+            marker="x",
+            label="Mapped TSMP cells",
+        )
+        axis.set(
+            xlabel="Longitude (degrees east)",
+            ylabel="Latitude (degrees north)",
+            title="England groundwater observation stations and TSMP cells",
+        )
+        axis.grid(True, linestyle=":", alpha=0.5)
+        axis.legend()
+        figure.tight_layout()
+        figure.savefig(output_path, dpi=200)
+        plt.close(figure)
+        return output_path
+
+    def _merge_england_observations_into_netcdf(
+        self, monthly_observations, mapping, source_path, output_path
+    ):
+        import netCDF4
+
+        if os.path.abspath(source_path) == os.path.abspath(output_path):
+            raise ValueError("The England merge output must not overwrite its source NetCDF.")
+        tsmp_lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        tsmp_lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        if tsmp_lons.shape != tsmp_lats.shape or tsmp_lons.ndim != 2:
+            raise ValueError("TSMP longitude and latitude grids must be matching 2D arrays.")
+
+        with netCDF4.Dataset(source_path, "r") as source:
+            if "wtd_a" not in source.variables:
+                raise KeyError(f"The source NetCDF does not contain a 'wtd_a' variable: {source_path}")
+            source_wtd = source.variables["wtd_a"]
+            if len(source_wtd.dimensions) != 3 or source_wtd.dimensions[0] not in source.dimensions:
+                raise ValueError("'wtd_a' must have dimensions ordered as time, y, x.")
+            if source_wtd.dimensions[0].lower().find("time") < 0:
+                raise ValueError("'wtd_a' must have its time dimension first.")
+            if source_wtd.shape[0] != len(monthly_observations):
+                raise ValueError(
+                    f"Expected {len(monthly_observations)} monthly NetCDF records, "
+                    f"found {source_wtd.shape[0]}."
+                )
+            if (
+                source_wtd.shape[1] > tsmp_lons.shape[0]
+                or source_wtd.shape[2] > tsmp_lons.shape[1]
+            ):
+                raise ValueError(
+                    f"NetCDF spatial shape {source_wtd.shape[1:]} exceeds "
+                    f"the TSMP grid shape {tsmp_lons.shape}."
+                )
+
+            time_name = source_wtd.dimensions[0]
+            if time_name not in source.variables:
+                raise KeyError(f"The NetCDF time coordinate '{time_name}' is missing.")
+            time_variable = source.variables[time_name]
+            if "units" not in time_variable.ncattrs():
+                raise ValueError(f"NetCDF time coordinate '{time_name}' has no units attribute.")
+            decoded_time = netCDF4.num2date(
+                time_variable[:],
+                units=time_variable.units,
+                calendar=getattr(time_variable, "calendar", "standard"),
+                only_use_cftime_datetimes=False,
+            )
+            source_months = [(date.year, date.month) for date in decoded_time]
+            expected_months = [
+                (date.year, date.month) for date in monthly_observations.index
+            ]
+            if source_months != expected_months:
+                raise ValueError(
+                    "NetCDF time coordinate does not match the England monthly period "
+                    "1996-01 through 2016-12."
+                )
+            if not np.issubdtype(source_wtd.dtype, np.floating):
+                raise TypeError("'wtd_a' must use a floating-point datatype to merge observations.")
+
+            row_offset = (tsmp_lons.shape[0] - source_wtd.shape[1]) // 2
+            col_offset = (tsmp_lons.shape[1] - source_wtd.shape[2]) // 2
+            cells = []
+            for _, cell in mapping.drop_duplicates(
+                subset=["tsmp_yindex", "tsmp_xindex"]
+            ).iterrows():
+                source_y = int(cell["tsmp_yindex"]) - row_offset
+                source_x = int(cell["tsmp_xindex"]) - col_offset
+                if not (
+                    0 <= source_y < source_wtd.shape[1]
+                    and 0 <= source_x < source_wtd.shape[2]
+                ):
+                    raise ValueError(
+                        f"Mapped TSMP cell ({cell['tsmp_yindex']}, {cell['tsmp_xindex']}) "
+                        "falls outside the source NetCDF grid."
+                    )
+                cells.append((source_y, source_x, cell["grid_column"]))
+
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with netCDF4.Dataset(output_path, "w", format=source.data_model) as output:
+                for attribute in source.ncattrs():
+                    output.setncattr(attribute, source.getncattr(attribute))
+                for name, dimension in source.dimensions.items():
+                    output.createDimension(
+                        name, None if dimension.isunlimited() else len(dimension)
+                    )
+                for name, variable in source.variables.items():
+                    creation_options = {}
+                    if "_FillValue" in variable.ncattrs():
+                        creation_options["fill_value"] = variable.getncattr("_FillValue")
+                    copied_variable = output.createVariable(
+                        name,
+                        variable.datatype,
+                        variable.dimensions,
+                        **creation_options,
+                    )
+                    for attribute in variable.ncattrs():
+                        if attribute != "_FillValue":
+                            copied_variable.setncattr(
+                                attribute, variable.getncattr(attribute)
+                            )
+
+                    if name != "wtd_a":
+                        copied_variable[...] = variable[...]
+                        continue
+
+                    for month_index in range(source_wtd.shape[0]):
+                        field = np.ma.asarray(variable[month_index, :, :])
+                        field_values = np.asarray(
+                            field.filled(np.nan), dtype=np.float64
+                        )
+                        for source_y, source_x, grid_column in cells:
+                            value = monthly_observations.iloc[month_index][grid_column]
+                            if (
+                                np.isfinite(value)
+                                and not np.isfinite(field_values[source_y, source_x])
+                            ):
+                                field_values[source_y, source_x] = value
+                        copied_variable[month_index, :, :] = np.ma.masked_invalid(
+                            field_values
+                        )
+        return output_path
+
+    def process_england_observations(self, source_root=None, output_dir=None):
+        """Process complete England station records and create mapped monthly products."""
+        project_root = get_root_dir()
+        if source_root is None:
+            source_root = os.path.join(
+                os.path.dirname(project_root),
+                "Groundwater_Depth_Time_Series_for_2902_wells_across_England",
+            )
+        if output_dir is None:
+            output_dir = os.path.join(
+                INPUTPATH, "localobservations", "England"
+            )
+        output_dir = os.path.abspath(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+
+        shapefile_path = os.path.join(source_root, "Stations location.shp")
+        timeseries_dir = os.path.join(source_root, "All_stations_timeseries")
+        locations = self._read_england_station_locations(shapefile_path)
+        observations, station_metadata = self._read_continuous_england_timeseries(
+            timeseries_dir, locations
+        )
+        raw_path = os.path.join(
+            output_dir, "wtd_obsEngland_continuous_1996_2016.parquet"
+        )
+        observations.reset_index().to_parquet(raw_path, index=False)
+        print(f"Saved continuous England observations to {raw_path}")
+        mapping_rows = []
+        for station in station_metadata:
+            yindex, xindex, tsmp_lon, tsmp_lat = (
+                self.find_mindistance_pointobs_to_grid(
+                    station["lon"], station["lat"]
+                )
+            )
+            mapping_rows.append(
+                {
+                    **station,
+                    "tsmp_xindex": int(xindex),
+                    "tsmp_yindex": int(yindex),
+                    "tsmp_lon": float(tsmp_lon),
+                    "tsmp_lat": float(tsmp_lat),
+                }
+            )
+        mapping = pd.DataFrame(mapping_rows)
+        monthly_index = pd.date_range("1996-01-01", "2016-12-01", freq="MS")
+        station_monthly = (
+            observations.resample("MS")
+            .mean()
+            .reindex(monthly_index)
+        )
+        mapping["grid_column"] = ""
+        monthly_grid = pd.DataFrame(index=monthly_index)
+        print("Aggregating England station observations to TSMP grid cells...")
+        for (yindex, xindex), row_indices in mapping.groupby(
+            ["tsmp_yindex", "tsmp_xindex"], sort=True
+        ).groups.items():
+            cell_rows = mapping.loc[row_indices]
+            first = cell_rows.iloc[0]
+            grid_column = (
+                f"England_LON{first['tsmp_lon']}LAT{first['tsmp_lat']}"
+            )
+            if grid_column in monthly_grid.columns:
+                raise ValueError(
+                    f"Multiple TSMP cells produce the same output column {grid_column!r}."
+                )
+            mapping.loc[row_indices, "grid_column"] = grid_column
+            monthly_grid[grid_column] = station_monthly[
+                cell_rows["station_column"].tolist()
+            ].mean(axis=1)
+        if not monthly_grid.notna().to_numpy().any():
+            raise ValueError("No monthly England values were available after grid aggregation.")
+        print("Finished aggregating England station observations to TSMP grid cells.")
+        mapping_path = os.path.join(
+            output_dir, "mapping_wtdobsEngland_TSMP.csv"
+        )
+        mapping.to_csv(mapping_path, index=False)
+        monthly_path = os.path.join(
+            output_dir, "wtd_obsEngland_monthly_avgdup.parquet"
+        )
+        print(f"Saving monthly England observations to {monthly_path}")
+        monthly_grid.rename_axis("date").reset_index().to_parquet(
+            monthly_path, index=False
+        )
+
+        climatology_mean = monthly_grid.groupby(
+            monthly_grid.index.month
+        ).transform("mean")
+        climatology_std = monthly_grid.groupby(
+            monthly_grid.index.month
+        ).transform(lambda values: values.std(ddof=0))
+        anomalies = (monthly_grid - climatology_mean).div(
+            climatology_std.where(climatology_std.ne(0))
+        )
+        anomaly_path = os.path.join(
+            output_dir, "wtd_obsEngland_monthly_anomalies.parquet"
+        )
+        print(f"Saving monthly England anomalies to {anomaly_path}")
+        anomalies.rename_axis("date").reset_index().to_parquet(
+            anomaly_path, index=False
+        )
+
+        plot_path = os.path.join(
+            output_dir, "wtd_obsEngland_station_locations.png"
+        )
+        self.plot_england_station_locations(mapping, plot_path)
+
+        source_netcdf = os.path.join(
+            os.path.dirname(project_root),
+            "grid_measured_wtd_a_data_1996_2016_EUR11_YM_v_20210407.nc",
+        )
+        output_netcdf = os.path.join(
+            output_dir,
+            "grid_measured_wtd_a_data_1996_2016_EUR11_YM_v_20210407_with_England.nc",
+        )
+        self._merge_england_observations_into_netcdf(
+            monthly_grid, mapping, source_netcdf, output_netcdf
+        )
+        return {
+            "continuous_observations": raw_path,
+            "mapping": mapping_path,
+            "monthly_observations": monthly_path,
+            "monthly_anomalies": anomaly_path,
+            "station_plot": plot_path,
+            "merged_netcdf": output_netcdf,
+            "station_count": len(station_metadata),
+            "grid_cell_count": len(monthly_grid.columns),
+        }
