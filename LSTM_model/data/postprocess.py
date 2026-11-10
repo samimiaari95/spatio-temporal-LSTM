@@ -5380,6 +5380,10 @@ class postprocess_calculations:
             raise ValueError("Logarithmic normalization requires positive variance values.")
         vmin = float(np.min(positive_variances))
         vmax = float(np.max(positive_variances))
+        print(f"Plotting ERA5 mean ensemble variance map with vmin={vmin:.6e}, vmax={vmax:.6e}.")
+        vmin = 4.3e-02
+        vmax = 6.2e+02
+        print(f"using consistent coloscale with TSMP statistics, vmin and vmax for plotting: vmin={vmin:.6e}, vmax={vmax:.6e}.")
         if vmin == vmax:
             vmax = float(np.nextafter(vmax, np.inf))
         norm = plt.matplotlib.colors.LogNorm(vmin=vmin, vmax=vmax)
@@ -5412,7 +5416,7 @@ class postprocess_calculations:
             fraction=0.046,
             pad=0.04,
         )
-        colorbar.set_label("Mean ensemble variance (WTD squared)")
+        colorbar.set_label("Mean ensemble variance in time")
         figure_path = os.path.join(
             plots_dir, "mean_ensemble_variance_2017_2020.png"
         )
@@ -5570,6 +5574,11 @@ class postprocess_calculations:
             raise ValueError("Logarithmic normalization requires positive variance values.")
         vmin = float(np.min(positive_variances))
         vmax = float(np.max(positive_variances))
+        print(f"Plotting TSMP mean ensemble variance map with vmin={vmin:.6e}, vmax={vmax:.6e}.")
+        vmin = 4.3e-02
+        vmax = 6.2e+02
+        print(f"using consistent coloscale with ERA5 statistics, vmin and vmax for plotting: vmin={vmin:.6e}, vmax={vmax:.6e}.")
+
         if vmin == vmax:
             vmax = float(np.nextafter(vmax, np.inf))
         norm = plt.matplotlib.colors.LogNorm(vmin=vmin, vmax=vmax)
@@ -5602,7 +5611,7 @@ class postprocess_calculations:
             fraction=0.046,
             pad=0.04,
         )
-        colorbar.set_label("Mean ensemble variance (WTD squared)")
+        colorbar.set_label("Mean ensemble variance in time")
         figure_path = os.path.join(
             plots_dir, "mean_ensemble_variance_2017_2020_TSMPinputs.png"
         )
@@ -5688,5 +5697,5 @@ class postprocess_calculations:
         # self.boxplots_errormaps_TSMP_vs_ERALSTM_vs_obs()
         # self.errormaps_TSMP_vs_ERALSTM_vs_obs()
 
-        # self.map_statistics()
+        self.map_statistics()
         self.map_statistics_TSMPinputs()
