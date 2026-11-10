@@ -1760,22 +1760,109 @@ class obs_processing:
         return observations, station_metadata
 
     def plot_england_station_locations(self, mapping, output_path):
+        import cartopy.crs as ccrs
+        from cartopy.feature import ShapelyFeature
+        from cartopy.io.shapereader import Reader
         import matplotlib.pyplot as plt
 
         if mapping.empty:
             raise ValueError("Cannot plot England station locations: mapping is empty.")
+        required_columns = {
+            "lon",
+            "lat",
+            "tsmp_lon",
+            "tsmp_lat",
+            "tsmp_xindex",
+            "tsmp_yindex",
+        }
+        missing_columns = required_columns.difference(mapping.columns)
+        if missing_columns:
+            raise ValueError(
+                f"England station mapping is missing columns: {sorted(missing_columns)}"
+            )
+
+        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        if lons.ndim != 2 or lons.shape != lats.shape:
+            raise ValueError("TSMP longitude and latitude grids must be matching 2D arrays.")
+        xindices = pd.to_numeric(
+            mapping["tsmp_xindex"], errors="raise"
+        ).to_numpy(dtype=float)
+        yindices = pd.to_numeric(
+            mapping["tsmp_yindex"], errors="raise"
+        ).to_numpy(dtype=float)
+        if (
+            not np.isfinite(xindices).all()
+            or not np.isfinite(yindices).all()
+            or not np.equal(xindices, np.floor(xindices)).all()
+            or not np.equal(yindices, np.floor(yindices)).all()
+        ):
+            raise ValueError("England mapping contains invalid TSMP grid indices.")
+        xindices = xindices.astype(int)
+        yindices = yindices.astype(int)
+        if (
+            (xindices < 0).any()
+            or (xindices >= lons.shape[1]).any()
+            or (yindices < 0).any()
+            or (yindices >= lons.shape[0]).any()
+        ):
+            raise ValueError("England mapping contains TSMP indices outside the grid.")
+
+        cell_counts = np.zeros(lons.shape, dtype=np.int32)
+        np.add.at(cell_counts, (yindices, xindices), 1)
+        plotted_cells = np.ma.masked_where(cell_counts == 0, cell_counts)
+        max_count = int(cell_counts.max())
+
+        countries_path = os.path.join(
+            os.path.dirname(get_root_dir()),
+            "ne_10m_admin_0_countries",
+            "ne_10m_admin_0_countries.shp",
+        )
+        if not os.path.isfile(countries_path):
+            raise FileNotFoundError(
+                f"Country boundaries shapefile not found: {countries_path}"
+            )
+        country_boundaries = ShapelyFeature(
+            Reader(countries_path).geometries(),
+            ccrs.PlateCarree(),
+            facecolor="none",
+            edgecolor="black",
+        )
+
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
         grid_cells = mapping.drop_duplicates(
             subset=["tsmp_yindex", "tsmp_xindex"]
         )
-        figure, axis = plt.subplots(figsize=(10, 8))
+        projection = ccrs.LambertAzimuthalEqualArea(
+            central_longitude=-2,
+            central_latitude=54,
+        )
+        figure, axis = plt.subplots(
+            figsize=(13, 9),
+            subplot_kw={"projection": projection},
+        )
+        mesh = axis.pcolormesh(
+            lons,
+            lats,
+            plotted_cells,
+            cmap="YlOrRd",
+            vmin=0.5,
+            vmax=max_count + 0.5,
+            shading="auto",
+            transform=ccrs.PlateCarree(),
+        )
+        colorbar = figure.colorbar(mesh, ax=axis, shrink=0.75, pad=0.04)
+        colorbar.set_label("Stations mapped to TSMP cell")
+        axis.add_feature(country_boundaries, linewidth=0.6, zorder=2)
         axis.scatter(
             mapping["lon"],
             mapping["lat"],
             s=12,
             alpha=0.65,
             label="Stations",
+            transform=ccrs.PlateCarree(),
+            zorder=3,
         )
         axis.scatter(
             grid_cells["tsmp_lon"],
@@ -1783,13 +1870,32 @@ class obs_processing:
             s=20,
             marker="x",
             label="Mapped TSMP cells",
+            transform=ccrs.PlateCarree(),
+            zorder=4,
         )
-        axis.set(
-            xlabel="Longitude (degrees east)",
-            ylabel="Latitude (degrees north)",
-            title="England groundwater observation stations and TSMP cells",
+        lon_buffer = max(
+            0.25,
+            0.05 * (mapping["lon"].max() - mapping["lon"].min()),
         )
-        axis.grid(True, linestyle=":", alpha=0.5)
+        lat_buffer = max(
+            0.25,
+            0.05 * (mapping["lat"].max() - mapping["lat"].min()),
+        )
+        lon_min = min(-7.5, mapping["lon"].min() - lon_buffer)
+        lon_max = max(2.5, mapping["lon"].max() + lon_buffer)
+        lat_min = min(49.0, mapping["lat"].min() - lat_buffer)
+        lat_max = max(57.5, mapping["lat"].max() + lat_buffer)
+        axis.set_extent(
+            [
+                lon_min,
+                lon_max,
+                lat_min,
+                lat_max,
+            ],
+            crs=ccrs.PlateCarree(),
+        )
+        axis.set_title("England groundwater observation stations and TSMP cells")
+        axis.gridlines(draw_labels=True, linestyle=":", alpha=0.5)
         axis.legend()
         figure.tight_layout()
         figure.savefig(output_path, dpi=200)
@@ -2033,6 +2139,9 @@ class obs_processing:
         self._merge_england_observations_into_netcdf(
             monthly_grid, mapping, source_netcdf, output_netcdf
         )
+        timeseries_plot_path = self.plot_timeseries_englandobs(
+            output_dir=output_dir
+        )
         return {
             "continuous_observations": raw_path,
             "mapping": mapping_path,
@@ -2040,6 +2149,163 @@ class obs_processing:
             "monthly_anomalies": anomaly_path,
             "station_plot": plot_path,
             "merged_netcdf": output_netcdf,
+            "anomaly_timeseries_plot": timeseries_plot_path,
             "station_count": len(station_metadata),
             "grid_cell_count": len(monthly_grid.columns),
         }
+
+    def plot_timeseries_englandobs(self, output_dir=None, output_path=None):
+        """Plot England monthly standardized anomalies, one panel per TSMP cell."""
+        import matplotlib.dates as mdates
+        import matplotlib.pyplot as plt
+        import netCDF4
+
+        if output_dir is None:
+            output_dir = os.path.join(
+                INPUTPATH, "localobservations", "England"
+            )
+        output_dir = os.path.abspath(output_dir)
+        if output_path is None:
+            output_path = os.path.join(
+                output_dir,
+                "wtd_obsEngland_monthly_anomalies_timeseries.png",
+            )
+
+        mapping_path = os.path.join(
+            output_dir, "mapping_wtdobsEngland_TSMP.csv"
+        )
+        anomalies_path = os.path.join(
+            output_dir, "wtd_obsEngland_monthly_anomalies.parquet"
+        )
+        merged_netcdf_path = os.path.join(
+            output_dir,
+            "grid_measured_wtd_a_data_1996_2016_EUR11_YM_v_20210407_with_England.nc",
+        )
+
+        mapping = pd.read_csv(mapping_path)
+        required_mapping_columns = {
+            "grid_column",
+            "tsmp_xindex",
+            "tsmp_yindex",
+        }
+        missing_mapping_columns = required_mapping_columns.difference(mapping.columns)
+        if missing_mapping_columns:
+            raise ValueError(
+                f"England mapping is missing columns: {sorted(missing_mapping_columns)}"
+            )
+        grid_columns = mapping["grid_column"].dropna().astype(str).unique().tolist()
+        if not grid_columns:
+            raise ValueError("The England mapping contains no TSMP grid cells.")
+
+        anomalies = pd.read_parquet(anomalies_path)
+        if "date" not in anomalies.columns:
+            raise ValueError(
+                f"England anomaly data must contain a 'date' column: {anomalies_path}"
+            )
+        missing_grid_columns = sorted(set(grid_columns).difference(anomalies.columns))
+        if missing_grid_columns:
+            raise ValueError(
+                "England anomaly data is missing mapped grid-cell columns: "
+                f"{missing_grid_columns}"
+            )
+        anomalies["date"] = pd.to_datetime(anomalies["date"], errors="raise")
+        anomalies = anomalies.sort_values("date").reset_index(drop=True)
+        if anomalies.empty or anomalies["date"].duplicated().any():
+            raise ValueError("England anomaly data must have unique, non-empty dates.")
+
+        with netCDF4.Dataset(merged_netcdf_path, "r") as merged:
+            if "wtd_a" not in merged.variables:
+                raise KeyError(
+                    f"Merged NetCDF does not contain a 'wtd_a' variable: "
+                    f"{merged_netcdf_path}"
+                )
+            wtd_variable = merged.variables["wtd_a"]
+            if len(wtd_variable.dimensions) != 3:
+                raise ValueError(
+                    "Merged NetCDF 'wtd_a' must have (time, y, x) dimensions."
+                )
+            time_name = wtd_variable.dimensions[0]
+            if time_name not in merged.variables:
+                raise KeyError(
+                    f"Merged NetCDF time coordinate '{time_name}' is missing."
+                )
+            time_variable = merged.variables[time_name]
+            if "units" not in time_variable.ncattrs():
+                raise ValueError(
+                    f"Merged NetCDF time coordinate '{time_name}' has no units."
+                )
+            netcdf_dates = netCDF4.num2date(
+                time_variable[:],
+                units=time_variable.units,
+                calendar=getattr(time_variable, "calendar", "standard"),
+                only_use_cftime_datetimes=False,
+            )
+            netcdf_months = [(date.year, date.month) for date in netcdf_dates]
+            anomaly_months = [
+                (date.year, date.month) for date in anomalies["date"]
+            ]
+            if netcdf_months != anomaly_months:
+                raise ValueError(
+                    "Merged NetCDF time coordinate does not match the England "
+                    "monthly anomaly dates."
+                )
+
+            tsmp_lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+            tsmp_lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+            if tsmp_lons.shape != tsmp_lats.shape or tsmp_lons.ndim != 2:
+                raise ValueError(
+                    "TSMP longitude and latitude grids must be matching 2D arrays."
+                )
+            if (
+                wtd_variable.shape[1] > tsmp_lons.shape[0]
+                or wtd_variable.shape[2] > tsmp_lons.shape[1]
+            ):
+                raise ValueError(
+                    "Merged NetCDF spatial dimensions exceed the TSMP grid."
+                )
+            row_offset = (tsmp_lons.shape[0] - wtd_variable.shape[1]) // 2
+            col_offset = (tsmp_lons.shape[1] - wtd_variable.shape[2]) // 2
+            for _, cell in mapping.drop_duplicates(
+                subset=["tsmp_yindex", "tsmp_xindex"]
+            ).iterrows():
+                netcdf_y = int(cell["tsmp_yindex"]) - row_offset
+                netcdf_x = int(cell["tsmp_xindex"]) - col_offset
+                if not (
+                    0 <= netcdf_y < wtd_variable.shape[1]
+                    and 0 <= netcdf_x < wtd_variable.shape[2]
+                ):
+                    raise ValueError(
+                        f"Mapped TSMP cell ({cell['tsmp_yindex']}, "
+                        f"{cell['tsmp_xindex']}) is outside the merged NetCDF grid."
+                    )
+
+        column_count = min(3, len(grid_columns))
+        row_count = (len(grid_columns) + column_count - 1) // column_count
+        figure, axes = plt.subplots(
+            row_count,
+            column_count,
+            figsize=(6 * column_count, 3.5 * row_count),
+            sharex=True,
+            squeeze=False,
+            constrained_layout=True,
+        )
+        for axis, grid_column in zip(axes.flat, grid_columns):
+            values = pd.to_numeric(anomalies[grid_column], errors="coerce")
+            axis.plot(anomalies["date"], values, linewidth=0.9)
+            axis.axhline(0, color="black", linewidth=0.7, alpha=0.65)
+            axis.set_title(grid_column.replace("England_", ""), fontsize=9)
+            axis.set_ylabel("Standardized anomaly")
+            axis.grid(True, linestyle=":", alpha=0.5)
+            axis.xaxis.set_major_locator(mdates.YearLocator(5))
+            axis.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+        for axis in axes.flat[len(grid_columns):]:
+            axis.set_visible(False)
+        figure.suptitle("England groundwater monthly anomalies by TSMP cell")
+        for axis in axes[-1, :]:
+            if axis.get_visible():
+                axis.set_xlabel("Year")
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        figure.savefig(output_path, dpi=200)
+        plt.close(figure)
+        return output_path
