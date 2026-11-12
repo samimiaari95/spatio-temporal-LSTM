@@ -11,3 +11,5 @@ torchrun-jsc
 rijksdriehoek
 fastparquet
 openpyxl
+hf_hydrodata
+pyshp
