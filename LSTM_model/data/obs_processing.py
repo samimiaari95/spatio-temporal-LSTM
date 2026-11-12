@@ -1474,7 +1474,7 @@ class obs_processing:
         print(obsdf)
         obsdf.to_parquet(os.path.join(os.path.join(INPUTPATH, "localobservations"), "wtd_obsEU_monthly_incorrect_elevations.parquet"), index=False)
 
-    def find_mindistance_pointobs_to_grid(self, lon, lat):
+    def find_mindistance_pointobs_to_grid(self, lon, lat, lons=None, lats=None):
         """
         Calculating minimum distance from a point with given lon lat to the nearest grid point on a 2D lon lat grid
         2D grid is loaded from TSMP lon2D.npy and lat2D.npy files
@@ -1488,9 +1488,15 @@ class obs_processing:
         :return: yindex, xindex, tsmp_lon, tsmp_lat of the nearest grid point
         """
 
-        # load TSMP lonlat
-        lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
-        lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        # Load the TSMP grid unless it was supplied by a caller processing
+        # many stations at once.
+        if lons is None and lats is None:
+            lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+            lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        elif lons is None or lats is None:
+            raise ValueError("Both longitude and latitude grids must be provided together.")
+        if lons.shape != lats.shape or lons.ndim != 2:
+            raise ValueError("TSMP longitude and latitude grids must be matching 2D arrays.")
 
         # find nearest grid point
         # explain how it is done
@@ -2309,3 +2315,608 @@ class obs_processing:
         figure.savefig(output_path, dpi=200)
         plt.close(figure)
         return output_path
+
+    @staticmethod
+    def find_longest_monthly_anomaly_period(
+        station_dirs,
+        min_years=4,
+        date_column=None,
+        anomaly_column="wtd_a",
+    ):
+        """Find the longest gap-free period with maximum station coverage.
+
+        Each CSV in ``station_dirs`` is treated as one station and must contain
+        monthly records, a date/month column, and an anomaly column. The
+        station count is maximized over all periods at least ``min_years``
+        long; ties are resolved by choosing the longest period, then the
+        earliest start. A month is covered if it has at least one finite
+        anomaly value.
+
+        Returns the inclusive start and end months, period length, station
+        count, and station IDs for the selected period.
+        """
+        # TODO this function is currently not working, analysis was done with copilot, but the concept in this function is the same
+        if (
+            isinstance(min_years, bool)
+            or not isinstance(min_years, (int, np.integer))
+            or min_years < 1
+        ):
+            raise ValueError("min_years must be a positive integer.")
+        if not anomaly_column:
+            raise ValueError("anomaly_column must be a non-empty column name.")
+
+        if isinstance(station_dirs, (str, os.PathLike)):
+            station_dirs = [station_dirs]
+        else:
+            station_dirs = list(station_dirs)
+        if not station_dirs:
+            raise ValueError("At least one station directory must be provided.")
+
+        csv_files = []
+        seen_directories = set()
+        for directory in station_dirs:
+            directory = os.path.abspath(os.fspath(directory))
+            if not os.path.isdir(directory):
+                raise NotADirectoryError(f"Station directory does not exist: {directory}")
+            if directory in seen_directories:
+                continue
+            seen_directories.add(directory)
+            csv_files.extend(
+                os.path.join(directory, filename)
+                for filename in sorted(os.listdir(directory))
+                if filename.lower().endswith(".csv")
+                and not filename.startswith("_")
+                and os.path.isfile(os.path.join(directory, filename))
+            )
+        if not csv_files:
+            raise FileNotFoundError("No station CSV files were found in the supplied directories.")
+
+        min_months = min_years * 12
+        runs_by_station = {}
+        events = {}
+        for csv_file in csv_files:
+            station_id = os.path.splitext(os.path.basename(csv_file))[0]
+            if station_id in runs_by_station:
+                raise ValueError(
+                    f"Station ID {station_id!r} occurs in more than one input directory."
+                )
+
+            columns = pd.read_csv(csv_file, nrows=0).columns
+            if date_column is None:
+                selected_date_column = next(
+                    (column for column in ("month", "date") if column in columns),
+                    None,
+                )
+            else:
+                selected_date_column = date_column
+            missing_columns = [
+                column
+                for column in (selected_date_column, anomaly_column)
+                if column is None or column not in columns
+            ]
+            if missing_columns:
+                raise ValueError(
+                    f"{csv_file} is missing required columns: {missing_columns}"
+                )
+
+            data = pd.read_csv(
+                csv_file,
+                usecols=[selected_date_column, anomaly_column],
+            )
+            months = pd.to_datetime(
+                data[selected_date_column], errors="coerce"
+            ).dt.to_period("M")
+            anomalies = pd.to_numeric(data[anomaly_column], errors="coerce")
+            valid_rows = months.notna() & np.isfinite(anomalies)
+            valid_months = sorted(
+                set(months[valid_rows].astype("int64").tolist())
+            )
+
+            station_runs = []
+            if valid_months:
+                run_start = previous_month = valid_months[0]
+                for month in valid_months[1:]:
+                    if month != previous_month + 1:
+                        station_runs.append((run_start, previous_month))
+                        run_start = month
+                    previous_month = month
+                station_runs.append((run_start, previous_month))
+            runs_by_station[station_id] = station_runs
+
+            for run_start, run_end in station_runs:
+                if run_end - run_start + 1 < min_months:
+                    continue
+                events.setdefault(run_start, []).append((1, run_end))
+                events.setdefault(run_end - min_months + 2, []).append(
+                    (-1, run_end)
+                )
+
+        if not events:
+            raise ValueError(
+                f"No station has {min_years} consecutive years of valid anomalies."
+            )
+
+        active_ends = {}
+        max_station_count = 0
+        longest_month_count = 0
+        best_start = None
+        best_end = None
+        first_month = min(events)
+        last_start = max(events) - 1
+        for start_month in range(first_month, last_start + 1):
+            for change, run_end in events.get(start_month, ()):
+                count = active_ends.get(run_end, 0) + change
+                if count:
+                    active_ends[run_end] = count
+                else:
+                    del active_ends[run_end]
+
+            station_count = sum(active_ends.values())
+            if station_count < max_station_count:
+                continue
+
+            if station_count > max_station_count:
+                max_station_count = station_count
+                longest_month_count = 0
+
+            end_month = min(active_ends)
+            month_count = end_month - start_month + 1
+            if month_count > longest_month_count:
+                longest_month_count = month_count
+                best_start = start_month
+                best_end = end_month
+
+        selected_stations = sorted(
+            station_id
+            for station_id, station_runs in runs_by_station.items()
+            if any(
+                run_start <= best_start and run_end >= best_end
+                for run_start, run_end in station_runs
+            )
+        )
+        output = {
+            "start_month": pd.Period(ordinal=best_start, freq="M"),
+            "end_month": pd.Period(ordinal=best_end, freq="M"),
+            "n_months": longest_month_count,
+            "station_count": max_station_count,
+            "station_ids": selected_stations,
+        }
+        print(output)
+        return output
+
+    def _read_continuous_station_anomalies(
+        self, source_dirs, expected_months, grid_lons, grid_lats
+    ):
+        """Read complete station anomalies and aggregate them by TSMP cell."""
+        cell_station_values = {}
+        mapping_rows = []
+        source_counts = {}
+
+        for source_name, source_dir in source_dirs.items():
+            if not os.path.isdir(source_dir):
+                raise NotADirectoryError(
+                    f"{source_name} station directory does not exist: {source_dir}"
+                )
+            station_files = sorted(
+                os.path.join(source_dir, filename)
+                for filename in os.listdir(source_dir)
+                if filename.lower().endswith(".csv")
+                and not filename.startswith("_")
+                and os.path.isfile(os.path.join(source_dir, filename))
+            )
+            if not station_files:
+                raise FileNotFoundError(
+                    f"No station CSV files were found for {source_name}: {source_dir}"
+                )
+
+            source_counts[source_name] = {
+                "files": len(station_files),
+                "complete_stations": 0,
+                "incomplete_stations": 0,
+            }
+            for station_file in station_files:
+                columns = pd.read_csv(station_file, nrows=0).columns
+                date_column = next(
+                    (column for column in ("month", "date") if column in columns),
+                    None,
+                )
+                required = {"lat", "lon", "wtd_a"}
+                missing = required.difference(columns)
+                if date_column is None:
+                    missing.add("month or date")
+                if missing:
+                    raise ValueError(
+                        f"{station_file} is missing required columns: {sorted(missing)}"
+                    )
+
+                data = pd.read_csv(
+                    station_file,
+                    usecols=[date_column, "lat", "lon", "wtd_a"],
+                )
+                months = pd.to_datetime(
+                    data[date_column], errors="coerce"
+                ).dt.to_period("M")
+                anomaly = pd.to_numeric(data["wtd_a"], errors="coerce")
+                anomaly = anomaly.where(np.isfinite(anomaly))
+                in_period = months.isin(expected_months)
+                monthly_values = pd.Series(
+                    anomaly[in_period].to_numpy(dtype=float),
+                    index=months[in_period],
+                )
+                monthly_values = (
+                    monthly_values.groupby(level=0)
+                    .mean()
+                    .reindex(expected_months)
+                )
+                if not monthly_values.notna().all():
+                    source_counts[source_name]["incomplete_stations"] += 1
+                    continue
+
+                coordinates = data.loc[in_period, ["lat", "lon"]].apply(
+                    pd.to_numeric, errors="coerce"
+                )
+                coordinates = coordinates[
+                    np.isfinite(coordinates["lat"])
+                    & np.isfinite(coordinates["lon"])
+                ].drop_duplicates()
+                if len(coordinates) != 1:
+                    raise ValueError(
+                        f"{station_file} must have one stable, valid latitude/"
+                        f"longitude pair during {expected_months[0]} to "
+                        f"{expected_months[-1]}."
+                    )
+                lat = float(coordinates.iloc[0]["lat"])
+                lon = float(coordinates.iloc[0]["lon"])
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    raise ValueError(
+                        f"{station_file} has coordinates outside WGS84 bounds: "
+                        f"latitude={lat}, longitude={lon}."
+                    )
+
+                yindex, xindex, grid_lon, grid_lat = (
+                    self.find_mindistance_pointobs_to_grid(
+                        lon, lat, grid_lons, grid_lats
+                    )
+                )
+                cell = (int(yindex), int(xindex))
+                cell_station_values.setdefault(cell, []).append(
+                    monthly_values.to_numpy(dtype=np.float64)
+                )
+                mapping_rows.append(
+                    {
+                        "source": source_name,
+                        "station_id": os.path.splitext(
+                            os.path.basename(station_file)
+                        )[0],
+                        "lat": lat,
+                        "lon": lon,
+                        "tsmp_yindex": cell[0],
+                        "tsmp_xindex": cell[1],
+                        "tsmp_lat": float(grid_lat),
+                        "tsmp_lon": float(grid_lon),
+                    }
+                )
+                source_counts[source_name]["complete_stations"] += 1
+
+        if not mapping_rows:
+            raise ValueError(
+                "No stations have finite, gap-free monthly anomalies for the "
+                f"full period {expected_months[0]} to {expected_months[-1]}."
+            )
+
+        cell_anomalies = {
+            cell: np.mean(np.stack(values, axis=0), axis=0)
+            for cell, values in cell_station_values.items()
+        }
+        mapping = pd.DataFrame(mapping_rows)
+        station_counts = mapping.groupby(
+            ["tsmp_yindex", "tsmp_xindex"]
+        )["station_id"].transform("size")
+        mapping["stations_in_cell"] = station_counts.astype(int)
+        return cell_anomalies, mapping, source_counts
+
+    def _write_station_anomaly_netcdf(
+        self,
+        cell_anomalies,
+        source_netcdf,
+        output_netcdf,
+        expected_months,
+        grid_shape,
+    ):
+        """Copy the selected monthly window and fill missing cells with stations."""
+        import netCDF4
+        import tempfile
+
+        source_netcdf = os.path.abspath(source_netcdf)
+        output_netcdf = os.path.abspath(output_netcdf)
+        if source_netcdf == output_netcdf:
+            raise ValueError("The station anomaly output must not overwrite its source NetCDF.")
+        if not os.path.isfile(source_netcdf):
+            raise FileNotFoundError(f"Source NetCDF does not exist: {source_netcdf}")
+
+        expected_pairs = [(month.year, month.month) for month in expected_months]
+        grid_height, grid_width = grid_shape
+        output_dir = os.path.dirname(output_netcdf)
+        os.makedirs(output_dir, exist_ok=True)
+        temporary_file = tempfile.NamedTemporaryFile(
+            prefix=os.path.basename(output_netcdf) + ".",
+            suffix=".tmp",
+            dir=output_dir,
+            delete=False,
+        )
+        temporary_file.close()
+        temporary_path = temporary_file.name
+
+        try:
+            with netCDF4.Dataset(source_netcdf, "r") as source:
+                if "wtd_a" not in source.variables:
+                    raise KeyError(
+                        f"The source NetCDF does not contain 'wtd_a': {source_netcdf}"
+                    )
+                source_wtd = source.variables["wtd_a"]
+                if len(source_wtd.dimensions) != 3:
+                    raise ValueError("'wtd_a' must have (time, y, x) dimensions.")
+                time_name = source_wtd.dimensions[0]
+                if time_name.lower().find("time") < 0:
+                    raise ValueError("'wtd_a' must have its time dimension first.")
+                if not np.issubdtype(source_wtd.dtype, np.floating):
+                    raise TypeError("'wtd_a' must use a floating-point datatype.")
+                if time_name not in source.variables:
+                    raise KeyError(f"The NetCDF time coordinate '{time_name}' is missing.")
+
+                time_variable = source.variables[time_name]
+                if "units" not in time_variable.ncattrs():
+                    raise ValueError(
+                        f"NetCDF time coordinate '{time_name}' has no units attribute."
+                    )
+                decoded_time = netCDF4.num2date(
+                    time_variable[:],
+                    units=time_variable.units,
+                    calendar=getattr(time_variable, "calendar", "standard"),
+                    only_use_cftime_datetimes=False,
+                )
+                source_months = [(date.year, date.month) for date in decoded_time]
+                if len(source_months) != len(set(source_months)):
+                    raise ValueError("The source NetCDF has duplicate monthly time records.")
+                try:
+                    start_index = source_months.index(expected_pairs[0])
+                except ValueError as exc:
+                    raise ValueError(
+                        f"The source NetCDF does not contain {expected_months[0]}."
+                    ) from exc
+                end_index = start_index + len(expected_pairs)
+                if source_months[start_index:end_index] != expected_pairs:
+                    raise ValueError(
+                        "The source NetCDF does not contain the complete, consecutive "
+                        f"period {expected_months[0]} to {expected_months[-1]}."
+                    )
+                if source_wtd.shape[0] != len(source_months):
+                    raise ValueError(
+                        "The source NetCDF time coordinate does not match 'wtd_a'."
+                    )
+
+                if (
+                    source_wtd.shape[1] > grid_height
+                    or source_wtd.shape[2] > grid_width
+                ):
+                    raise ValueError(
+                        f"NetCDF spatial shape {source_wtd.shape[1:]} exceeds "
+                        f"the TSMP grid shape {grid_shape}."
+                    )
+                y_offset = (grid_height - source_wtd.shape[1]) // 2
+                x_offset = (grid_width - source_wtd.shape[2]) // 2
+                if (
+                    2 * y_offset != grid_height - source_wtd.shape[1]
+                    or 2 * x_offset != grid_width - source_wtd.shape[2]
+                ):
+                    raise ValueError(
+                        "The NetCDF grid must be centered on the TSMP grid with "
+                        "even-sized offsets."
+                    )
+
+                cells = np.asarray(list(cell_anomalies), dtype=int)
+                values_by_cell = np.stack(
+                    [cell_anomalies[tuple(cell)] for cell in cells], axis=0
+                )
+                source_y = cells[:, 0] - y_offset
+                source_x = cells[:, 1] - x_offset
+                if (
+                    (source_y < 0).any()
+                    or (source_y >= source_wtd.shape[1]).any()
+                    or (source_x < 0).any()
+                    or (source_x >= source_wtd.shape[2]).any()
+                ):
+                    raise ValueError(
+                        "At least one station maps outside the source NetCDF grid."
+                    )
+
+                with netCDF4.Dataset(
+                    temporary_path, "w", format=source.data_model
+                ) as output:
+                    for attribute in source.ncattrs():
+                        output.setncattr(attribute, source.getncattr(attribute))
+                    for name, dimension in source.dimensions.items():
+                        dimension_size = (
+                            len(expected_months)
+                            if name == time_name
+                            else len(dimension)
+                        )
+                        output.createDimension(
+                            name,
+                            None if dimension.isunlimited() else dimension_size,
+                        )
+                    for name, variable in source.variables.items():
+                        creation_options = {}
+                        if "_FillValue" in variable.ncattrs():
+                            creation_options["fill_value"] = variable.getncattr(
+                                "_FillValue"
+                            )
+                        output_variable = output.createVariable(
+                            name,
+                            variable.datatype,
+                            variable.dimensions,
+                            **creation_options,
+                        )
+                        for attribute in variable.ncattrs():
+                            if attribute != "_FillValue":
+                                output_variable.setncattr(
+                                    attribute, variable.getncattr(attribute)
+                                )
+
+                        if name != "wtd_a":
+                            if time_name in variable.dimensions:
+                                time_axis = variable.dimensions.index(time_name)
+                                selection = [slice(None)] * variable.ndim
+                                selection[time_axis] = slice(start_index, end_index)
+                                variable_data = variable[tuple(selection)]
+                            else:
+                                variable_data = variable[...]
+                            output_variable[...] = variable_data
+                            continue
+
+                        for output_index, input_index in enumerate(
+                            range(start_index, end_index)
+                        ):
+                            field = np.ma.asarray(
+                                source_wtd[input_index, :, :]
+                            )
+                            field_values = np.asarray(
+                                field.filled(np.nan), dtype=np.float64
+                            )
+                            existing = field_values[source_y, source_x]
+                            replace = ~np.isfinite(existing)
+                            if replace.any():
+                                field_values[
+                                    source_y[replace], source_x[replace]
+                                ] = values_by_cell[replace, output_index]
+                            output_variable[output_index, :, :] = (
+                                np.ma.masked_invalid(field_values)
+                            )
+
+                    output.setncattr(
+                        "station_anomaly_period",
+                        f"{expected_months[0]} to {expected_months[-1]}",
+                    )
+                    output.setncattr(
+                        "station_anomaly_merge_method",
+                        "Finite station wtd_a values averaged by TSMP grid cell; "
+                        "existing finite grid values preserved.",
+                    )
+            os.replace(temporary_path, output_netcdf)
+        except Exception:
+            if os.path.exists(temporary_path):
+                os.remove(temporary_path)
+            raise
+
+        return output_netcdf
+
+    def process_groundwater_station_anomalies(
+        self,
+        groundwater_root=None,
+        source_netcdf=None,
+        output_netcdf=None,
+        start_month="1996-01",
+        end_month="2012-12",
+    ):
+        """Map continuous monthly station anomalies into a period-specific NetCDF.
+
+        Station CSVs must contain ``wtd_a`` and a ``month`` or ``date`` column.
+        Only stations with a finite anomaly in every requested month are used.
+        Stations sharing a TSMP cell are averaged, and those averages fill
+        missing values in the original gridded ``wtd_a`` data.
+        """
+        project_root = get_root_dir()
+        data_root = os.path.dirname(project_root)
+        if groundwater_root is None:
+            groundwater_root = os.path.join(data_root, "Groundwater_Observations")
+        if source_netcdf is None:
+            source_netcdf = os.path.join(
+                data_root,
+                "grid_measured_wtd_a_data_1996_2016_EUR11_YM_v_20210407.nc",
+            )
+        if output_netcdf is None:
+            output_netcdf = os.path.join(
+                data_root,
+                "grid_measured_wtd_a_data_1996_2012_EUR11_YM_v_20210407_"
+                "with_station_anomalies.nc",
+            )
+
+        try:
+            first_month = pd.Period(start_month, freq="M")
+            last_month = pd.Period(end_month, freq="M")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "start_month and end_month must be valid monthly dates."
+            ) from exc
+        if first_month > last_month:
+            raise ValueError("start_month must not be later than end_month.")
+        expected_months = pd.period_range(first_month, last_month, freq="M")
+
+        source_dirs = {
+            "England": os.path.join(
+                groundwater_root,
+                "England_GW_data",
+                "england_gw_monthly_wells",
+            ),
+            "GEMS-GER": os.path.join(
+                groundwater_root,
+                "GEMS-GER_data",
+                "gems_ger_monthly_wells",
+            ),
+            "GROW Europe": os.path.join(
+                groundwater_root,
+                "GROW_europe_monthly_wells",
+            ),
+            "Switzerland": os.path.join(
+                groundwater_root,
+                "Swiss_GW_data",
+                "swiss_gw_monthly_wells",
+            ),
+        }
+        grid_lons = np.load(os.path.join(INPUTPATH, "lon2D.npy"))
+        grid_lats = np.load(os.path.join(INPUTPATH, "lat2D.npy"))
+        if grid_lons.shape != grid_lats.shape or grid_lons.ndim != 2:
+            raise ValueError(
+                "TSMP longitude and latitude grids must be matching 2D arrays."
+            )
+        cell_anomalies, mapping, source_counts = (
+            self._read_continuous_station_anomalies(
+                source_dirs, expected_months, grid_lons, grid_lats
+            )
+        )
+        output_netcdf = self._write_station_anomaly_netcdf(
+            cell_anomalies,
+            source_netcdf,
+            output_netcdf,
+            expected_months,
+            grid_lons.shape,
+        )
+
+        mapping_path = os.path.splitext(output_netcdf)[0] + "_station_mapping.csv"
+        mapping.to_csv(mapping_path, index=False)
+        return {
+            "netcdf": output_netcdf,
+            "station_mapping": mapping_path,
+            "start_month": str(first_month),
+            "end_month": str(last_month),
+            "n_months": len(expected_months),
+            "station_count": len(mapping),
+            "stations_by_source": {
+                source: counts["complete_stations"]
+                for source, counts in source_counts.items()
+            },
+            "excluded_incomplete_by_source": {
+                source: counts["incomplete_stations"]
+                for source, counts in source_counts.items()
+            },
+            "grid_cell_count": len(cell_anomalies),
+            "stations_in_shared_cells": int(
+                (mapping["stations_in_cell"] > 1).sum()
+            ),
+            "extra_stations_in_shared_cells": (
+                len(mapping) - len(cell_anomalies)
+            ),
+        }
+
+    # The longest gap-free window maximizing station coverage is January 1996–December 2012 inclusive
+    # (204 monthly values; 17 years), with all 4,339 stations complete: England 41, GEMS-GER 3,207, GROW Europe 810, Switzerland 281.
